@@ -1,0 +1,20 @@
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  suite:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalar dependencias
+        run: python -m pip install -r requirements-dev.txt
+      - name: Rodar a suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tests/rodar_todos.py

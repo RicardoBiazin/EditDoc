@@ -1,0 +1,33 @@
+# Ambiente e saidas de build
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Temporarios e logs do proprio programa
+*.ewnew
+~$*
+*.log
+recuperacao/
+
+# Segredos e configuracao local
+.env
+.env.*
+*.pfx
+*.pem
+*.key
+secrets*
+.claude/settings.local.json
+
+# Documentos: nenhum .docx ou PDF entra no repositorio por engano. As fixtures
+# publicas, geradas por codigo ou de dominio publico, sao liberadas abaixo.
+*.docx
+*.dotx
+*.pdf
+!tests/fixtures/publicos/*.docx
+
+# Saidas dos testes
+tests/saida/
+tests/referencias/_novas/

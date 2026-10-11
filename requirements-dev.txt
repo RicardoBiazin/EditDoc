@@ -1,0 +1,4 @@
+# Dependencias de desenvolvimento e de empacotamento. Nada disto vai para o .exe
+# como biblioteca; o PyInstaller so' usa para montar o pacote.
+-r requirements.txt
+pyinstaller==6.22.3

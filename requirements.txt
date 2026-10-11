@@ -1,0 +1,5 @@
+# Dependencias de execucao. Versoes EXATAS: o layout de paginas depende da versao
+# do Qt, e uma troca silenciosa muda onde cai cada quebra de linha.
+PySide6-Essentials==6.11.2
+python-docx==1.2.0
+lxml==6.1.3
