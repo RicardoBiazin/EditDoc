@@ -1,7 +1,7 @@
 """Regua horizontal: margens e recuos do paragrafo do caret.
 
-A area do corpo aparece branca e as margens cinza. A escala e' em centimetros, a
-partir da margem esquerda. Dois marcadores: o triangulo de cima e' o recuo da primeira
+A area do corpo aparece branca e as margens cinza. A escala e' em centimetros (ou em
+polegadas, pela preferencia `unidade_regua`, M8), a partir da margem esquerda. Dois marcadores: o triangulo de cima e' o recuo da primeira
 linha; o de baixo, o recuo esquerdo. Arrastar um marcador muda o recuo, e ao soltar
 a mudanca vira UM passo de desfazer (PainelDocumento.definir_recuos_do_paragrafo).
 
@@ -25,6 +25,8 @@ PASSO_TW = 90
 COR_MARGEM = QColor(0xD0, 0xD4, 0xDA)
 COR_CORPO = QColor(255, 255, 255)
 COR_MARCA = QColor(0x40, 0x46, 0x50)
+#: Twips por unidade da escala.
+TWIPS_DA_UNIDADE = {"cm": TWIPS_POR_CM, "pol": 1440.0}
 
 
 class Regua(QWidget):
@@ -33,13 +35,32 @@ class Regua(QWidget):
         self._painel = painel
         self._arrasto: str | None = None
         self._valor = (0, 0)  # (recuo esquerdo, recuo da primeira linha), em twips
+        self._unidade = "cm"
         self.setFixedHeight(ALTURA_PX)
         self.setToolTip("Régua: arraste os marcadores para mudar o recuo do parágrafo")
+        self.setAccessibleName("Régua")
+        self._descrever()
         painel.cursorPositionChanged.connect(self.update)
         painel.paginaAlterada.connect(self.update)
         painel.zoomAlterado.connect(self.update)
         painel.textChanged.connect(self.update)
         painel.horizontalScrollBar().valueChanged.connect(self.update)
+
+    # ----- unidade (M8) -------------------------------------------------------
+    def unidade(self) -> str:
+        return self._unidade
+
+    def definir_unidade(self, unidade: str) -> None:
+        """'cm' ou 'pol'. Outra coisa fica em cm."""
+        self._unidade = unidade if unidade in TWIPS_DA_UNIDADE else "cm"
+        self._descrever()
+        self.update()
+
+    def _descrever(self) -> None:
+        nome = "centímetros" if self._unidade == "cm" else "polegadas"
+        self.setAccessibleDescription(
+            f"Margens e recuos do parágrafo, em {nome}. Os recuos também mudam pela aba "
+            "Layout, grupo Parágrafo, ou por Ctrl+M e Ctrl+Shift+M.")
 
     # ----- conversao ---------------------------------------------------------
     def _x_do_corpo(self) -> float:
@@ -72,13 +93,16 @@ class Regua(QWidget):
         p.setFont(fonte)
         p.setPen(COR_MARCA)
         altura = self.height()
-        cm = -int(x0 // (TWIPS_POR_CM * self._painel.mapa().escala)) - 1
-        limite = int((self.width() - x0) / (TWIPS_POR_CM * self._painel.mapa().escala)) + 1
+        passo = TWIPS_DA_UNIDADE[self._unidade]
+        cm = -int(x0 // (passo * self._painel.mapa().escala)) - 1
+        limite = int((self.width() - x0) / (passo * self._painel.mapa().escala)) + 1
         for k in range(max(cm, -200), min(limite, 200) + 1):
-            x = self._x_de_tw(k * TWIPS_POR_CM)
+            x = self._x_de_tw(k * passo)
             if x < -2 or x > self.width() + 2:
                 continue
             p.drawLine(QPointF(x, altura - 6), QPointF(x, altura - 1))
+            meio = self._x_de_tw((k + 0.5) * passo)
+            p.drawLine(QPointF(meio, altura - 3), QPointF(meio, altura - 1))
             if k > 0:
                 p.drawText(QPointF(x + 2, altura - 7), str(k))
         esquerdo, primeira = self._recuos_mostrados()

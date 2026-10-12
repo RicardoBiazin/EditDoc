@@ -65,7 +65,9 @@ class DialogoEstilo(QDialog):
         self.proximo.setEnabled(paragrafo)
 
         self.fonte = QFontComboBox()
+        self.fonte.setAccessibleName("Fonte")
         self.tamanho = _espaco(" pt", 1.0, 400.0, 0.5, 1)
+        self.tamanho.setAccessibleName("Tamanho da fonte")
         self.negrito = QCheckBox("Negrito")
         self.italico = QCheckBox("Itálico")
         self.sublinhado = QCheckBox("Sublinhado")
@@ -149,8 +151,9 @@ class DialogoEstilo(QDialog):
             car = self._estilos.resolver_caractere(estilo.baseado_em)
             car.update({k: v for k, v in estilo.caractere.items() if v is not None})
             return {}, car
-        par, car = self._estilos.resolver_paragrafo(estilo.baseado_em) if estilo.baseado_em \
-            else ({}, {})
+        # A base inclui o docDefaults (M8): e' o que o paragrafo fora da tabela mostra.
+        par, car = self._estilos.resolver_paragrafo(estilo.baseado_em, com_padrao=True) \
+            if estilo.baseado_em else (self._estilos.resolver_paragrafo(None, com_padrao=True)[0], {})
         par = dict(par)
         car = dict(car)
         par.update({k: v for k, v in estilo.paragrafo.items() if v is not None})
@@ -206,9 +209,9 @@ class DialogoEstilo(QDialog):
         if e.tipo == "caractere":
             base_par, base_car = {}, self._estilos.resolver_caractere(e.baseado_em)
         elif e.baseado_em:
-            base_par, base_car = self._estilos.resolver_paragrafo(e.baseado_em)
+            base_par, base_car = self._estilos.resolver_paragrafo(e.baseado_em, com_padrao=True)
         else:
-            base_par, base_car = {}, {}
+            base_par, base_car = self._estilos.resolver_paragrafo(None, com_padrao=True)[0], {}
         padrao = self._fonte_padrao
         escolhida = self.fonte.currentFont().family()
         car = {

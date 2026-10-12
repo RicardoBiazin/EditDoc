@@ -12,6 +12,10 @@ Regras, todas travadas por `tests/teste_base.py`:
 
 Toda opcao nova entra em padrao() e precisa ser lida por algum codigo. Opcao
 declarada e nunca lida e' uma opcao que finge existir.
+
+Preferencias (M8, Arquivo > Opcoes): alem do tipo, cada valor tem a sua faixa ou a
+sua lista (`_VALIDOS`). Fora dela, volta ao padrao: um config editado a mao com
+tamanho 0 ou papel "A9" nao pode quebrar o documento novo.
 """
 
 from __future__ import annotations
@@ -24,8 +28,13 @@ from editdoc import log_interno
 
 log = log_interno.obter(__name__)
 
-#: Quantos arquivos o menu "Abrir recente" guarda.
+#: Quantos arquivos o menu "Abrir recente" guarda, por padrao, e no maximo.
 MAXIMO_RECENTES = 15
+LIMITE_RECENTES = 50
+
+PAPEIS = ("A4", "Carta", "Ofício")
+UNIDADES = ("cm", "pol")
+TEMAS = ("sistema", "claro", "escuro")
 
 
 def padrao() -> dict:
@@ -35,7 +44,56 @@ def padrao() -> dict:
         "fonte_padrao": "Calibri",
         "tamanho_padrao": 11,
         "recentes": [],
+        # Preferencias (M8)
+        "papel_padrao": "A4",
+        "unidade_regua": "cm",
+        "recuperacao_ligada": True,
+        "recuperacao_minutos": 10,
+        "abrir_pdf_depois": False,
+        "recentes_maximo": MAXIMO_RECENTES,
+        "tema": "sistema",
     }
+
+
+def _fonte_valida(v) -> bool:
+    return 0 < len(v.strip()) <= 100 and v.isprintable()
+
+
+#: chave -> funcao que diz se o valor (ja' do tipo certo) vale.
+_VALIDOS = {
+    "janela_largura": lambda v: 400 <= v <= 20000,
+    "janela_altura": lambda v: 300 <= v <= 20000,
+    "fonte_padrao": _fonte_valida,
+    "tamanho_padrao": lambda v: 1 <= v <= 400,
+    "papel_padrao": lambda v: v in PAPEIS,
+    "unidade_regua": lambda v: v in UNIDADES,
+    "recuperacao_minutos": lambda v: 1 <= v <= 120,
+    "recentes_maximo": lambda v: 0 <= v <= LIMITE_RECENTES,
+    "tema": lambda v: v in TEMAS,
+}
+
+
+def validar(valores: dict) -> dict:
+    """Copia de `valores` so' com as chaves conhecidas, cada uma do tipo e na faixa certa."""
+    saida = padrao()
+    for chave, valor_padrao in saida.items():
+        if chave not in valores:
+            continue
+        valor = valores[chave]
+        if chave == "tamanho_padrao" and type(valor) is float:
+            # Tamanho aceita meio ponto (10,5); inteiro continua inteiro no arquivo.
+            valor = int(valor) if valor.is_integer() else round(valor * 2) / 2
+            if type(valor) is float and 1 <= valor <= 400:
+                saida[chave] = valor
+                continue
+        if type(valor) is not type(valor_padrao):
+            continue
+        teste = _VALIDOS.get(chave)
+        if teste is not None and not teste(valor):
+            continue
+        saida[chave] = valor
+    saida["recentes"] = [r for r in saida["recentes"] if isinstance(r, str)][:LIMITE_RECENTES]
+    return saida
 
 
 def caminho() -> pathlib.Path:
@@ -54,16 +112,14 @@ def carregar() -> dict:
     if not isinstance(bruto, dict):
         log.warning("config.json nao e' um objeto: usando o padrao")
         return valores
-    for chave, valor_padrao in valores.items():
-        if chave in bruto and type(bruto[chave]) is type(valor_padrao):
-            valores[chave] = bruto[chave]
-    # A lista so' guarda texto: um item de outro tipo (de outra versao) some.
-    valores["recentes"] = [r for r in valores["recentes"] if isinstance(r, str)][:MAXIMO_RECENTES]
+    # Tipo errado ou fora da faixa volta ao padrao; a lista so' guarda texto.
+    valores = validar(bruto)
+    valores["recentes"] = valores["recentes"][:valores["recentes_maximo"]]
     return valores
 
 
 def gravar(valores: dict) -> None:
-    limpos = {k: v for k, v in valores.items() if k in padrao()}
+    limpos = validar(valores)
     alvo = caminho()
     novo = alvo.with_name(alvo.name + ".novo")
     novo.write_text(json.dumps(limpos, ensure_ascii=False, indent=2),
@@ -84,10 +140,28 @@ def recentes() -> list[str]:
 
 
 def registrar_recente(caminho: str) -> None:
-    """Põe o arquivo no topo da lista. Sem diferenca de caixa; no maximo MAXIMO_RECENTES."""
+    """Põe o arquivo no topo da lista. Sem diferenca de caixa; no maximo `recentes_maximo`."""
     valores = carregar()
     chave = os.path.normcase(os.path.abspath(caminho))
     outros = [r for r in valores["recentes"]
               if os.path.normcase(os.path.abspath(r)) != chave]
-    valores["recentes"] = ([caminho] + outros)[:MAXIMO_RECENTES]
+    valores["recentes"] = ([caminho] + outros)[:valores["recentes_maximo"]]
     gravar(valores)
+
+
+def limpar_recentes() -> None:
+    valores = carregar()
+    valores["recentes"] = []
+    gravar(valores)
+
+
+def gravar_preferencias(novas: dict) -> dict:
+    """Grava as preferencias (sem mexer nos recentes e no tamanho da janela). Devolve o gravado."""
+    valores = carregar()
+    for chave in padrao():
+        if chave in novas and chave not in ("recentes", "janela_largura", "janela_altura"):
+            valores[chave] = novas[chave]
+    valores = validar(valores)
+    valores["recentes"] = valores["recentes"][:valores["recentes_maximo"]]
+    gravar(valores)
+    return valores

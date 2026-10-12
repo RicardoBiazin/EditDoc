@@ -167,11 +167,15 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     """
     cfg = layout.pagina
     hb = layout.hb
-    corpo_w, corpo_h = cfg.corpo_largura_tw(), cfg.corpo_altura_tw()
+    corpo_h = cfg.corpo_altura_tw()
+    # Na horizontal o recorte e' a folha inteira, nao so' o corpo (M8): a tabela mais larga
+    # que o corpo (e o recuo negativo) entra na margem, como no Word. Na vertical continua
+    # o corpo, que e' o que separa uma pagina da outra.
+    permitido = QRectF(-cfg.margem_esq_tw, 0, float(cfg.largura_tw), corpo_h)
     if corpo_recorte is None:
-        recorte = QRectF(0, 0, corpo_w, corpo_h)
+        recorte = permitido
     else:
-        recorte = QRectF(*corpo_recorte).intersected(QRectF(0, 0, corpo_w, corpo_h))
+        recorte = QRectF(*corpo_recorte).intersected(permitido)
         if recorte.isEmpty():
             # Recorte fora do corpo (margem): nada a pintar. Um setClipRect vazio NAO recorta
             # nada, e o Qt pintaria a pagina inteira para jogar fora (medido: 45 ms por tile).

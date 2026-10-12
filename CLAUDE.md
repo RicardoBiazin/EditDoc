@@ -25,6 +25,9 @@ causou defeito.
 - `editdoc/`: pacote. `configuracao.py`, `log_interno.py`, `idioma.py`,
   `recursos.py` são infraestrutura.
 - `editdoc/interface/`: tudo que importa Qt. `janela_principal.py` é a casca.
+- `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
+  `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
+  `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
 - `app.py`: ponto de entrada e `--autoverificacao`.
 - `tests/`: suites sem pytest. `rodar_todos.py` roda cada uma em processo próprio.
 - `ferramentas/`: `gerar_icone.py`, `empacotar_zip.py`, `fumaca_exe.py`.
@@ -37,7 +40,8 @@ causou defeito.
 ```
 
 Testes que mexem em janela rodam em `offscreen`. `tests/ajudantes.py::preparar_qt()`
-isola `%APPDATA%`: nunca escrever no config do usuário. Um teste de janela não
+isola `%APPDATA%` e `%LOCALAPPDATA%` (e aponta `EDITDOC_RECUPERACAO` para dentro): nunca
+escrever no config nem nas cópias de recuperação do usuário. Um teste de janela não
 pode terminar com `close()` numa janela com alteração pendente, porque o diálogo
 modal trava a suíte.
 
@@ -123,3 +127,12 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | PDF e copias | `QPrinter` em `PdfFormat` tem `supportsMultipleCopies() == False`: as copias sao repetidas pelo EditDoc, senao sai uma so'. |
 | leitor de PDF dos testes | Cortar o stream no `endstream` estraga o dado comprimido que termina em byte de fim de linha. `tests/leitor_pdf.py` usa o `/Length` (indireto no QPdfWriter). |
 | campo no `.docx` | `instrText` com espaco precisa de `xml:space="preserve"` (o validador confere, como o `w:t`), e begin/end tem de fechar no mesmo paragrafo: senao o Word engole o texto seguinte como instrucao. |
+| `QAccessibleTextInterface` em Python | O PySide 6.11 nao exporta `selection()` nem `attributes()`. O UIA do Windows chama os dois ao listar os padroes e o processo cai ("_PyThreadState_Attach"). O documento e' exposto por `QAccessibleWidget` com o paragrafo como valor (`interface/acessibilidade.py`). Herdar de duas classes do Qt cria dois objetos C++: `interface_cast` devolve `getCppPointer(self)[1]`, nunca `self`. |
+| `QKeyEvent.modifiers()` na tecla Alt | O Qt 6 inverte o bit do proprio modificador: o KeyPress do Alt chega sem `AltModifier` e o KeyRelease com. "Alt sozinho" e' a ausencia de Ctrl, Shift e Win, nao `mods == Alt`. AltGr chega como Ctrl+Alt. |
+| filtro de eventos do aplicativo | Um evento de tecla ignorado sobe pela cadeia e passa no filtro uma vez por widget. O `TecladoFaixa` so' trata quando `obj is QApplication.focusWidget()`. |
+| botoes da faixa | `Qt.TabFocus`, nao `NoFocus`: o clique nao rouba o foco do documento, e o teclado (Alt, F10, setas) alcanca o botao. `NoFocus` deixa a faixa inacessivel sem mouse. |
+| trava da recuperacao | `msvcrt.locking` e' por handle: outra janela do MESMO processo tambem nao trava a copia. E' isso que impede duas janelas de adotarem a mesma copia. A trava some com o processo; o pid no arquivo e' so' diagnostico. |
+| bloco estrutural antes da tabela | Medido no Qt 6.11.2: nao ocupa altura (a tabela comeca no topo, duas tabelas se encostam), embora `blockBoundingRect` dele informe uma linha inteira. Nao "corrigir" o que nao aparece. |
+| `docDefaults` de paragrafo | Entra por baixo da cadeia de estilos so' FORA da tabela (`Resolvedor.paragrafo(sid, em_tabela)`). Quem resolve um paragrafo tem de passar o mesmo `em_tabela` na tela e na extracao, senao o espacamento vira formatacao direta no arquivo. |
+| documento novo da janela | Nasce por `para_qt.preencher` com `catalogo_de_documento_novo` (fonte da preferencia, 8 pt depois). Sem isso o primeiro bloco nao tem o espacamento, e o Enter copia o bloco sem ele. |
+| teste de dialogo | Para olhar um dialogo sem modal, trocar `QDialog.exec` pela funcao do teste (`teste_acessibilidade.Capturador`), mostrar, examinar e devolver Rejected. |

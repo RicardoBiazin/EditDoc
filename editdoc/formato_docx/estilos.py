@@ -496,7 +496,8 @@ def _estilo_grade(raiz):
         _borda_xml(gb, nome, Borda())
 
 
-def xml_base() -> etree._Element:
+def xml_base(fonte: str = FONTE_PADRAO,
+             tamanho_meio_pt: int = TAMANHO_PADRAO_MEIO_PT) -> etree._Element:
     """styles.xml de documento novo, sem os estilos do catalogo: docDefaults e os fixos."""
     raiz = etree.Element(q("styles"), nsmap={"w": W})
     dd = etree.SubElement(raiz, q("docDefaults"))
@@ -504,9 +505,9 @@ def xml_base() -> etree._Element:
     rpr = etree.SubElement(rpd, q("rPr"))
     rf = etree.SubElement(rpr, q("rFonts"))
     for atr in ("ascii", "hAnsi", "eastAsia", "cs"):
-        rf.set(q(atr), FONTE_PADRAO)
-    etree.SubElement(rpr, q("sz")).set(q("val"), str(TAMANHO_PADRAO_MEIO_PT))
-    etree.SubElement(rpr, q("szCs")).set(q("val"), str(TAMANHO_PADRAO_MEIO_PT))
+        rf.set(q(atr), fonte)
+    etree.SubElement(rpr, q("sz")).set(q("val"), str(int(tamanho_meio_pt)))
+    etree.SubElement(rpr, q("szCs")).set(q("val"), str(int(tamanho_meio_pt)))
     lang = etree.SubElement(rpr, q("lang"))
     lang.set(q("val"), "pt-BR")
     lang.set(q("eastAsia"), "pt-BR")
@@ -547,7 +548,9 @@ def escrever_estilos(est: Estilos | None) -> bytes:
     if est.xml_original:
         raiz = _parse_seguro(est.xml_original)
     else:
-        raiz = xml_base()
+        # Documento novo: o docDefaults e' o do catalogo (a fonte da preferencia, M8).
+        raiz = xml_base(est.padrao_caractere.get("fonte") or FONTE_PADRAO,
+                        est.padrao_caractere.get("tamanho_meio_pt") or TAMANHO_PADRAO_MEIO_PT)
     sanear(raiz)
     por_id = {_atr(el, "styleId"): el for el in raiz.findall(q("style"))}
     for e in est.itens.values():

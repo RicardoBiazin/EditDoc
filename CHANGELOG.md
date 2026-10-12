@@ -1,3 +1,65 @@
+## 0.1.0 - 2026-10-12
+
+Polimento (M8): a primeira versão completa do roteiro. Recuperação automática,
+preferências, acessibilidade e a correção de limites que ficaram dos marcos anteriores.
+
+- Recuperação automática: a cada 10 minutos (configurável de 1 a 120, ou desligada) e
+  também depois de 300 alterações seguidas, com uma pausa curta, o documento alterado é
+  copiado para `%LOCALAPPDATA%\EditDoc\Recuperacao`, num `.docx` próprio, com gravação
+  atômica e os metadados (caminho original, nome, hora, versão, pid e os avisos de perda
+  do arquivo original). Nunca na pasta do documento, nunca por cima dele. Documento limpo
+  não gera cópia; salvar apaga a cópia; fechar normalmente (salvando ou descartando)
+  apaga a cópia e a trava.
+- Depois de uma queda, a abertura seguinte mostra "Recuperação de documentos" (não modal):
+  abrir (a cópia vira uma janela alterada, sem caminho, com o título "(recuperado)"; salvar
+  sugere o lugar de onde ela veio e ainda pede a confirmação das perdas do original),
+  salvar como `.docx` ou descartar (com confirmação). O que ficar na lista é oferecido de
+  novo. Também em Arquivo > Recuperar documentos.
+- Várias janelas e várias instâncias não se atrapalham: cada janela tem a sua cópia e uma
+  trava de arquivo (LockFile) que o Windows solta quando o processo morre. Só a cópia sem
+  dono é oferecida, e uma cópia aberta numa janela não é oferecida em outra. Cópia gravada
+  pela metade (o `.docx` não tem o tamanho anotado) não é oferecida.
+- Arquivo > Opções: fonte e tamanho do documento novo, papel padrão (A4, Carta, Ofício),
+  unidade da régua (centímetros ou polegadas), recuperação automática (ligada e
+  intervalo), abrir o PDF depois de exportar, quantidade de documentos recentes (0 a 50) e
+  limpar a lista, e o tema (claro, escuro ou igual ao Windows). Cada valor é validado
+  (tipo e faixa); fora disso volta ao padrão. O documento aberto não muda; o novo usa as
+  preferências, e a fonte escolhida vai para o docDefaults do arquivo gravado.
+- Acessibilidade: todo botão, campo, lista e aba tem nome e descrição para o leitor de
+  tela (o botão "N" é "Negrito"; as miniaturas da galeria, "Estilo Título 1"); a régua, a
+  barra de status, os diálogos e os painéis também. O documento aparece para o leitor de
+  tela como texto editável, com o nome do arquivo, "Página X de Y" e o parágrafo do cursor;
+  trocar de página anuncia a página. Ordem de Tab de cada diálogo conferida.
+- Teclado na faixa, como no Word: Alt (apertar e soltar) ou F10 mostra as dicas de tecla
+  (P, N, L, E, H nas abas; A no Arquivo; 1 e 2 no Desfazer e Refazer); a letra da aba mostra
+  as dos botões, e a do botão executa o comando. Setas, Tab, Enter, Espaço e Esc navegam na
+  faixa; F6 e Shift+F6 andam entre o documento, a faixa, a busca, os painéis e o zoom.
+  AltGr (teclado ABNT2) não abre as dicas. O Tab no documento continua sendo tabulação.
+- Contraste: o título dos grupos da faixa e o aviso do painel de navegação usavam o cinza
+  "mid" do Qt (1,7 para 1 sobre o fundo); agora usam a cor do texto.
+- Espaçamento do docDefaults na tela: o "8 pt depois e 1,08 entre linhas" do Word passa a
+  aparecer fora das tabelas (dentro delas o "Table Grid" zera, como no Word), sem virar
+  formatação direta ao salvar. O documento novo nasce com ele, que é o que o EditDoc já
+  gravava no arquivo: antes a tela mostrava 0 e o Word, 8 pt.
+- Tabela mais larga que o corpo entra na margem direita, como no Word, na tela, na
+  impressão e no PDF (antes era cortada na margem).
+- Medido e travado em teste: a linha vazia antes de uma tabela no começo do documento ou
+  entre duas tabelas não aparece no Qt 6.11.2 (o bloco que o Qt exige ali não ocupa
+  altura). A pintura do cabeçalho e do rodapé fora do cache, num documento de 94 páginas,
+  fica entre 1,1 e 11,7 ms por quadro (p95), dentro do limite de 16 ms do Gate do M3: não
+  precisou de otimização (números em docs/SPIKES.md).
+- A autoverificação do executável grava uma cópia de recuperação numa pasta temporária,
+  simula a queda, lê a cópia de volta e a descarta.
+- README completo para o usuário, CONTRIBUTING.md e a arquitetura atualizada.
+
+Limites que ficaram: a altura de linha da tabela continua só no arquivo (a tela não a
+aplica: precisaria refazer a altura a cada tecla); desfazer uma mudança de estilo feita
+durante a edição do cabeçalho continua no desfazer do corpo (o catálogo de estilos mora no
+corpo). O leitor de tela não navega por palavra ou linha dentro do documento: no PySide6
+6.11.2, a interface de texto acessível feita em Python derruba o processo quando o UIA do
+Windows lista os padrões do elemento (medido; docs/SPIKES.md). A abertura no Word e o uso
+com NVDA ou Narrador dependem de conferência manual.
+
 ## 0.0.10 - 2026-10-12
 
 Impressão e PDF (M7). O documento sai em PDF e na impressora exatamente como está na tela:

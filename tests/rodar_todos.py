@@ -92,6 +92,14 @@ SUITES = [
      "exportar PDF: paginas e papel da tela, texto extraivel, rodape por folha, intervalo, cancelar"),
     ("teste_impressao.py",
      "imprimir em PdfFormat: intervalo, copias, papel, sem impressora, Ctrl+P e pre-visualizacao"),
+    ("teste_recuperacao.py",
+     "recuperacao automatica: copia, trava, queda real (processo morto), dialogo e salvar"),
+    ("teste_preferencias.py",
+     "Arquivo > Opcoes: validacao, gravacao, recentes, tema e efeito nas janelas"),
+    ("teste_limites.py",
+     "limites do M8: docDefaults na tela, tabela larga na margem, sem linha vazia antes da tabela"),
+    ("teste_acessibilidade.py",
+     "acessibilidade: nomes de todo controle, ordem de Tab, Alt/F10 e dicas, documento, contraste"),
 ]
 
 

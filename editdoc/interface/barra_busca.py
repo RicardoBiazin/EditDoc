@@ -26,17 +26,20 @@ class BarraBusca(QFrame):
 
         self._procurar = QLineEdit()
         self._procurar.setPlaceholderText("Localizar")
+        self._procurar.setAccessibleName("Texto a localizar")
         self._procurar.setClearButtonEnabled(True)
         self._procurar.returnPressed.connect(self._proxima)
 
         self._substituto = QLineEdit()
         self._substituto.setPlaceholderText("Substituir por")
+        self._substituto.setAccessibleName("Substituir por")
         self._substituto.setClearButtonEnabled(True)
 
         self._maiusculas = QCheckBox("Diferenciar maiúsculas")
         self._palavra = QCheckBox("Palavra inteira")
         self._mensagem = QLabel("")
         self._mensagem.setMinimumWidth(160)
+        self._mensagem.setAccessibleName("Resultado da busca")
 
         self._anterior = QPushButton("Anterior")
         self._anterior.clicked.connect(self._voltar)

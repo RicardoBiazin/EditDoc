@@ -47,7 +47,8 @@ class PainelNavegacao(QWidget):
         self.arvore.itemClicked.connect(self._clicado)
         self._vazio = QLabel("Use os estilos de Título para que os títulos apareçam aqui.")
         self._vazio.setWordWrap(True)
-        self._vazio.setStyleSheet("color: palette(mid);")
+        # Cor do texto da janela (M8): o cinza "mid" tinha contraste de 1,7 para 1.
+        self._vazio.setWordWrap(True)
         vertical = QVBoxLayout(self)
         vertical.setContentsMargins(4, 4, 4, 4)
         vertical.addWidget(self.arvore, 1)

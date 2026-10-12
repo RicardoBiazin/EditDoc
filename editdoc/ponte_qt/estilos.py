@@ -303,11 +303,13 @@ class Resolvedor:
         self._par: dict = {}
         self._car: dict = {}
 
-    def paragrafo(self, sid: str | None) -> tuple[dict, dict]:
+    def paragrafo(self, sid: str | None, em_tabela: bool = False) -> tuple[dict, dict]:
+        """O estilo resolvido; fora da tabela, com o docDefaults por baixo (M8)."""
         sid = sid or self.estilos.id_padrao()
-        if sid not in self._par:
-            self._par[sid] = self.estilos.resolver_paragrafo(sid)
-        return self._par[sid]
+        chave = (sid, bool(em_tabela))
+        if chave not in self._par:
+            self._par[chave] = self.estilos.resolver_paragrafo(sid, com_padrao=not em_tabela)
+        return self._par[chave]
 
     def caractere(self, sid_par: str | None, sid_car: str | None) -> dict:
         chave = (sid_par or self.estilos.id_padrao(), sid_car)
@@ -348,8 +350,9 @@ def recompor_blocos(doc: QTextDocument, blocos, velho: Resolvedor, novo: Resolve
         sid_velho = estilo_do_bloco(bf)
         sid = sid_velho if sid_novo is ... else sid_novo
         if mexer_no_bloco and (filtro is None or filtro(sid_velho, None)):
-            par_velho, _ = velho.paragrafo(sid_velho)
-            par_novo, _ = novo.paragrafo(sid)
+            em_tabela = QTextCursor(bloco).currentTable() is not None
+            par_velho, _ = velho.paragrafo(sid_velho, em_tabela)
+            par_novo, _ = novo.paragrafo(sid, em_tabela)
             nbf = recompor_bloco(bf, par_velho, par_novo, sid, novo.estilos, manter_direto_paragrafo)
             if nbf != bf:
                 QTextCursor(bloco).setBlockFormat(nbf)

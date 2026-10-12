@@ -97,6 +97,10 @@ def isolar_appdata() -> None:
         return
     pasta = pathlib.Path(tempfile.mkdtemp(prefix="editdoc-appdata-suite-"))
     os.environ["APPDATA"] = str(pasta)
+    # A recuperacao automatica (M8) grava em %LOCALAPPDATA%: tambem vai para a pasta
+    # descartavel, e a variavel propria aponta para dentro dela.
+    os.environ["LOCALAPPDATA"] = str(pasta / "local")
+    os.environ["EDITDOC_RECUPERACAO"] = str(pasta / "local" / "EditDoc" / "Recuperacao")
     os.environ["EDITDOC_APPDATA_ISOLADO"] = "1"
     atexit.register(shutil.rmtree, pasta, True)
 

@@ -11,7 +11,10 @@ daqui, o documento muda junto, no mesmo commit.
 - A primeira versão utilizável (0.1.0) precisa ter: visão em páginas A4 com
   margens e quebras, tabelas e imagens, cabeçalho, rodapé e número de página,
   estilos com faixa de opções, além de digitar, formatar fonte e parágrafo,
-  listas, desfazer, localizar, abrir e salvar.
+  listas, desfazer, localizar, abrir e salvar. Feita: é a 0.1.0 (M8).
+- Uma janela por documento, como o Word (desde o M2).
+- A recuperação automática guarda o CONTEÚDO (uma cópia `.docx` do documento alterado),
+  não o estado da sessão (janelas, cursor, desfazer). Decidido antes do M8.
 
 ## Camadas
 
@@ -77,7 +80,11 @@ Implementadas no M4 (0.0.7).
   (`aplicar_formatos_das_celulas`) a cada mudança na grade.
 - O Qt exige um bloco antes e depois de cada tabela. O bloco que o modelo não tem (tabela no
   começo do documento ou da célula, duas tabelas seguidas) leva a marca `PROP_ESTRUTURAL` e,
-  vazio, não volta para o modelo. Na tela ele aparece como uma linha vazia.
+  vazio, não volta para o modelo. Medido no M8 (Qt 6.11.2): o bloco antes da tabela não ocupa
+  altura, a tabela começa no topo do corpo e duas tabelas seguidas se encostam
+  (`tests/teste_limites.py`).
+- Tabela mais larga que o corpo (M8): a pintura recorta pela largura da folha, não pela do
+  corpo, e a tabela entra na margem direita, como no Word.
 - Imagem no Qt: o recurso do documento é uma prévia (no máximo 1800 px no lado maior); os bytes
   ficam num registro por conteúdo (`ponte_qt/imagens.py`), porque o Qt troca o recurso pela
   imagem decodificada depois de desenhar. O `DocumentoQt` busca no registro a imagem colada de
@@ -156,8 +163,13 @@ Implementados no M6 (0.0.9).
   Qt 6.11); o PySide 6.11 não exporta `QAbstractUndoItem`. O XML original fica no
   catálogo-base, num atributo do objeto do documento. Cabeçalho e rodapé usam o catálogo
   do corpo.
-- `docDefaults`: a fonte e o tamanho viram a fonte padrão do `QTextDocument`; a resolução
-  dos estilos não inclui o `docDefaults`.
+- `docDefaults`: a fonte e o tamanho viram a fonte padrão do `QTextDocument`. Desde o M8 o
+  parágrafo do `docDefaults` (8 pt depois, 1,08 no Word) fica por baixo da cadeia de estilos
+  fora das tabelas (`Estilos.resolver_paragrafo(com_padrao=True)`, `Resolvedor.paragrafo(sid,
+  em_tabela)`); na célula não, porque o "Table Grid" do Word zera esse espaçamento. A tela e
+  a extração usam a mesma regra, então o espaçamento não vira formatação direta ao salvar. O
+  documento novo da janela nasce com `catalogo_de_documento_novo` (fonte e tamanho da
+  preferência, espaçamento do Word), o mesmo `docDefaults` que o escritor grava.
 
 ## Faixa e Exibir
 
@@ -202,6 +214,44 @@ Limites: a imagem sai na prévia do documento (no máximo 1800 px no lado maior)
 bytes originais; a impressora com área não imprimível corta o que estiver na borda (como
 no Word); o `.txt` leva o último resultado guardado dos campos de página.
 
+## Recuperação, preferências e acessibilidade
+
+Implementadas no M8 (0.1.0).
+
+- Recuperação automática (`editdoc/recuperacao.py`, sem Qt; `interface/guarda_recuperacao.py`
+  por janela). Cada janela tem uma sessão com id próprio e grava `<id>.docx` (o mesmo `.docx`
+  do Salvar, sem a conferência) e `<id>.json` (caminho original, nome, hora, versão, pid,
+  tamanho e os avisos com perda do original) em `%LOCALAPPDATA%\EditDoc\Recuperacao`
+  (`EDITDOC_RECUPERACAO` troca a pasta: testes e autoverificação). Grava pelo relógio
+  (preferência, padrão 10 min) e depois de 300 alterações, com pausa de 1,5 s; só documento
+  alterado e mudado desde a última cópia. Salvar apaga a cópia; fechar normalmente apaga e
+  solta a trava.
+- Trava: `<id>.trava` aberto com `LockFile` (msvcrt) enquanto a janela vive. O Windows solta a
+  trava quando o processo morre, de qualquer jeito; o pid fica no arquivo só para
+  diagnóstico (pid é reaproveitado, a trava não). A trava é por handle: outra janela do mesmo
+  processo também não consegue travar, e isso é o que impede duas janelas de adotarem a
+  mesma cópia. Na abertura do programa (instância principal), as cópias sem dono e inteiras
+  (o `.docx` com o tamanho anotado no `.json`) são oferecidas no diálogo não modal
+  "Recuperação de documentos". Abrir adota a trava da cópia (a janela continua gravando no
+  mesmo id); o documento aberto não tem caminho, e salvar sugere o original.
+- Preferências: `configuracao.py` valida tipo e faixa de cada chave (`validar`); fora disso, o
+  padrão. Arquivo > Opções (`interface/dialogo_opcoes.py`) devolve o dicionário; a janela
+  grava (`gravar_preferencias`, que não mexe nos recentes) e o gerente aplica a todas as
+  janelas (recuperação, régua, abrir o PDF) e ao tema (`interface/tema.py`, por
+  `QStyleHints.setColorScheme`). Fonte, tamanho e papel valem para o documento novo.
+- Acessibilidade (`interface/acessibilidade.py`, `interface/dicas_teclas.py`). Nomes: o
+  `BotaoAcao` usa a dica do comando, nunca o rótulo curto; `nomear_tudo` cobre o resto pela
+  dica ou pelo texto; `sem_nome` é a mesma regra no teste. O documento: uma fábrica de
+  interfaces acessíveis expõe o `PainelDocumento` como `EditableText`, com nome, descrição
+  ("Página X de Y") e o parágrafo do cursor como valor; trocar de página anuncia
+  (`QAccessibleAnnouncementEvent`). Teclado: os botões da faixa pegam foco só pelo teclado
+  (`Qt.TabFocus`); um filtro de eventos do aplicativo, por janela, trata Alt sozinho, F10,
+  F6, setas, Tab, Enter e as dicas de tecla.
+- Limite medido: a `QAccessibleTextInterface` completa não é viável em Python no PySide6
+  6.11.2 (`selection()` e `attributes()` não são exportados, e o UIA do Windows os chama ao
+  listar os padrões: o processo cai). O valor com o parágrafo é o que dá para expor sem esse
+  risco. Ver docs/SPIKES.md, M8.
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado ou descartado com aviso. Se algo
@@ -228,7 +278,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M5 Cabeçalho e rodapé | 0.0.8 (feito) | edição no lugar, número de página |
 | M6 Estilos e faixa final | 0.0.9 (feito) | galeria, abas Inserir, Layout e Exibir (abas contextuais de tabela e imagem ficaram para depois) |
 | M7 Impressão e PDF | 0.0.10 (feito) | imprimir, pré-visualizar, exportar PDF (e texto `.txt`) |
-| M8 Polimento | 0.1.0 | recuperação automática, preferências, acessibilidade, documentação final |
+| M8 Polimento | 0.1.0 (feito) | recuperação automática, preferências, acessibilidade, documentação final |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em

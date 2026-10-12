@@ -236,6 +236,7 @@ def pedir_numero_inicial(pai: QWidget | None, atual: int | None,
     valor.setRange(0, maximo)
     valor.setValue(atual if atual is not None else 1)
     valor.setEnabled(atual is not None)
+    valor.setAccessibleName("Número da primeira página")
     fixo.toggled.connect(valor.setEnabled)
     grade.addRow(fixo, valor)
     grade.addRow(_botoes_ok(dialogo))
@@ -277,6 +278,8 @@ def pedir_opcoes_pdf(pai: QWidget | None, total: int, atual: int,
     campo = QLineEdit()
     campo.setPlaceholderText("por exemplo: 1-3, 5")
     campo.setMaxLength(200)
+    campo.setAccessibleName("Intervalo de páginas")
+    campo.setAccessibleDescription("Por exemplo: 1-3, 5")
     campo.textEdited.connect(lambda _t: intervalo.setChecked(True))
     grade.addRow(todas)
     grade.addRow(so_atual)
@@ -337,3 +340,22 @@ def pedir_impressao(pai: QWidget | None, impressora, total: int, atual: int) -> 
 def mostrar_previa(dialogo) -> None:
     """A pre-visualizacao e' modal: fica aberta ate' o usuario fechar ou imprimir."""
     dialogo.exec()
+
+
+# -- preferencias e recuperacao (M8) -------------------------------------------------
+
+def pedir_opcoes(pai: QWidget | None, valores: dict) -> dict | None:
+    """Arquivo > Opções. As preferencias escolhidas (com "limpar_recentes"), ou None."""
+    from editdoc.interface.dialogo_opcoes import DialogoOpcoes
+
+    dialogo = DialogoOpcoes(valores, pai)
+    if dialogo.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dialogo.valores()
+
+
+def mostrar_recuperacao(dialogo) -> None:
+    """O dialogo de recuperacao nao e' modal: aparece e o programa segue."""
+    dialogo.show()
+    dialogo.raise_()
+    dialogo.activateWindow()

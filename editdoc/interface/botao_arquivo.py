@@ -1,5 +1,5 @@
 """Botao Arquivo da faixa: Novo, Abrir, Salvar, Salvar como, Abrir recente, Exportar,
-Imprimir, Visualizar impressao, Fechar.
+Imprimir, Visualizar impressao, Recuperar documentos, Opcoes (M8), Fechar.
 
 Os comandos sao os QAction de `comandos.py`, os mesmos do atalho. O submenu de
 recentes se monta na hora em que abre, para refletir a lista atual.
@@ -25,10 +25,13 @@ class BotaoArquivo(QToolButton):
         self._abrir_recente = abrir_recente
         self.setText("Arquivo ▾")
         self.setToolTip("Arquivo: novo, abrir, salvar, exportar, imprimir e fechar")
+        self.setAccessibleName("Arquivo")
+        self.setAccessibleDescription("Menu Arquivo: novo, abrir, salvar, recentes, exportar, "
+                                      "imprimir, recuperar documentos, opções e fechar")
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setAutoRaise(True)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
         menu = QMenu(self)
         for id_ in ("novo", "abrir", "salvar", "salvar_como"):
@@ -43,6 +46,9 @@ class BotaoArquivo(QToolButton):
         menu.addMenu(self._menu_exportar)
         for id_ in ("imprimir", "visualizar_impressao"):
             menu.addAction(comandos.acao(id_))
+        menu.addSeparator()
+        menu.addAction(comandos.acao("recuperar"))
+        menu.addAction(comandos.acao("opcoes"))
         menu.addSeparator()
         menu.addAction(comandos.acao("fechar"))
         self.setMenu(menu)

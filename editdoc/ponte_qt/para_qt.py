@@ -301,9 +301,10 @@ class _Listas:
             self.lista.add(cursor.block())
 
 
-def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor) -> QTextBlockFormat:
+def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
+                      em_tabela: bool = False) -> QTextBlockFormat:
     """Estilo resolvido + formatacao direta do paragrafo, e o id do estilo."""
-    base, _car = res.paragrafo(p.estilo)
+    base, _car = res.paragrafo(p.estilo, em_tabela)
     proprio = {k: getattr(p, k) for k in CAMPOS_PARAGRAFO if getattr(p, k) is not None}
     efetivo = {**base, **proprio}
     if p.nivel is not None:
@@ -329,7 +330,7 @@ def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QText
 
 def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas,
                         res: pq_estilos.Resolvedor) -> None:
-    cursor.setBlockFormat(_formato_do_bloco(p, res))
+    cursor.setBlockFormat(_formato_do_bloco(p, res, cursor.currentTable() is not None))
     base = res.caractere(p.estilo, None)
     if base:
         # Bloco vazio: a altura da linha e o texto digitado nele seguem o estilo.

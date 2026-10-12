@@ -171,12 +171,16 @@ class Estilos:
             sid = e.baseado_em
         return saida
 
-    def resolver_paragrafo(self, sid: str | None) -> tuple[dict, dict]:
+    def resolver_paragrafo(self, sid: str | None, com_padrao: bool = False) -> tuple[dict, dict]:
         """(propriedades de paragrafo, de caractere) efetivas de um estilo de paragrafo.
 
-        Inclui o "nivel" (outlineLvl) nas de paragrafo. Sem o docDefaults.
+        Inclui o "nivel" (outlineLvl) nas de paragrafo. `com_padrao` poe o docDefaults de
+        paragrafo (8 pt depois, 1,08 no Word) por baixo da cadeia, como o Word faz fora
+        das tabelas (M8). Dentro da tabela o estilo "Table Grid" zera esse espacamento:
+        quem resolve um paragrafo de celula passa False.
         """
-        par: dict = {}
+        par: dict = ({k: v for k, v in self.padrao_paragrafo.items()
+                      if k in CAMPOS_PARAGRAFO and v is not None} if com_padrao else {})
         car: dict = {}
         nivel = None
         for e in reversed(self.cadeia(sid)):
@@ -352,5 +356,19 @@ def definicoes_padrao() -> list[Estilo]:
 
 
 def catalogo_padrao() -> Estilos:
-    """Catalogo de um documento novo (sem styles.xml de origem)."""
+    """Catalogo de um documento sem styles.xml de origem (o leitor parte dele)."""
     return Estilos(itens={e.id: e for e in definicoes_padrao()})
+
+
+#: docDefaults de paragrafo do documento novo, os mesmos que o escritor grava
+#: (formato_docx/padroes.py): 8 pt depois e 1,08 entre linhas.
+PARAGRAFO_PADRAO_NOVO = {"espaco_depois_tw": 160, "espacamento_linha_pct": 108}
+
+
+def catalogo_de_documento_novo(fonte: str, tamanho_pt: float) -> Estilos:
+    """Catalogo do documento novo da janela (M8): a fonte e o tamanho da preferencia e o
+    espacamento do Word. O escritor grava o docDefaults daqui."""
+    est = catalogo_padrao()
+    est.padrao_caractere = {"fonte": fonte, "tamanho_meio_pt": round(float(tamanho_pt) * 2)}
+    est.padrao_paragrafo = dict(PARAGRAFO_PADRAO_NOVO)
+    return est

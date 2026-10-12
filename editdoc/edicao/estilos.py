@@ -296,8 +296,9 @@ def estilo_da_selecao(editor, sid: str) -> Estilo | None:
         return None
     par_ef, car_ef = _efetivo_no_cursor(editor)
     novo = copy.deepcopy(atual)
-    base_par, base_car = estilos.resolver_paragrafo(atual.baseado_em) if atual.baseado_em \
-        else ({}, {})
+    fora_da_tabela = editor.textCursor().currentTable() is None
+    base_par, base_car = estilos.resolver_paragrafo(atual.baseado_em, fora_da_tabela) \
+        if atual.baseado_em else (_padrao(estilos, fora_da_tabela), {})
     if atual.tipo == "caractere":
         sid_par = estilo_no_cursor(editor)[0]
         base_par_car = estilos.base_de_caractere(sid_par, None)
@@ -308,6 +309,11 @@ def estilo_da_selecao(editor, sid: str) -> Estilo | None:
     novo.paragrafo = props_proprias(par_ef, base_par, CAMPOS_PARAGRAFO)
     novo.caractere = props_proprias(car_ef, base_car, CAMPOS_CARACTERE)
     return novo
+
+
+def _padrao(estilos: Estilos, fora_da_tabela: bool) -> dict:
+    """O docDefaults de paragrafo, que fica por baixo de tudo fora da tabela (M8)."""
+    return estilos.resolver_paragrafo(None, com_padrao=True)[0] if fora_da_tabela else {}
 
 
 def atualizar_pela_selecao(editor, sid: str | None = None) -> bool:
@@ -334,7 +340,8 @@ def modelo_da_selecao(editor, nome: str, tipo: str = "paragrafo") -> Estilo | No
         base = estilos.base_de_caractere(sid_par, None)
         return Estilo(sid, nome, tipo="caractere", rapido=True, personalizado=True,
                       caractere=props_proprias(car_ef, base, CAMPOS_CARACTERE))
-    base_par, base_car = estilos.resolver_paragrafo(sid_par)
+    base_par, base_car = estilos.resolver_paragrafo(
+        sid_par, com_padrao=editor.textCursor().currentTable() is None)
     nivel = par_ef.get("nivel")
     return Estilo(sid, nome, baseado_em=sid_par, proximo=sid, rapido=True, personalizado=True,
                   paragrafo=props_proprias(par_ef, base_par, CAMPOS_PARAGRAFO),
@@ -377,7 +384,7 @@ def formatos_do_proximo(doc, bf_anterior: QTextBlockFormat) -> tuple | None:
     proximo = estilos.obter(atual.proximo)
     if proximo is None or proximo.tipo != "paragrafo":
         return None
-    par, car = estilos.resolver_paragrafo(proximo.id)
+    par, car = estilos.resolver_paragrafo(proximo.id, com_padrao=True)
     bf = QTextBlockFormat()
     pq.aplicar_bloco(bf, par)
     bf.setPageBreakPolicy(bf_anterior.pageBreakPolicy())

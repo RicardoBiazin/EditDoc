@@ -6,6 +6,12 @@ frente; a comparacao e' pelo caminho resolvido, em caixa baixa.
 
 Abrir le o arquivo ANTES de criar a janela: se a leitura falha, nenhuma janela
 vazia fica para tras (e fechar a ultima janela encerraria o programa).
+
+Recuperacao (M8): na abertura, `oferecer_recuperacao` procura as copias que sobraram de
+uma queda e mostra o dialogo "Recuperação de documentos". Abrir uma copia adota a trava
+dela (outra instancia nao a oferece de novo); salvar como grava a copia num .docx e a
+apaga; descartar apaga. Preferencias (M8): `aplicar_preferencias` leva as opcoes a todas
+as janelas e ao tema do aplicativo.
 """
 
 from __future__ import annotations
@@ -15,10 +21,13 @@ import pathlib
 
 from PySide6.QtCore import QObject
 
-from editdoc import configuracao, log_interno
+from editdoc import configuracao, log_interno, recuperacao
+from editdoc.armazenamento import gravacao
 from editdoc.formato_docx import leitor
+from editdoc.formato_docx.avisos import Aviso
 from editdoc.formato_docx.erros import ErroDocx
-from editdoc.interface import dialogos_modais
+from editdoc.interface import dialogos_modais, tema
+from editdoc.interface.dialogo_recuperacao import DialogoRecuperacao
 from editdoc.interface.janela_principal import JanelaPrincipal
 
 log = log_interno.obter(__name__)
@@ -44,6 +53,7 @@ class GerenteDeJanelas(QObject):
         super().__init__(pai)
         self._cfg = cfg
         self._janelas: list[JanelaPrincipal] = []
+        self.dialogo_recuperacao: DialogoRecuperacao | None = None
 
     def janelas(self) -> list[JanelaPrincipal]:
         return list(self._janelas)
@@ -127,6 +137,118 @@ class GerenteDeJanelas(QObject):
 
     def recentes(self) -> list[str]:
         return configuracao.recentes()
+
+    # -- preferencias (M8) -------------------------------------------------------------
+    def aplicar_preferencias(self, cfg: dict) -> None:
+        """Opcoes novas: o documento novo usa a fonte e o papel; as janelas, o resto."""
+        self._cfg.update({k: v for k, v in cfg.items() if k != "recentes"})
+        for janela in self._janelas:
+            janela.aplicar_preferencias(self._cfg)
+        tema.aplicar(self._cfg.get("tema", "sistema"))
+
+    # -- recuperacao (M8) --------------------------------------------------------------
+    def oferecer_recuperacao(self, avisar_se_vazio: bool = False) -> DialogoRecuperacao | None:
+        """Mostra as copias orfas, se houver. Devolve o dialogo (nao modal) ou None."""
+        try:
+            copias = recuperacao.listar_orfas()
+        except OSError as erro:
+            log.warning("pasta de recuperacao ilegivel: %s", erro)
+            copias = []
+        if not copias:
+            if avisar_se_vazio:
+                dialogos_modais.mostrar_detalhes(self._pai_dos_dialogos(), "Recuperar documentos",
+                                                 "Não há cópias de recuperação para abrir.")
+            return None
+        if self.dialogo_recuperacao is not None:
+            self.dialogo_recuperacao.close()
+            self.dialogo_recuperacao.deleteLater()
+        dialogo = DialogoRecuperacao(copias, {
+            "abrir": lambda c: self.abrir_recuperado(c) is not None,
+            "salvar_como": self.salvar_copia_como,
+            "descartar": self.descartar_copia,
+        }, self._pai_dos_dialogos())
+        self.dialogo_recuperacao = dialogo
+        log.info("%d copia(s) de recuperacao oferecida(s)", len(copias))
+        dialogos_modais.mostrar_recuperacao(dialogo)
+        return dialogo
+
+    def _ler_copia(self, copia: recuperacao.Copia):
+        """(modelo, avisos) da copia, ou None com o aviso ao usuario."""
+        try:
+            return leitor.ler(copia.ler())
+        except (OSError, ErroDocx) as erro:
+            log.warning("copia de recuperacao %s ilegivel: %s", copia.id, erro)
+            dialogos_modais.avisar(self._pai_dos_dialogos(), "Recuperação de documentos",
+                                   "A cópia de recuperação não pode ser lida. Ela pode ter "
+                                   "sido gravada pela metade.")
+            return None
+
+    def abrir_recuperado(self, copia: recuperacao.Copia) -> JanelaPrincipal | None:
+        """Abre a copia numa janela nova, alterada e sem caminho. None se nao deu."""
+        sessao = recuperacao.Sessao(id_=copia.id)
+        if not sessao.travar():
+            dialogos_modais.avisar(self._pai_dos_dialogos(), "Recuperação de documentos",
+                                   "Esta cópia já está aberta em outra janela do EditDoc.")
+            return None
+        lido = self._ler_copia(copia)
+        if lido is None:
+            sessao._trava.soltar(apagar=False)
+            return None
+        modelo, avisos = lido
+        avisos = list(avisos) + [Aviso(**a) for a in copia.avisos_com_perda()]
+        janela = self._criar()
+        janela.carregar_recuperado(modelo, avisos, copia, sessao)
+        janela.trazer_para_frente()
+        log.info("copia de recuperacao %s aberta", copia.id)
+        return janela
+
+    def salvar_copia_como(self, copia: recuperacao.Copia) -> bool:
+        """Grava a copia como .docx onde o usuario escolher; depois ela sai da recuperacao."""
+        pai = self._pai_dos_dialogos()
+        sessao = recuperacao.Sessao(id_=copia.id)
+        if not sessao.travar():
+            dialogos_modais.avisar(pai, "Recuperação de documentos",
+                                   "Esta cópia já está aberta em outra janela do EditDoc.")
+            return False
+        try:
+            if self._ler_copia(copia) is None:
+                return False
+            sugestao = copia.caminho_original or f"{pathlib.Path(copia.nome).stem}.docx"
+            destino = dialogos_modais.pedir_salvar_arquivo(pai, sugestao)
+            if not destino:
+                return False
+            try:
+                gravacao.gravar_bytes(destino, copia.ler(), conferir=leitor.ler)
+            except (OSError, ErroDocx) as erro:
+                log.error("copia de recuperacao nao gravada em %s: %s", destino, erro)
+                dialogos_modais.avisar(pai, "Recuperação de documentos",
+                                       "Não foi possível gravar o arquivo. A cópia de "
+                                       "recuperação continua guardada.")
+                return False
+            try:
+                configuracao.registrar_recente(str(destino))
+            except OSError:
+                pass
+            sessao.encerrar()
+            sessao = None
+            return True
+        finally:
+            if sessao is not None and sessao._trava is not None:
+                sessao._trava.soltar(apagar=False)
+
+    def descartar_copia(self, copia: recuperacao.Copia) -> bool:
+        pai = self._pai_dos_dialogos()
+        if not dialogos_modais.confirmar(pai, "Recuperação de documentos",
+                                         f"Apagar a cópia de recuperação de \"{copia.nome}\"? "
+                                         "Ela não poderá ser aberta depois."):
+            return False
+        sessao = recuperacao.Sessao(id_=copia.id)
+        if not sessao.travar():
+            dialogos_modais.avisar(pai, "Recuperação de documentos",
+                                   "Esta cópia está aberta em outra janela do EditDoc.")
+            return False
+        sessao.encerrar()
+        return True
 
     def fechou(self, janela: JanelaPrincipal) -> None:
         if janela in self._janelas:

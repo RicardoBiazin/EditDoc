@@ -21,6 +21,11 @@ preferencia sobre o grupo Edicao, como no Word: com a janela estreitando, Edicao
 recolhe antes de a galeria encolher (planejamento.recolher_com_galeria). As abas
 contextuais de tabela e de imagem ficam para depois: os comandos de tabela estao na aba
 Inserir e no menu de contexto.
+
+Acessibilidade (M8): cada botao tem nome para o leitor de tela (a dica do comando, nunca o
+rotulo curto) e pega foco pelo teclado (Alt ou F10, setas: `dicas_teclas.py`), mas nao no
+clique. O titulo dos grupos usa a cor do texto da janela: o cinza "mid" de antes tinha
+contraste de 1,6 para 1 sobre o fundo claro.
 """
 
 from __future__ import annotations
@@ -81,10 +86,14 @@ class BotaoAcao(QToolButton):
         self._acao = acao
         self.setText(rotulo or acao.text())
         self.setToolTip(acao.toolTip())
+        nome = acao.property("nome_acessivel") or acao.text()
+        self.setAccessibleName(str(nome))
+        self.setAccessibleDescription(acao.toolTip())
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setAutoRaise(True)
-        # Botao da faixa nao rouba o foco: o teclado continua no documento.
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Botao da faixa nao rouba o foco no clique: o teclado continua no documento. Pelo
+        # teclado (Alt, F10, setas) ele e' alcancado (M8).
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setCheckable(acao.isCheckable())
         self.clicked.connect(acao.trigger)
         acao.changed.connect(self._sincronizar)
@@ -99,13 +108,20 @@ def _botao(comandos: Comandos, id_: str) -> BotaoAcao:
     return BotaoAcao(comandos.acao(id_), ROTULOS.get(id_))
 
 
+#: Nome falado do botao de menu cujo rotulo e' abreviado.
+_NOMES_DE_MENU = {"Transf.": "Área de transferência"}
+
+
 def _menu(texto: str, acoes: list[QAction]) -> QToolButton:
     botao = QToolButton()
     botao.setText(f"{texto} ▾")
+    botao.setAccessibleName(_NOMES_DE_MENU.get(texto, texto))
+    botao.setAccessibleDescription("Abre um menu com: " + ", ".join(
+        str(a.property("nome_acessivel") or a.text()) for a in acoes))
     botao.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     botao.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     botao.setAutoRaise(True)
-    botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    botao.setFocusPolicy(Qt.FocusPolicy.TabFocus)
     menu = QMenu(botao)
     for acao in acoes:
         menu.addAction(acao)
@@ -119,10 +135,12 @@ def _menu_numero_de_pagina(comandos: Comandos) -> QToolButton:
     botao = QToolButton()
     botao.setText("Número de Página ▾")
     botao.setToolTip("Número de página no cabeçalho ou no rodapé")
+    botao.setAccessibleName("Número de Página")
+    botao.setAccessibleDescription("Abre o menu de número de página: posição, campo e formato")
     botao.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     botao.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     botao.setAutoRaise(True)
-    botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    botao.setFocusPolicy(Qt.FocusPolicy.TabFocus)
     menu = QMenu(botao)
     topo = menu.addMenu("Início da página")
     for id_ in ("numero_topo_esquerda", "numero_topo_centro", "numero_topo_direita"):
@@ -177,7 +195,7 @@ class GrupoFaixa(QWidget):
         super().__init__()
         self._titulo = QLabel(titulo)
         self._titulo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self._titulo.setStyleSheet("color: palette(mid); font-size: 8pt;")
+        self._titulo.setStyleSheet("font-size: 8pt;")
         self._corpo = corpo
         self._menu = menu
         self._fixo = fixo
@@ -334,10 +352,15 @@ class Faixa(QFrame):
 
         topo = QHBoxLayout()
         topo.setContentsMargins(0, 0, 0, 0)
+        #: Arquivo, Desfazer e Refazer: o que fica acima das abas (dicas A, 1 e 2).
+        self.topo_widgets: list[QWidget] = []
         if botao_arquivo is not None:
             topo.addWidget(botao_arquivo)
-        topo.addWidget(_botao(c, "desfazer"))
-        topo.addWidget(_botao(c, "refazer"))
+            self.topo_widgets.append(botao_arquivo)
+        for id_ in ("desfazer", "refazer"):
+            botao = _botao(c, id_)
+            topo.addWidget(botao)
+            self.topo_widgets.append(botao)
         for nome in ABAS:
             self._abas.addTab(nome)
         self._abas.setTabVisible(ABAS.index(ABA_CABECALHO), False)
@@ -415,7 +438,10 @@ class Faixa(QFrame):
         self._botao_tabela.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._botao_tabela.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self._botao_tabela.setAutoRaise(True)
-        self._botao_tabela.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._botao_tabela.setAccessibleName("Tabela")
+        self._botao_tabela.setAccessibleDescription("Abre a grade para escolher o tamanho da "
+                                                    "tabela, ou o diálogo Inserir tabela")
+        self._botao_tabela.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.menu_tabela = QMenu(self._botao_tabela)
         grade_acao = QWidgetAction(self.menu_tabela)
         grade_acao.setDefaultWidget(self.seletor_grade)
@@ -469,6 +495,7 @@ class Faixa(QFrame):
                             (self.espaco_antes, "Espaçamento antes do parágrafo"),
                             (self.espaco_depois, "Espaçamento depois do parágrafo")):
             campo.setToolTip(dica)
+            campo.setAccessibleName(dica)
             campo.valueChanged.connect(self._paragrafo_alterado)
         paragrafo = GrupoFaixa(
             "Parágrafo", _duas_linhas(

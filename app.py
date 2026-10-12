@@ -10,8 +10,12 @@ arquivo.
 
 --autoverificacao nao mostra janela para o usuario: importa os modulos
 obrigatorios, carrega a traducao, faz uma ida-e-volta de .docx e constroi a janela
-principal, e exporta um PDF (M7). O build.bat o roda dentro do .exe antes de entregar; se algo faltou no
+principal, exporta um PDF (M7) e grava e le uma copia de recuperacao numa pasta temporaria
+(M8). O build.bat o roda dentro do .exe antes de entregar; se algo faltou no
 empacotamento, aparece aqui. Sai com 0 quando passa e com 1 quando falha.
+
+Na abertura normal, depois das janelas, o programa oferece as copias de recuperacao que
+sobraram de uma queda (M8) e aplica o tema das preferencias.
 """
 
 from __future__ import annotations
@@ -57,6 +61,13 @@ OBRIGATORIOS = (
     "editdoc.interface.impressao",
     "editdoc.modelo.intervalo",
     "editdoc.modelo.texto_plano",
+    "editdoc.recuperacao",
+    "editdoc.interface.guarda_recuperacao",
+    "editdoc.interface.dialogo_recuperacao",
+    "editdoc.interface.dialogo_opcoes",
+    "editdoc.interface.acessibilidade",
+    "editdoc.interface.dicas_teclas",
+    "editdoc.interface.tema",
 )
 
 #: Formatos de imagem que o .docx traz e o Qt precisa decodificar. JPEG e GIF vem de
@@ -159,6 +170,43 @@ def _pdf_e_impressao(falhas: list[str]) -> None:
             layout.fechar()
 
 
+def _recuperacao(falhas: list[str], pasta: str) -> None:
+    """Grava uma copia de recuperacao na pasta temporaria, simula a queda e le de volta.
+
+    A queda e' soltar a trava sem apagar a copia: e' o que o Windows faz quando o processo
+    morre. Pega o msvcrt (trava) e a gravacao atomica no executavel congelado.
+    """
+    import pathlib
+
+    from editdoc import recuperacao
+    from editdoc.formato_docx.escritor import escrever
+    from editdoc.formato_docx.leitor import ler
+    from editdoc.modelo.documento import Documento, Paragrafo, Run
+
+    try:
+        base = pathlib.Path(pasta)
+        sessao = recuperacao.Sessao(base=base)
+        dados = escrever(Documento(paragrafos=[Paragrafo(runs=[Run("texto recuperado")])]))
+        if not sessao.gravar(dados, None, "Autoverificacao.docx"):
+            falhas.append("a recuperacao automatica nao gravou a copia")
+            return
+        if recuperacao.listar_orfas(base):
+            falhas.append("a copia de uma janela viva foi oferecida como orfa")
+        sessao._trava.soltar(apagar=False)  # a "queda"
+        orfas = recuperacao.listar_orfas(base)
+        if [c.id for c in orfas] != [sessao.id]:
+            falhas.append("a copia que sobrou da queda nao foi encontrada")
+            return
+        lido, _ = ler(orfas[0].ler())
+        if [r.texto for p in lido.paragrafos for r in p.runs] != ["texto recuperado"]:
+            falhas.append("a copia de recuperacao nao le de volta o texto gravado")
+        recuperacao.apagar_copia(sessao.id, base)
+        if any(base.iterdir()):
+            falhas.append("descartar a copia deixou arquivos na pasta de recuperacao")
+    except Exception as erro:  # noqa: BLE001 - interessa o motivo, qualquer um
+        falhas.append(f"recuperacao automatica falhou: {erro}")
+
+
 def _inflar(bruto: bytes) -> bytes:
     """Descomprime o que der: o corte pelo "endstream" pode levar um byte a mais."""
     import zlib
@@ -169,6 +217,26 @@ def _inflar(bruto: bytes) -> bytes:
 
 
 def autoverificacao() -> int:
+    import shutil
+    import tempfile
+
+    from editdoc import recuperacao
+
+    # A recuperacao da autoverificacao vai para uma pasta temporaria, nunca para a do usuario.
+    pasta_rec = tempfile.mkdtemp(prefix="editdoc-autoverificacao-rec-")
+    anterior = os.environ.get(recuperacao.VARIAVEL_PASTA)
+    os.environ[recuperacao.VARIAVEL_PASTA] = pasta_rec
+    try:
+        return _autoverificacao(pasta_rec)
+    finally:
+        if anterior is None:
+            os.environ.pop(recuperacao.VARIAVEL_PASTA, None)
+        else:
+            os.environ[recuperacao.VARIAVEL_PASTA] = anterior
+        shutil.rmtree(pasta_rec, ignore_errors=True)
+
+
+def _autoverificacao(pasta_rec: str) -> int:
     log = log_interno.obter("autoverificacao")
     falhas: list[str] = []
 
@@ -191,6 +259,7 @@ def autoverificacao() -> int:
 
     _formatos_de_imagem(falhas)
     _pdf_e_impressao(falhas)
+    _recuperacao(falhas, pasta_rec)
 
     try:
         from editdoc.interface.janela_principal import JanelaPrincipal
@@ -248,10 +317,15 @@ def main(argv: list[str]) -> int:
     if not servidor.escutar():
         log.warning("outra instancia tem o canal: esta abre como janela comum")
 
+    from editdoc.interface import tema
+    tema.aplicar(cfg.get("tema", "sistema"), app)
+
     for caminho in caminhos:
         gerente.abrir(caminho)
     if not gerente.janelas():
         gerente.novo()
+    # Copias de recuperacao que sobraram de uma queda (M8): o dialogo nao e' modal.
+    gerente.oferecer_recuperacao()
     return app.exec()
 
 

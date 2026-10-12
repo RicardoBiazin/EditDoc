@@ -273,6 +273,83 @@ Outros fatos medidos, que decidiram o desenho:
   falta (imagem colada de outra janela).
 - A tabela colada só aparece em `rootFrame().childFrames()` depois do `endEditBlock`.
 
+## Medições do M8 (polimento)
+
+Feitas em 12/10/2026, Windows 11, Python 3.13, PySide6 6.11.2.
+
+### Interface de texto acessível em Python
+
+A ideia era expor a VistaPaginas ao leitor de tela como texto navegável:
+`QAccessible.installFactory` com uma classe que herda de `QAccessibleWidget` e de
+`QAccessibleTextInterface`, e `interface_cast(TextInterface)` devolvendo o ponteiro C++ da
+parte de texto (`shiboken6.getCppPointer(self)[1]`: o Shiboken cria dois objetos C++
+separados para a herança dupla, e devolver `self` daria o ponteiro errado). Conferido pelo
+UIA de verdade (PowerShell com `System.Windows.Automation`, plataforma `windows`):
+
+| Chamada do cliente UIA | Resultado |
+|---|---|
+| Nome, papel, `ValuePattern.Value` | funcionam |
+| `TextPattern.DocumentRange.GetText(-1)` | funciona: devolve o texto do Python |
+| `GetSupportedPatterns()` | **o processo cai**: "Fatal Python error: _PyThreadState_Attach: non-NULL old thread state" |
+
+A causa: o PySide6 6.11.2 não exporta `QAccessibleTextInterface.selection()` nem
+`attributes()` (puros no C++, com parâmetros de saída por ponteiro), nem `textAtOffset`. O
+UIA chama esses métodos ao montar os padrões, a chamada cai no método puro sem implementação
+em Python, e o interpretador quebra. Um leitor de tela (NVDA, Narrador) lista os padrões o
+tempo todo. Decisão: sem `QAccessibleTextInterface`. O `PainelDocumento` é exposto por um
+`QAccessibleWidget` em Python (sem a parte de texto) com papel `EditableText`, nome
+"Documento: <arquivo>", descrição "Página X de Y" e valor = o parágrafo do cursor. Conferido
+pelo mesmo UIA: aparece como `ControlType.Edit` com `ValuePattern`, o valor é o parágrafo,
+`GetSupportedPatterns()` não derruba nada, e entre os 67 elementos da janela nenhum botão
+ficou sem nome. Caminho para depois: um módulo em C++ (fora do escopo do projeto em Python)
+ou uma versão do PySide que exporte os dois métodos.
+
+### Pintura do cabeçalho e do rodapé fora do cache
+
+O cabeçalho e o rodapé não entram no cache de tiles: são pintados em cada quadro, em cada
+folha visível. Medido pelos critérios do Gate do M3 (p95 de 80 quadros, `viewport().grab()`
+da janela de produção, Segoe UI, offscreen, `QT_SCALE_FACTOR` para o DPR), com a amostra do
+M5 (capa, pares e ímpares, imagem e tabela no cabeçalho, "Página X de Y" no rodapé) de
+2200 parágrafos, 94 páginas:
+
+| Tela | Zoom | Faixas | Quadro quente | Rolagem | Digitar |
+|---|---|---|---|---|---|
+| DPR 1 | 25% | sem / com | 0,7 / 2,1 | 1,3 / 3,0 | 2,3 / 4,0 |
+| DPR 1 | 100% | sem / com | 0,8 / 1,2 | 1,8 / 2,4 | 3,5 / 3,6 |
+| DPR 1 | 300% (500 parágrafos) | sem / com | 1,2 / 1,6 | 2,1 / 2,8 | 5,0 / 4,7 |
+| DPR 2 | 25% | sem / com | 6,5 / 6,9 | 6,8 / 7,5 | 6,9 / 7,8 |
+| DPR 2 | 150% | sem / com | 8,8 / 8,7 | 9,4 / 10,4 | 10,0 / 11,7 |
+
+(ms, p95.) O cabeçalho e o rodapé custam de 0 a 1,7 ms por quadro; o pior caso (DPR 2,
+150%, digitando) fica em 11,7 ms, abaixo dos 16 ms. **Passa sem otimização.** O script de
+medição ficou no rascunho, fora do repositório.
+
+### Linha vazia antes da tabela
+
+O limite registrado no M4 ("uma linha vazia aparece na tela antes de uma tabela no começo do
+documento ou entre duas tabelas") não se reproduz no Qt 6.11.2: o bloco estrutural antes da
+tabela informa altura de linha em `blockBoundingRect`, mas a tabela começa em y = 10 twips
+(a borda) e duas tabelas seguidas se encostam (vão de 0 twip), tanto ao abrir quanto ao
+inserir pela faixa. Travado em `tests/teste_limites.py`.
+
+### docDefaults
+
+O EditDoc gravava no `docDefaults` de todo documento novo o espaçamento do Word (8 pt depois,
+1,08), mas a tela não o aplicava: o mesmo arquivo tinha parágrafos colados no EditDoc e
+separados no Word. Desde a 0.1.0 a tela aplica o `docDefaults` fora das tabelas (no Word, o
+"Table Grid" zera o espaçamento dentro da célula). A suíte inteira continuou passando com a
+mudança (1665 verificações na hora da troca).
+
+### O que ficou medido e não foi feito
+
+- Altura de linha da tabela (`w:trHeight`): o Qt não tem altura mínima de linha. Aplicar
+  exigiria preencher a célula (padding inferior) depois de cada layout, de novo a cada tecla:
+  não é de baixo risco. Fica no arquivo, não na tela.
+- Desfazer de estilo durante a edição do cabeçalho: o catálogo de estilos mora no formato do
+  quadro raiz do corpo (o PySide não exporta `QAbstractUndoItem`), então o passo vai para a
+  pilha do corpo e o parágrafo do cabeçalho para a pilha do cabeçalho. Juntar as pilhas é
+  reescrever o desfazer; fica para depois.
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
@@ -284,3 +361,5 @@ Outros fatos medidos, que decidiram o desenho:
   pela suíte, fora do repositório) e um arquivo salvo pelo EditDoc com tabela e imagem.
 - M4: digitação em tabela grande (acima de ~250 células passa de 16 ms por tecla). Caminhos:
   layout incremental próprio da tabela, ou adiar o relayout para depois da tecla.
+- M8: usar o EditDoc com NVDA e com o Narrador (nomes, "Página X de Y", dicas de tecla) e
+  conferir o tema escuro na tela real (no offscreen o esquema de cores não muda).

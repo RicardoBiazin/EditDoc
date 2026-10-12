@@ -64,7 +64,11 @@ def main(argv: list[str]) -> int:
         return falha(f"{exe} nao existe")
 
     appdata = pathlib.Path(tempfile.mkdtemp(prefix="editdoc-fumaca-"))
-    processo = subprocess.Popen([str(exe)], env=dict(os.environ, APPDATA=str(appdata)))
+    # %LOCALAPPDATA% tambem (M8): a abertura procura copias de recuperacao, e a fumaca nao
+    # pode criar a pasta nem oferecer as copias do usuario.
+    processo = subprocess.Popen([str(exe)], env=dict(
+        os.environ, APPDATA=str(appdata), LOCALAPPDATA=str(appdata / "local"),
+        EDITDOC_RECUPERACAO=str(appdata / "local" / "EditDoc" / "Recuperacao")))
     try:
         limite = time.monotonic() + LIMITE_S
         titulos: list[str] = []

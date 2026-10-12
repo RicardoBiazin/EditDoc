@@ -27,9 +27,12 @@ class BarraAviso(QFrame):
         self._avisos: list[Aviso] = []
         self._rotulo = QLabel()
         self._rotulo.setWordWrap(True)
+        self._rotulo.setAccessibleName("Aviso do documento")
         self._detalhes = QPushButton("Detalhes")
+        self._detalhes.setAccessibleDescription("Mostrar a lista completa de avisos")
         self._detalhes.clicked.connect(self._mostrar_detalhes)
         self._fechar = QPushButton("Fechar")
+        self._fechar.setAccessibleName("Fechar o aviso")
         self._fechar.clicked.connect(self.fechar)
 
         linha = QHBoxLayout(self)

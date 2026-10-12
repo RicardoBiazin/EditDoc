@@ -43,6 +43,10 @@ DEFINICOES = (
     Definicao("exportar_pdf", "PDF...", (), dica="Exportar o documento como PDF"),
     Definicao("exportar_txt", "Texto sem formatação (.txt)...", (),
               dica="Exportar só o texto do documento"),
+    # Preferencias e recuperacao (M8).
+    Definicao("opcoes", "Opções...", (), dica="Preferências do EditDoc"),
+    Definicao("recuperar", "Recuperar documentos...", (),
+              dica="Abrir as cópias da recuperação automática que sobraram de uma queda"),
     Definicao("desfazer", "Desfazer", ("Ctrl+Z",), dica="Desfazer"),
     Definicao("refazer", "Refazer", ("Ctrl+Y", "Ctrl+Shift+Z"), dica="Refazer"),
     Definicao("recortar", "Recortar", ("Ctrl+X",), dica="Recortar"),
@@ -219,7 +223,7 @@ ESPACAMENTOS = {"espaco_1": 100, "espaco_115": 115, "espaco_15": 150, "espaco_2"
 
 #: Comandos de arquivo: quem os executa e' a janela. Ver `ao_arquivo` em Comandos.
 ARQUIVO = ("novo", "abrir", "salvar", "salvar_como", "fechar", "imprimir",
-           "visualizar_impressao", "exportar_pdf", "exportar_txt")
+           "visualizar_impressao", "exportar_pdf", "exportar_txt", "opcoes", "recuperar")
 
 
 def _nada() -> None:
@@ -363,6 +367,8 @@ class Comandos(QObject):
                 dica = f"{dica} ({definicao.atalhos[0]})"
             acao.setToolTip(dica)
             acao.setStatusTip(dica)
+            # Nome para o leitor de tela (M8): a dica sem o atalho, nunca o rotulo curto.
+            acao.setProperty("nome_acessivel", definicao.dica or definicao.texto)
             acao.setCheckable(definicao.marcavel)
             acao.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             acao.triggered.connect(lambda _=False, i=definicao.id: self._executar(i))

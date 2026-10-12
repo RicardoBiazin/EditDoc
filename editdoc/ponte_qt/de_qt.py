@@ -127,13 +127,13 @@ def _run_direto(texto: str, cf: QTextCharFormat, sid_par, res) -> Run:
     return run
 
 
-def _paragrafo(bloco, res) -> Paragrafo:
+def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
     bf = bloco.blockFormat()
     p = Paragrafo()
     sid = pq_estilos.estilo_do_bloco(bf)
     if sid is not None and sid != res.estilos.id_padrao() and res.estilos.obter(sid) is not None:
         p.estilo = sid
-    base, _car = res.paragrafo(p.estilo)
+    base, _car = res.paragrafo(p.estilo, em_celula)
     efetivo = pq_estilos.props_de_bloco(bf)
     for k in CAMPOS_PARAGRAFO:
         valor = efetivo.get(k)
@@ -199,7 +199,7 @@ def _blocos(iterador, largura_corpo_tw: int, em_celula: bool = False, res=None) 
         else:
             bloco = it.currentBlock()
             if bloco.isValid() and not _estrutural_vazio(bloco):
-                paragrafo = _paragrafo(bloco, res)
+                paragrafo = _paragrafo(bloco, res, em_celula)
                 if em_celula:
                     paragrafo.quebra_antes = False
                 saida.append(paragrafo)

@@ -11,6 +11,13 @@ efeito, porque quem abre outras janelas e' o gerente.
 Impressao e PDF (M7): exportar, imprimir e visualizar passam por `interface/impressao.py`,
 com a mesma pintura da tela; os dialogos sao de `dialogos_modais`.
 
+Recuperacao e preferencias (M8): cada janela tem uma GuardaRecuperacao, que grava a
+copia do documento alterado de tempos em tempos; salvar apaga a copia e fechar
+normalmente apaga e solta a trava. Um documento aberto da recuperacao nao tem caminho
+(salvar pergunta onde) e nasce alterado. `aplicar_preferencias` leva Arquivo > Opcoes
+para a janela aberta (recuperacao, regua, abrir o PDF); fonte, tamanho e papel valem
+para o proximo documento novo.
+
 Estilos e Exibir (M6): a galeria fica na faixa; o painel de estilos e o painel de
 navegacao sao QDockWidget opcionais (direita e esquerda), escondidos ao abrir. A janela
 mantem a galeria, o painel de estilos, os campos da aba Layout e os botoes de mostrar em
@@ -38,7 +45,7 @@ from editdoc.formato_docx import conferencia
 from editdoc.formato_docx.avisos import Aviso
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import escrever_com_avisos
-from editdoc.interface import dialogo_estilo, dialogos_modais, impressao
+from editdoc.interface import acessibilidade, dialogo_estilo, dialogos_modais, impressao, tema
 from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
@@ -46,12 +53,14 @@ from editdoc.interface.botao_arquivo import BotaoArquivo
 from editdoc.interface.comandos import TABELA, Comandos
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import BotaoAcao, Faixa
+from editdoc.interface.guarda_recuperacao import GuardaRecuperacao
 from editdoc.interface.navegacao import PainelNavegacao
 from editdoc.interface.painel_documento import PainelDocumento
 from editdoc.interface.painel_estilos import PainelEstilos
 from editdoc.interface.regua import Regua
 from editdoc.modelo import imagem as mod_imagem
-from editdoc.modelo.documento import Documento
+from editdoc.modelo.documento import Documento, Paragrafo
+from editdoc.modelo.estilos import catalogo_de_documento_novo
 from editdoc.modelo.estatisticas import contar
 from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
 from editdoc.modelo.texto_plano import texto_do_documento
@@ -93,12 +102,27 @@ class JanelaPrincipal(QMainWindow):
         self._criado_em: str | None = None
         self._ja_confirmou_fechamento = False
         #: Exportar PDF: lembra a escolha "abrir depois de exportar" enquanto a janela vive.
-        self._abrir_pdf = False
+        #: Comeca pela preferencia (M8).
+        self._abrir_pdf = bool(cfg.get("abrir_pdf_depois", False))
+        #: Documento aberto da recuperacao (M8): nome mostrado e caminho de onde veio.
+        self._nome_recuperado: str | None = None
+        self._original_recuperado: str | None = None
         self._fonte_cfg = (cfg["fonte_padrao"], float(cfg["tamanho_padrao"]))
         self.setWindowIcon(recursos.icone_do_aplicativo())
         self.resize(cfg["janela_largura"], cfg["janela_altura"])
 
         self.painel = PainelDocumento(cfg["fonte_padrao"], cfg["tamanho_padrao"])
+        # Documento novo (M8): o catalogo com a fonte da preferencia e o docDefaults do Word
+        # (8 pt depois, 1,08), que o escritor grava. O primeiro paragrafo ja' nasce com ele,
+        # e o Enter copia o formato: a tela mostra o que o Word mostrara' do arquivo.
+        para_qt.preencher(self.painel.documento_corpo(), Documento(
+            paragrafos=[Paragrafo()],
+            estilos=catalogo_de_documento_novo(cfg["fonte_padrao"], cfg["tamanho_padrao"])))
+        papel = cfg.get("papel_padrao", "A4")
+        if papel != "A4":
+            # Documento novo no papel da preferencia (M8). Nao conta como alteracao.
+            self.painel.definir_configuracao_pagina(Pagina().com_papel(papel))
+            self.painel.documento_corpo().setModified(False)
         self.comandos = Comandos(self, self.painel, self._abrir_localizar,
                                  self._abrir_substituir, ao_arquivo={
                                      "novo": self._novo,
@@ -110,6 +134,8 @@ class JanelaPrincipal(QMainWindow):
                                      "visualizar_impressao": self.visualizar_impressao,
                                      "exportar_pdf": self.exportar_pdf,
                                      "exportar_txt": self.exportar_txt,
+                                     "opcoes": self.opcoes,
+                                     "recuperar": self._recuperar,
                                  }, ao_layout={
                                      "papel": self._mudar_papel,
                                      "orientacao": self._mudar_orientacao,
@@ -204,6 +230,71 @@ class JanelaPrincipal(QMainWindow):
         self.painel.paginaAlterada.connect(self._pagina_mudou)
         self._pagina_mudou()
         self.atualizar_estatisticas()
+
+        # Recuperacao automatica (M8).
+        self.recuperacao = GuardaRecuperacao(
+            self._montar_recuperacao, self.sujo, cfg.get("recuperacao_minutos", 10),
+            cfg.get("recuperacao_ligada", True), self)
+        self.painel.textChanged.connect(self.recuperacao.alterou)
+        self.painel.layout_pag.faixas.alterado.connect(self.recuperacao.alterou)
+        self.painel.paginaAlterada.connect(self.recuperacao.alterou)
+        self.regua.definir_unidade(cfg.get("unidade_regua", "cm"))
+        # Acessibilidade (M8): nomes, teclado da faixa (Alt, F10) e o documento.
+        self.teclado_faixa = acessibilidade.preparar_janela(self)
+        self._atualizar_titulo()
+
+    # -- preferencias e recuperacao (M8) -----------------------------------------
+
+    def _montar_recuperacao(self) -> tuple[bytes, str | None, str, list]:
+        """O .docx da copia de recuperacao, o caminho de origem, o nome e os avisos com perda."""
+        dados, _avisos = escrever_com_avisos(self._modelo_atual())
+        original = str(self.caminho) if self.caminho is not None else self._original_recuperado
+        return dados, original, self._nome(), [a for a in self._avisos if a.perde_ao_salvar]
+
+    def aplicar_preferencias(self, cfg: dict) -> None:
+        """Preferencias que valem para a janela aberta: recuperacao, regua e abrir o PDF."""
+        self.recuperacao.definir(cfg.get("recuperacao_minutos", 10),
+                                 cfg.get("recuperacao_ligada", True))
+        self.regua.definir_unidade(cfg.get("unidade_regua", "cm"))
+        self._abrir_pdf = bool(cfg.get("abrir_pdf_depois", False))
+        self._fonte_cfg = (cfg.get("fonte_padrao", self._fonte_cfg[0]),
+                           float(cfg.get("tamanho_padrao", self._fonte_cfg[1])))
+
+    def opcoes(self) -> bool:
+        """Arquivo > Opções: mostra, grava e aplica as preferencias. True se mudou."""
+        novas = dialogos_modais.pedir_opcoes(self, configuracao.carregar())
+        if novas is None:
+            return False
+        limpar = bool(novas.pop("limpar_recentes", False))
+        try:
+            gravado = configuracao.gravar_preferencias(novas)
+            if limpar:
+                configuracao.limpar_recentes()
+        except OSError as erro:
+            log.error("preferencias nao gravadas: %s", erro)
+            dialogos_modais.avisar(self, "Opções", "Não foi possível gravar as preferências. "
+                                   "Elas valem até o programa fechar.")
+            gravado = configuracao.validar({**configuracao.carregar(), **novas})
+        if self._gerente is not None:
+            self._gerente.aplicar_preferencias(gravado)
+        else:
+            self.aplicar_preferencias(gravado)
+            tema.aplicar(gravado["tema"])
+        self.statusBar().showMessage("Opções gravadas.", 4000)
+        return True
+
+    def _recuperar(self) -> None:
+        if self._gerente is not None:
+            self._gerente.oferecer_recuperacao(avisar_se_vazio=True)
+
+    def carregar_recuperado(self, modelo: Documento, avisos: list[Aviso], copia, sessao) -> None:
+        """Poe na janela um documento da recuperacao: sem caminho, alterado, com a copia adotada."""
+        self.carregar(modelo, avisos, None)
+        self._nome_recuperado = f"{copia.nome} (recuperado)"
+        self._original_recuperado = copia.caminho_original
+        self.recuperacao.sessao = sessao
+        self.recuperacao.alteracoes = 0
+        self.painel.documento_corpo().setModified(True)
         self._atualizar_titulo()
 
     # -- estilos e exibir (M6) ------------------------------------------------
@@ -430,11 +521,15 @@ class JanelaPrincipal(QMainWindow):
     # -- estado do documento -----------------------------------------------
 
     def _nome(self) -> str:
-        return self.caminho.name if self.caminho is not None else "Documento em branco"
+        if self.caminho is not None:
+            return self.caminho.name
+        return self._nome_recuperado or "Documento em branco"
 
     def _atualizar_titulo(self) -> None:
-        nome = self.caminho.name if self.caminho is not None else None
+        nome = self.caminho.name if self.caminho is not None else self._nome_recuperado
         self.setWindowTitle(titulo_da_janela(nome, self.painel.documento_corpo().isModified()))
+        if hasattr(self, "teclado_faixa"):
+            acessibilidade.descrever_documento(self)
 
     def sujo(self) -> bool:
         return self.painel.documento_corpo().isModified()
@@ -445,7 +540,8 @@ class JanelaPrincipal(QMainWindow):
             return None
         return os.path.normcase(os.path.realpath(str(self.caminho)))
 
-    def carregar(self, modelo: Documento, avisos: list[Aviso], caminho: pathlib.Path) -> None:
+    def carregar(self, modelo: Documento, avisos: list[Aviso],
+                 caminho: pathlib.Path | None) -> None:
         """Poe o documento lido na janela. Nao deixa o documento sujo."""
         self.painel.sair_da_faixa()
         para_qt.preencher(self.painel.documento_corpo(), modelo)
@@ -470,6 +566,7 @@ class JanelaPrincipal(QMainWindow):
         if not self.dock_navegacao.isHidden():
             self.navegacao.atualizar()
         self._sintonizar()
+        self.recuperacao.alteracoes = 0
 
     def trazer_para_frente(self) -> None:
         if self.isMinimized():
@@ -502,7 +599,13 @@ class JanelaPrincipal(QMainWindow):
         return self._gravar(self.caminho, trocar=True)
 
     def salvar_como(self) -> bool:
-        sugestao = self.caminho.name if self.caminho is not None else "Documento.docx"
+        if self.caminho is not None:
+            sugestao = self.caminho.name
+        elif self._original_recuperado:
+            # Documento recuperado: sugere o lugar de onde ele veio (o usuario confirma).
+            sugestao = self._original_recuperado
+        else:
+            sugestao = "Documento.docx"
         escolhido = dialogos_modais.pedir_salvar_arquivo(self, sugestao)
         if not escolhido:
             return False
@@ -567,6 +670,8 @@ class JanelaPrincipal(QMainWindow):
         if trocar:
             self.caminho = alvo
             self._assinatura = assinatura(alvo)
+            self._nome_recuperado = self._original_recuperado = None
+            self.recuperacao.salvo()
             self._avisos = []
             self.barra_aviso.mostrar([])
             self.painel.documento_corpo().setModified(False)
@@ -746,6 +851,8 @@ class JanelaPrincipal(QMainWindow):
 
     def closeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
         if self._ja_confirmou_fechamento or self.pode_fechar():
+            # Fechamento normal (salvo ou descartado de proposito): a copia sai.
+            self.recuperacao.encerrar()
             if self._gerente is not None:
                 self._gerente.fechou(self)
             evento.accept()
