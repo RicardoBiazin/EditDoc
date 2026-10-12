@@ -17,6 +17,7 @@ sucessores do python-docx 1.2.0 (spikes/docx, fato 10).
 from __future__ import annotations
 
 import posixpath
+import re
 
 from lxml import etree
 
@@ -55,6 +56,12 @@ _ORDENS = {"pPr": ORDEM_PPR, "rPr": ORDEM_RPR, "tblPr": ORDEM_TBLPR, "tcPr": ORD
 
 XML_PARTES = ("word/document.xml", "word/styles.xml", "word/numbering.xml",
               "word/settings.xml", "docProps/core.xml", "docProps/app.xml")
+#: Partes de cabecalho e rodape (M5): word/header1.xml, word/footer2.xml...
+_FAIXA = re.compile(r"word/(header|footer)\d+\.xml")
+
+
+def eh_faixa(nome: str) -> bool:
+    return _FAIXA.fullmatch(nome) is not None
 
 
 def ordenar_filhos(elemento, ordem: list[str]) -> None:
@@ -96,7 +103,7 @@ def validar_ordem(raiz) -> list[str]:
 def validar_xml_space(raiz) -> list[str]:
     """Texto com espaco nas pontas precisa de xml:space="preserve"."""
     problemas: list[str] = []
-    for t in raiz.iter(q("t"), q("delText")):
+    for t in raiz.iter(q("t"), q("delText"), q("instrText")):
         texto = t.text or ""
         if texto != texto.strip() and t.get("{%s}space" % XML_NS) != "preserve":
             problemas.append(f"{_nome(t)} com espaco nas pontas sem xml:space=\"preserve\": {texto[:20]!r}")
@@ -134,6 +141,12 @@ def validar_estrutura(raiz) -> list[str]:
         blocos = [f for f in tc if isinstance(f.tag, str) and _nome(f) != "tcPr"]
         if not blocos or blocos[-1].tag != q("p"):
             problemas.append("tc nao termina em paragrafo")
+    if raiz.tag in (q("hdr"), q("ftr")):
+        # Cabecalho e rodape: ao menos um paragrafo, e terminam em paragrafo (como a celula).
+        blocos = [f for f in raiz if isinstance(f.tag, str)]
+        if not blocos or blocos[-1].tag != q("p"):
+            problemas.append(f"{_nome(raiz)} nao termina em paragrafo")
+    problemas += _validar_campos(raiz)
     corpo = raiz.find(q("body"))
     if corpo is not None:
         blocos = [f for f in corpo if isinstance(f.tag, str) and _nome(f) != "sectPr"]
@@ -153,6 +166,28 @@ def validar_estrutura(raiz) -> list[str]:
             ok = False
         if not ok:
             problemas.append("imagem com tamanho invalido (wp:extent)")
+    return problemas
+
+
+def _validar_campos(raiz) -> list[str]:
+    """Campo complexo: begin, separate e end equilibrados dentro de cada paragrafo.
+
+    O EditDoc so' grava campo de um paragrafo (PAGE, NUMPAGES). Um end sem begin, ou
+    um begin sem end, faz o Word engolir o texto seguinte como instrucao.
+    """
+    problemas: list[str] = []
+    for p in raiz.iter(q("p")):
+        abertos = 0
+        for fc in p.iter(q("fldChar")):
+            tipo = fc.get(q("fldCharType"))
+            if tipo == "begin":
+                abertos += 1
+            elif tipo == "end":
+                abertos -= 1
+                if abertos < 0:
+                    break
+        if abertos != 0:
+            problemas.append("campo (fldChar) sem begin ou sem end no mesmo paragrafo")
     return problemas
 
 
@@ -232,7 +267,7 @@ def validar_pacote(partes: dict[str, bytes]) -> list[str]:
             else:
                 pilha.append(alvo)
         # Todo r:id usado no corpo tem de ter relacao na propria parte.
-        if atual in XML_PARTES:
+        if atual in XML_PARTES or eh_faixa(atual):
             raiz = etree.fromstring(partes[atual])
             for el in raiz.iter():
                 for chave, valor in el.attrib.items():
@@ -250,13 +285,42 @@ def validar_pacote(partes: dict[str, bytes]) -> list[str]:
 def validar_partes_xml(partes: dict[str, bytes]) -> list[str]:
     """Ordem e xml:space em todas as partes do pacote que sao WordprocessingML."""
     problemas: list[str] = []
-    for nome in ("word/document.xml", "word/styles.xml", "word/numbering.xml"):
+    nomes = ["word/document.xml", "word/styles.xml", "word/numbering.xml"]
+    nomes += sorted(n for n in partes if eh_faixa(n))
+    for nome in nomes:
         if nome in partes:
             raiz = etree.fromstring(partes[nome])
             problemas += [f"{nome}: {p}" for p in validar_ordem(raiz)]
             problemas += [f"{nome}: {p}" for p in validar_xml_space(raiz)]
-            if nome == "word/document.xml":
+            if nome == "word/document.xml" or eh_faixa(nome):
                 problemas += [f"{nome}: {p}" for p in validar_estrutura(raiz)]
+            if nome == "word/document.xml":
+                problemas += [f"{nome}: {p}" for p in validar_secao(raiz)]
+    return problemas
+
+
+#: Ordem dos filhos de w:sectPr (CT_SectPr). As referencias de cabecalho e rodape vem antes.
+ORDEM_SECTPR = ["headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz",
+                "pgMar", "paperSrc", "pgBorders", "lnNumType", "pgNumType", "cols", "formProt",
+                "vAlign", "noEndnote", "titlePg", "textDirection", "bidi", "rtlGutter", "docGrid",
+                "printerSettings", "sectPrChange"]
+
+
+def validar_secao(raiz) -> list[str]:
+    """Filhos do sectPr na ordem do esquema (headerReference e footerReference se misturam)."""
+    problemas: list[str] = []
+    for sect in raiz.iter(q("sectPr")):
+        indices = []
+        for f in sect:
+            nome = _nome(f)
+            if nome not in ORDEM_SECTPR:
+                problemas.append(f"sectPr: filho desconhecido '{nome}'")
+                continue
+            # header e footer formam um grupo so' (xsd:choice): mesma posicao.
+            indices.append((0 if nome == "footerReference" else ORDEM_SECTPR.index(nome), nome))
+        for (i1, n1), (i2, n2) in zip(indices, indices[1:]):
+            if i2 < i1:
+                problemas.append(f"sectPr: '{n2}' aparece depois de '{n1}' (fora de ordem)")
     return problemas
 
 

@@ -255,3 +255,96 @@ def docx_hostil() -> dict[str, bytes]:
                                      ("word/document.xml",
                                       doc_xml[:200] + b" " + b"A" * (11 * 1024 * 1024))]),
     }
+
+
+# -- cabecalho, rodape e campos (M5) ------------------------------------------------
+
+_NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+RT_HEADER = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+RT_FOOTER = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+CT_HEADER = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+CT_FOOTER = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+
+
+def parte_faixa(conteudo: str, raiz: str = "hdr") -> bytes:
+    """XML de um cabecalho (hdr) ou rodape (ftr) com o conteudo dado."""
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:{raiz} xmlns:w="{_NS_W}" xmlns:r="{_NS_R}">{conteudo}</w:{raiz}>').encode("utf-8")
+
+
+def docx_com_xml(corpo_xml: str, sect_xml: str = "", partes_extra: dict | None = None,
+                 relacoes_extra=(), tipos_extra=(), settings_extra: str = "") -> bytes:
+    """Um .docx valido com o corpo `corpo_xml`, como o Word grava.
+
+    `sect_xml` entra no comeco do sectPr final (headerReference, titlePg vai no fim
+    pelo proprio texto). `relacoes_extra`: (rId, tipo, alvo) no document.xml.rels;
+    `tipos_extra`: (/parte, tipo de conteudo) no [Content_Types].
+    """
+    base = bytes_de(Documento(paragrafos=[Paragrafo(runs=[Run("x")])]))
+    partes = partes_de(base)
+    xml = partes["word/document.xml"].decode("utf-8")
+    inicio = xml.index("<w:body>") + len("<w:body>")
+    fim = xml.index("<w:sectPr>")
+    xml = xml[:inicio] + corpo_xml + xml[fim:]
+    final = xml.rindex("<w:sectPr>") + len("<w:sectPr>")  # o do fim do corpo
+    xml = xml[:final] + sect_xml + xml[final:]
+    partes["word/document.xml"] = xml.encode("utf-8")
+    rels = partes["word/_rels/document.xml.rels"].decode("utf-8")
+    novas = "".join(f'<Relationship Id="{i}" Type="{t}" Target="{a}"/>' for i, t, a in relacoes_extra)
+    partes["word/_rels/document.xml.rels"] = rels.replace("</Relationships>",
+                                                          novas + "</Relationships>").encode("utf-8")
+    ct = partes["[Content_Types].xml"].decode("utf-8")
+    novos = "".join(f'<Override PartName="{p}" ContentType="{t}"/>' for p, t in tipos_extra)
+    partes["[Content_Types].xml"] = ct.replace("</Types>", novos + "</Types>").encode("utf-8")
+    if settings_extra:
+        cfg = partes["word/settings.xml"].decode("utf-8")
+        marca = '<w:defaultTabStop w:val="708"/>'
+        partes["word/settings.xml"] = cfg.replace(marca, marca + settings_extra).encode("utf-8")
+    for nome, dados in (partes_extra or {}).items():
+        partes[nome] = dados
+    return montar(partes)
+
+
+def campo_complexo(instrucao: str, resultado: str, rpr: str = "") -> str:
+    """Runs de um campo complexo como o Word grava (begin, instrText, separate, resultado, end)."""
+    r = lambda corpo: f"<w:r>{rpr}{corpo}</w:r>"  # noqa: E731
+    return (r('<w:fldChar w:fldCharType="begin"/>')
+            + r(f'<w:instrText xml:space="preserve"> {instrucao} </w:instrText>')
+            + r('<w:fldChar w:fldCharType="separate"/>')
+            + (r(f"<w:t>{resultado}</w:t>") if resultado else "")
+            + r('<w:fldChar w:fldCharType="end"/>'))
+
+
+def documento_com_cabecalhos(paginas_de_texto: int = 110) -> Documento:
+    """Amostra do M5: capa (primeira pagina diferente), pares e impares, imagem e tabela no
+    cabecalho, "Pagina X de Y" no rodape e campo de pagina no corpo."""
+    from editdoc.modelo.pagina import Pagina
+    corpo = [Paragrafo(runs=[Run("Cabeçalho e rodapé (M5)", negrito=True, tamanho_meio_pt=32)],
+                       alinhamento="centro"),
+             Paragrafo(runs=[Run("Esta frase está na página "), Run("1", campo="PAGE"),
+                             Run(" de "), Run("4", campo="NUMPAGES"), Run(".")])]
+    for i in range(paginas_de_texto):
+        corpo.append(Paragrafo(runs=[Run(f"Parágrafo {i + 1}: texto para encher as páginas e "
+                                         "mostrar o número de página mudando de folha para folha.")]))
+    corpo.append(Paragrafo(runs=[Run("Última página: "), Run("4", campo="PAGE")]))
+    tabela = Tabela(colunas_tw=[4513, 4513], linhas=[
+        Linha(celulas=[_cel("Relatório"), _cel("Página par")])])
+    return Documento(
+        titulo="Amostra M5", autor="Teste",
+        pagina=Pagina(primeira_diferente=True, pares_impares=True, cabecalho_tw=708, rodape_tw=708),
+        paragrafos=corpo,
+        cabecalhos={
+            "primeira": [Paragrafo(runs=[Run("Capa: sem número de página", italico=True)],
+                                   alinhamento="centro")],
+            "padrao": [Paragrafo(runs=[run_de_imagem(imagem(png(40, 20, (30, 120, 220)), 1.0, 0.5,
+                                                            "logotipo")),
+                                       Run("  Cabeçalho das páginas ímpares")],
+                                 alinhamento="direita")],
+            "par": [tabela],
+        },
+        rodapes={
+            "padrao": [Paragrafo(runs=[Run("Página "), Run("1", campo="PAGE"), Run(" de "),
+                                       Run("4", campo="NUMPAGES")], alinhamento="centro")],
+            "par": [Paragrafo(runs=[Run("1", campo="PAGE", negrito=True)], alinhamento="esquerda")],
+        })

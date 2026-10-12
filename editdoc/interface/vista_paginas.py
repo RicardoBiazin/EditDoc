@@ -13,6 +13,11 @@ Cache de tiles (medido no Gate do M3, docs/SPIKES.md):
     altura total do documento mudou, invalida tudo abaixo do ponto da mudanca;
   - o cache tem teto de memoria; zoom, DPR e configuracao de pagina limpam tudo;
   - com selecao, a folha e' pintada direto (a selecao nao e' cacheada).
+
+Cabecalho e rodape (M5) nao entram no cache: sao pintados por cima dos tiles, em cada
+pagina visivel (`desenhar_faixas`), porque o numero da pagina muda de folha para
+folha. Fora da edicao saem esmaecidos (cinza claro), como no Word; na edicao, o
+corpo e' que esmaece, e uma linha tracejada com rotulo marca a area.
 """
 
 from __future__ import annotations
@@ -27,6 +32,8 @@ from PySide6.QtGui import (QAbstractTextDocumentLayout, QColor, QPainter, QPalet
 from PySide6.QtWidgets import QAbstractScrollArea
 
 from editdoc.interface.layout_paginado import LayoutPaginado
+from editdoc.modelo.campos import tipo_da_pagina
+from editdoc.modelo.pagina import Pagina
 from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX, Mapa,
                                    alinhar_ao_dispositivo, limitar_zoom, passo_de_zoom,
                                    teto_de_zoom)
@@ -41,6 +48,11 @@ COR_FOLHA = QColor(255, 255, 255)
 COR_SELECAO = QColor(0, 120, 215)
 COR_CARET = QColor(0, 0, 0)
 COR_QUEBRA = QColor(0x70, 0x76, 0x80)
+#: Cabecalho e rodape fora da edicao: pintados com esta opacidade (cinza claro).
+OPACIDADE_FAIXA = 0.45
+#: Corpo durante a edicao do cabecalho: um veu branco por cima.
+COR_VEU = QColor(255, 255, 255, 140)
+COR_ROTULO_FAIXA = QColor(0x2B, 0x57, 0x9A)
 #: Lado da alca de imagem desenhada, em px logicos.
 ALCA_TELA_PX = 7.0
 _QUEBRA_ANTES = QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore
@@ -89,6 +101,60 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         ctx.selections = [sel]
     layout.doc.documentLayout().draw(painter, ctx)
     painter.restore()
+
+
+def origem_da_faixa(pagina: Pagina, onde: str, altura_tw: float) -> tuple[float, float]:
+    """Canto superior esquerdo do cabecalho (ou rodape) na folha, em twips.
+
+    O cabecalho comeca a `cabecalho_tw` do alto da folha. O rodape termina a `rodape_tw`
+    do pe' da folha e cresce para cima, como no Word.
+    """
+    if onde == "cabecalho":
+        return float(pagina.margem_esq_tw), float(pagina.cabecalho_tw)
+    return float(pagina.margem_esq_tw), float(pagina.altura_tw - pagina.rodape_tw - altura_tw)
+
+
+def rotulo_da_faixa(onde: str, indice: int, pagina: Pagina) -> str:
+    """O rotulo da area na edicao: "Cabeçalho", "Rodapé - Primeira página"..."""
+    nome = "Cabeçalho" if onde == "cabecalho" else "Rodapé"
+    tipo = tipo_da_pagina(indice, pagina)
+    if tipo == "primeira":
+        return f"{nome} - Primeira página"
+    if pagina.pares_impares:
+        return f"{nome} - Página par" if tipo == "par" else f"{nome} - Página ímpar"
+    return nome
+
+
+def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform, total: int,
+                    opacidade: float = 1.0, editada=None, selecao=None) -> None:
+    """Pinta o cabecalho e o rodape da pagina n. Mesma funcao para a tela e para o PDF.
+
+    transf leva twips da folha para o painter (como em desenhar_folha). `editada` e' a
+    FaixaQt em edicao: ela recebe a selecao. Os campos ganham o numero da pagina n.
+    """
+    pagina = layout.pagina_arquivo
+    for onde in ("cabecalho", "rodape"):
+        faixa = layout.faixas.da_pagina(onde, n, pagina)
+        if faixa is None:
+            continue
+        faixa.preparar(n, total, pagina)
+        x, y = origem_da_faixa(pagina, onde, faixa.altura())
+        painter.save()
+        painter.setWorldTransform(transf)
+        painter.translate(x, y)
+        painter.setOpacity(opacidade)
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        ctx.palette = PALETA_TEXTO
+        ctx.cursorPosition = -1
+        if faixa is editada and selecao is not None and selecao.hasSelection():
+            sel = QAbstractTextDocumentLayout.Selection()
+            sel.cursor = QTextCursor(selecao)
+            fmt = QTextCharFormat()
+            fmt.setBackground(COR_SELECAO)
+            sel.format = fmt
+            ctx.selections = [sel]
+        faixa.doc.documentLayout().draw(painter, ctx)
+        painter.restore()
 
 
 class VistaPaginas(QAbstractScrollArea):
@@ -288,6 +354,19 @@ class VistaPaginas(QAbstractScrollArea):
         x0, y0 = m.doc_para_tela(r.left(), r.top(), self._paginas())
         return QRectF(x0, y0, r.width() * m.escala, r.height() * m.escala)
 
+    def _faixa_editada(self):
+        """(FaixaQt em edicao, cursor dela), ou None. O painel informa."""
+        return None
+
+    def _retangulo_do_caret(self, m: Mapa, n_total: int) -> QRectF | None:
+        """Caret em px do viewport, ou None. O painel troca isto na edicao do cabecalho."""
+        pos = self._posicao_caret()
+        if pos is None:
+            return None
+        c = self.layout_pag.retangulo_cursor(pos)
+        x, y = m.doc_para_tela(c.x(), c.y(), n_total)
+        return QRectF(x, y, 1.0, c.height() * m.escala)
+
     def _alternar_caret(self) -> None:
         self._caret_ligado = not self._caret_ligado
         self.viewport().update()
@@ -332,6 +411,10 @@ class VistaPaginas(QAbstractScrollArea):
 
     # ----- pintura --------------------------------------------------------
     def paintEvent(self, ev) -> None:
+        if self.layout_pag.atualizar_campos():
+            # Total de paginas mudou e o corpo tem campo: o numero na tela muda.
+            self._limpar_cache()
+            self._altura_doc_anterior = None
         self._aplicar_pendencias()
         vp = self.viewport()
         p = QPainter(vp)
@@ -368,11 +451,46 @@ class VistaPaginas(QAbstractScrollArea):
                         if alvo.intersects(visivel):
                             p.drawPixmap(QPointF(alvo.x(), alvo.y()),
                                          self._tile(n, i, j, dpr, m))
+            self._pintar_faixas(p, m, n, x0, y0, n_total)
             p.restore()
         self._desenhar_quebras(p, m, i0, i1, n_total)
         self._desenhar_caret(p, m, dpr, n_total)
         self._desenhar_imagem_selecionada(p)
         p.end()
+
+    def _pintar_faixas(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float,
+                       n_total: int) -> None:
+        """Cabecalho e rodape da folha n, por cima dos tiles. Na edicao, o corpo esmaece."""
+        editada = self._faixa_editada()
+        t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
+        if editada is None:
+            desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA)
+            return
+        faixa, cursor = editada
+        efetiva = self.layout_pag.pagina
+        corpo = QRectF(x0 + efetiva.margem_esq_tw * m.escala, y0 + efetiva.margem_sup_tw * m.escala,
+                       efetiva.corpo_largura_tw() * m.escala, efetiva.corpo_altura_tw() * m.escala)
+        p.fillRect(corpo, COR_VEU)
+        desenhar_faixas(p, self.layout_pag, n, t, n_total, 1.0, faixa, cursor)
+        # Linha tracejada e rotulo no limite de cada area, em todas as paginas.
+        p.save()
+        fonte = p.font()
+        fonte.setPointSizeF(8.0)
+        p.setFont(fonte)
+        metrica = p.fontMetrics()
+        for onde, y_tw in (("cabecalho", efetiva.margem_sup_tw),
+                           ("rodape", efetiva.altura_tw - efetiva.margem_inf_tw)):
+            y = y0 + y_tw * m.escala
+            p.setPen(QPen(COR_ROTULO_FAIXA, 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(x0, y), QPointF(x0 + m.largura_folha, y))
+            rotulo = rotulo_da_faixa(onde, n, self.layout_pag.pagina_arquivo)
+            larg = metrica.horizontalAdvance(rotulo) + 10
+            alto = metrica.height() + 2
+            caixa = QRectF(x0 + 4, y if onde == "cabecalho" else y - alto, larg, alto)
+            p.fillRect(caixa, QColor(0xDD, 0xE6, 0xF4))
+            p.setPen(COR_ROTULO_FAIXA)
+            p.drawText(caixa, Qt.AlignmentFlag.AlignCenter, rotulo)
+        p.restore()
 
     def _desenhar_imagem_selecionada(self, p: QPainter) -> None:
         """Quadro e alcas nos quatro cantos da imagem selecionada; tracejado durante o arrasto."""
@@ -398,13 +516,13 @@ class VistaPaginas(QAbstractScrollArea):
         p.restore()
 
     def _desenhar_caret(self, p: QPainter, m: Mapa, dpr: float, n_total: int) -> None:
-        pos = self._posicao_caret()
-        if pos is None or not self._caret_ligado or not self.hasFocus():
+        if not self._caret_ligado or not self.hasFocus():
             return
-        c = self.layout_pag.retangulo_cursor(pos)
-        x, y = m.doc_para_tela(c.x(), c.y(), n_total)
-        x, y = alinhar_ao_dispositivo(x, dpr), alinhar_ao_dispositivo(y, dpr)
-        p.fillRect(QRectF(x, y, 1.0 / dpr, c.height() * m.escala), COR_CARET)
+        r = self._retangulo_do_caret(m, n_total)
+        if r is None:
+            return
+        x, y = alinhar_ao_dispositivo(r.x(), dpr), alinhar_ao_dispositivo(r.y(), dpr)
+        p.fillRect(QRectF(x, y, 1.0 / dpr, r.height()), COR_CARET)
 
     def _desenhar_quebras(self, p: QPainter, m: Mapa, i0: int, i1: int, n_total: int) -> None:
         """Linha tracejada 'Quebra de pagina' onde um paragrafo comeca numa pagina nova.

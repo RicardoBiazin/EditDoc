@@ -100,3 +100,10 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | tabela grande | O Qt refaz a tabela inteira a cada tecla (~0,06 ms por celula). Os limites do leitor (`tabela_celulas` etc.) e dos comandos (`edicao/tabelas.py`) existem por isso. |
 | leitor e namespace | Elemento fora do `w:` (equacao `m:oMath`) era pulado pelo `if ns != W` sem aviso. Conferir o namespace ANTES de descartar. |
 | area de transferencia no offscreen | Sair do processo com algo na area de transferencia derruba o processo (codigo 139) so' no offscreen. `ajudantes.preparar_qt` limpa no `atexit`. |
+| `QTextObjectInterface` | Com `class X(QObject, QTextObjectInterface)` o PySide 6.11 aceita o `registerHandler`, mas `handlerForObject` devolve None e o objeto some sem erro. O manipulador do campo herda de `QPyTextObject` (`ponte_qt/campos.py`). |
+| propriedade de formato com `""` | `setProperty(prop, "")` volta do PySide como lista vazia, e `str()` dela da' `"[]"`. `campos.resultado_de` so' aceita `str`. |
+| `markContentsDirty` | Refaz o layout sem emitir `contentsChange`/`contentsChanged`, sem desfazer e sem `isModified`. E' assim que o campo muda de valor por pagina. Mas nao invalida o cache de tiles: quem chama limpa (`atualizar_campos` -> `_limpar_cache`). |
+| altura do cabecalho | Ler `documentSize()` no `contentsChange` da' a altura de ANTES da tecla (o layout e' refeito depois do sinal). O conjunto de cabecalhos escuta `contentsChanged`, que vem depois do layout; senao o corpo desce uma tecla atrasado. |
+| `PainelDocumento.document()` | Na edicao do cabecalho devolve o documento do cabecalho. Gravar, carregar e "alterado" usam `documento_corpo()`. Um `document()` novo na janela grava o cabecalho como corpo. |
+| teste de campo no corpo | O corpo vem dos tiles: um segundo `grab()` nao chama `drawObject`. Para espiar o valor do campo, `_limpar_cache()` antes. |
+| campo no `.docx` | `instrText` com espaco precisa de `xml:space="preserve"` (o validador confere, como o `w:t`), e begin/end tem de fechar no mesmo paragrafo: senao o Word engole o texto seguinte como instrucao. |

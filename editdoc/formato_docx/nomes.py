@@ -42,3 +42,10 @@ CT_XML = "application/xml"
 def q(local: str, ns: str = W) -> str:
     """Nome qualificado no formato de lxml: {ns}local."""
     return "{%s}%s" % (ns, local)
+
+#: Cabecalho e rodape (M5).
+RT_CABECALHO = RT + "header"
+RT_RODAPE = RT + "footer"
+RT_CONFIG = RT + "settings"
+CT_CABECALHO = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+CT_RODAPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"

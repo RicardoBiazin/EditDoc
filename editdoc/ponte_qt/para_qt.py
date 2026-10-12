@@ -17,6 +17,9 @@ formato, em JSON, e volta igual.
 
 Imagens (M4): o run de imagem vira o caractere de objeto com QTextImageFormat; os
 bytes ficam no registro de `imagens.py`.
+
+Campos (M5): o run de campo vira o caractere de objeto com o formato de campo de
+`campos.py`, que o manipulador do layout pinta com o numero da pagina.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QTextBlockFormat, QTextCharFor
 from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula, Documento,
                                       Paragrafo, Tabela, bordas_padrao)
 from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
-from editdoc.ponte_qt import imagens
+from editdoc.ponte_qt import campos, imagens
 
 LINHA_SEPARADORA = chr(0x2028)
 
@@ -316,6 +319,8 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas) -> N
     for r in p.runs:
         if r.imagem is not None:
             inserir_imagem(cursor, r.imagem)
+        elif r.campo is not None:
+            campos.inserir_campo(cursor, r.campo, r.texto, _formato_de_run(r))
         elif r.texto:
             cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA), _formato_de_run(r))
     listas.aplicar(cursor, p.numeracao)
@@ -396,6 +401,15 @@ def inserir_tabela_modelo(cursor: QTextCursor, tabela: Tabela) -> QTextTable:
         _inserir_blocos(cur, celula.blocos, listas)
     aplicar_formatos_das_celulas(qt)
     return qt
+
+
+def preencher_blocos(documento_qt: QTextDocument, blocos: list) -> None:
+    """Substitui o conteudo pelos blocos (cabecalho ou rodape). Limpa o desfazer."""
+    documento_qt.clear()
+    cursor = QTextCursor(documento_qt)
+    _inserir_blocos(cursor, blocos, _Listas())
+    documento_qt.clearUndoRedoStacks()
+    documento_qt.setModified(False)
 
 
 def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:

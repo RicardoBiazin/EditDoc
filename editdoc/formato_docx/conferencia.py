@@ -2,8 +2,9 @@
 
 A gravacao escreve o temporario, le de volta o que ficou no disco e compara com
 o que o usuario viu: mesma estrutura (paragrafos, tabelas, linhas, celulas e
-mesclas), mesmo texto, mesmas quebras e as mesmas imagens (pelos bytes). Um
-arquivo que nao confere nao substitui o original.
+mesclas), mesmo texto, mesmas quebras, as mesmas imagens (pelos bytes) e os
+mesmos campos. Cabecalho e rodape (M5) passam pela mesma comparacao, um por tipo.
+Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
 que terminam em tabela com um paragrafo vazio (o Word exige), e isso nao e'
@@ -34,6 +35,10 @@ def _imagens(paragrafo) -> list[str]:
             f"{r.imagem.altura_emu}" for r in paragrafo.runs if r.imagem is not None]
 
 
+def _campos(paragrafo) -> tuple:
+    return tuple(r.campo for r in paragrafo.runs if r.campo is not None)
+
+
 def _itens(blocos, saida: list, onde: str) -> None:
     """Sequencia comparavel: um item por paragrafo, tabela, linha e celula."""
     n_par = 0
@@ -50,7 +55,7 @@ def _itens(blocos, saida: list, onde: str) -> None:
         else:
             n_par += 1
             saida.append((f"{onde}paragrafo {n_par}", "p", texto_do_paragrafo(bloco),
-                          bloco.quebra_antes, tuple(_imagens(bloco))))
+                          bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco)))
 
 
 def conferir(dados: bytes, esperado: Documento) -> None:
@@ -62,8 +67,16 @@ def conferir(dados: bytes, esperado: Documento) -> None:
         raise FalhaDeConferencia(f"o arquivo gravado nao pode ser lido: {erro.codigo}") from None
     a: list = []
     b: list = []
-    _itens(normalizar(esperado).paragrafos, a, "")
-    _itens(normalizar(lido).paragrafos, b, "")
+    esperado_n, lido_n = normalizar(esperado), normalizar(lido)
+    _itens(esperado_n.paragrafos, a, "")
+    _itens(lido_n.paragrafos, b, "")
+    for nome, faixa_a, faixa_b in (("cabecalho", esperado_n.cabecalhos, lido_n.cabecalhos),
+                                   ("rodape", esperado_n.rodapes, lido_n.rodapes)):
+        if sorted(faixa_a) != sorted(faixa_b):
+            raise FalhaDeConferencia(f"{nome}: tipos diferentes ({sorted(faixa_a)} e {sorted(faixa_b)})")
+        for tipo in sorted(faixa_a):
+            _itens(faixa_a[tipo], a, f"{nome} {tipo}: ")
+            _itens(faixa_b[tipo], b, f"{nome} {tipo}: ")
     n_a = sum(1 for x in a if x[1] == "p")
     n_b = sum(1 for x in b if x[1] == "p")
     if n_a != n_b:
@@ -77,6 +90,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"texto diferente no {lugar}")
             if x[3] != y[3]:
                 raise FalhaDeConferencia(f"quebra de pagina diferente no {lugar}")
+            if x[5] != y[5]:
+                raise FalhaDeConferencia(f"campo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")
         raise FalhaDeConferencia(f"estrutura de tabela diferente em {lugar}")
     if len(a) != len(b):

@@ -93,6 +93,10 @@ class JanelaPrincipal(QMainWindow):
                                      "papel": self._mudar_papel,
                                      "orientacao": self._mudar_orientacao,
                                      "margens": self._mudar_margens,
+                                     "primeira_diferente": self._alternar_primeira_diferente,
+                                     "pares_impares": self._alternar_pares_impares,
+                                     "formato_numero": self._mudar_formato_numero,
+                                     "numero_inicial": self._mudar_numero_inicial,
                                  }, ao_inserir={
                                      "tabela": self._inserir_tabela,
                                      "imagem": self._inserir_imagem,
@@ -140,7 +144,7 @@ class JanelaPrincipal(QMainWindow):
         self._timer.setInterval(ATRASO_ESTATISTICAS_MS)
         self._timer.timeout.connect(self.atualizar_estatisticas)
         self.painel.textChanged.connect(self._timer.start)
-        self.painel.document().modificationChanged.connect(lambda _=False: self._atualizar_titulo())
+        self.painel.documento_corpo().modificationChanged.connect(lambda _=False: self._atualizar_titulo())
         self.painel.cursorPositionChanged.connect(self._atualizar_rotulo_pagina)
         self.painel.paginaAlterada.connect(self._pagina_mudou)
         self._pagina_mudou()
@@ -165,7 +169,7 @@ class JanelaPrincipal(QMainWindow):
             self.comandos.atualizar_pagina(nova)
             return
         self.painel.definir_configuracao_pagina(nova)
-        self.painel.document().setModified(True)
+        self.painel.documento_corpo().setModified(True)
 
     def _mudar_papel(self, nome: str) -> None:
         self._alterar_pagina(self.painel.configuracao_pagina().com_papel(nome))
@@ -185,6 +189,26 @@ class JanelaPrincipal(QMainWindow):
             _, sup, inf, esq, dir_ = predefinida
             nova = atual.com_margens(sup, inf, esq, dir_)
         self._alterar_pagina(nova)
+
+    # -- cabecalho e rodape (M5) ---------------------------------------------
+
+    def _alternar_primeira_diferente(self) -> None:
+        atual = self.painel.configuracao_pagina()
+        self._alterar_pagina(replace(atual, primeira_diferente=not atual.primeira_diferente))
+
+    def _alternar_pares_impares(self) -> None:
+        atual = self.painel.configuracao_pagina()
+        self._alterar_pagina(replace(atual, pares_impares=not atual.pares_impares))
+
+    def _mudar_formato_numero(self, formato: str) -> None:
+        self._alterar_pagina(replace(self.painel.configuracao_pagina(), formato_numero=formato))
+
+    def _mudar_numero_inicial(self) -> None:
+        atual = self.painel.configuracao_pagina()
+        ok, valor = dialogos_modais.pedir_numero_inicial(self, atual.numero_inicial)
+        if ok:
+            self._alterar_pagina(replace(atual, numero_inicial=valor))
+        self.painel.setFocus()
 
     # -- inserir: tabela e imagem -------------------------------------------
 
@@ -267,10 +291,10 @@ class JanelaPrincipal(QMainWindow):
 
     def _atualizar_titulo(self) -> None:
         nome = self.caminho.name if self.caminho is not None else None
-        self.setWindowTitle(titulo_da_janela(nome, self.painel.document().isModified()))
+        self.setWindowTitle(titulo_da_janela(nome, self.painel.documento_corpo().isModified()))
 
     def sujo(self) -> bool:
-        return self.painel.document().isModified()
+        return self.painel.documento_corpo().isModified()
 
     def caminho_chave(self) -> str | None:
         """Caminho resolvido, em caixa baixa: impede abrir o mesmo arquivo em duas janelas."""
@@ -280,7 +304,9 @@ class JanelaPrincipal(QMainWindow):
 
     def carregar(self, modelo: Documento, avisos: list[Aviso], caminho: pathlib.Path) -> None:
         """Poe o documento lido na janela. Nao deixa o documento sujo."""
-        para_qt.preencher(self.painel.document(), modelo)
+        self.painel.sair_da_faixa()
+        para_qt.preencher(self.painel.documento_corpo(), modelo)
+        self.painel.carregar_faixas(modelo)
         self.painel.definir_configuracao_pagina(modelo.pagina)
         self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
         self.caminho = caminho
@@ -304,8 +330,9 @@ class JanelaPrincipal(QMainWindow):
     # -- salvar ------------------------------------------------------------
 
     def _modelo_atual(self) -> Documento:
-        modelo = de_qt.extrair(self.painel.document())
+        modelo = de_qt.extrair(self.painel.documento_corpo())
         modelo.pagina = replace(self.painel.configuracao_pagina())
+        modelo.cabecalhos, modelo.rodapes = self.painel.faixas_do_modelo()
         modelo.titulo = self._titulo
         modelo.autor = self._autor
         modelo.criado_em = self._criado_em
@@ -390,7 +417,7 @@ class JanelaPrincipal(QMainWindow):
             self._assinatura = assinatura(alvo)
             self._avisos = []
             self.barra_aviso.mostrar([])
-            self.painel.document().setModified(False)
+            self.painel.documento_corpo().setModified(False)
             self._atualizar_titulo()
             try:
                 configuracao.registrar_recente(str(alvo))

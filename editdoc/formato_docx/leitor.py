@@ -9,8 +9,13 @@ O que o programa nao modela NAO e' descartado em silencio: vira aviso (ver
 `avisos.py`). Tabelas (M4) viram `Tabela`; a que passa dos limites, ou esta'
 aninhada fundo demais, vira paragrafos com aviso. Imagens na linha (PNG, JPEG,
 GIF, BMP) viram `Imagem` com os bytes originais; outro formato e' aviso. Campos
-viram o texto que o Word mostra; revisoes aceitas; exclusoes e controles de
-conteudo tem aviso.
+PAGE e NUMPAGES (M5) viram um `Run` com `campo`; os outros viram o texto que o Word
+mostra, com aviso. Revisoes aceitas; exclusoes e controles de conteudo tem aviso.
+
+Cabecalho e rodape (M5): os da ultima secao, com a heranca do Word (a secao sem
+referencia herda a da anterior). Cada parte passa pelos mesmos limites do pacote e
+mais um, de tamanho (`cabecalho_bytes`). Campo aninhado fundo demais
+(`campo_profundidade`) nao e' interpretado: o texto fica, com aviso.
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, M
                                         W_STRICT, WP_NS, q)
 from editdoc.formato_docx.ordem import caminho_dos_rels
 from editdoc.modelo import imagem as mod_imagem
+from editdoc.modelo.campos import (FORMATOS_NUMERO, INSTRUCAO_MAXIMA, NUMERO_INICIAL_MAXIMO,
+                                   normalizar_instrucao, tipo_do_campo)
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Celula,
                                       Documento, Imagem, Linha, Paragrafo, Run, Tabela,
                                       colunas_da_linha, normalizar, run_de_imagem)
@@ -53,7 +60,15 @@ LIMITES_PADRAO = {
     "tabela_colunas": 63,
     "tabela_celulas": 5000,
     "tabela_profundidade": 4,
+    # Cabecalho e rodape (M5): cada parte e' pintada em toda pagina; uma parte enorme
+    # deixaria a rolagem lenta. Acima disto a parte nao e' lida, com aviso.
+    "cabecalho_bytes": 4 * 1024 * 1024,
+    # Campo dentro de campo dentro de campo...: acima disto o campo nao e' interpretado.
+    "campo_profundidade": 8,
 }
+
+#: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
+_TIPO_FAIXA = {"default": "padrao", "first": "primeira", "even": "par"}
 
 #: Maior medida aceita para imagem e coluna: o maior papel (176 cm).
 _EMU_MAXIMO = PAPEL_MAXIMO_TW * EMU_POR_TWIP
@@ -180,6 +195,12 @@ class _Contexto:
         self.estilo_tabela_padrao: str | None = None
         #: profundidade de tabela atual (0 = corpo)
         self.nivel_tabela = 0
+        #: campos complexos abertos (w:fldChar begin sem end), do de fora para o de dentro
+        self.campos: list[dict] = []
+        #: cabecalho e rodape herdados das secoes anteriores: (onde, tipo) -> rId
+        self.faixas_herdadas: dict[tuple[str, str], str] = {}
+        #: referencias de cada secao anterior, para saber se diferem das da ultima
+        self.faixas_das_secoes: list[dict[tuple[str, str], str]] = []
 
 
 # -- classificacao ------------------------------------------------------------
@@ -294,7 +315,7 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
         elif loc == "sectPr":
             c.somar("SECAO")
             ctx.secoes += 1
-            _checar_secao(f, ctx)
+            _faixas_da_secao(f, ctx, final=False)
         elif loc == "pageBreakBefore":
             out["quebra_antes"] = _onoff(f)
         elif loc in _PPR_NEUTRAS:
@@ -406,9 +427,15 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     elif loc == "softHyphen" or loc == "lastRenderedPageBreak":
         return
     elif loc == "fldChar":
-        if _atr(f, "fldCharType") == "begin":
-            c.somar("CAMPO")
-    elif loc == "instrText" or loc == "fldData":
+        _fld_char(_atr(f, "fldCharType"), partes, ctx)
+    elif loc == "instrText":
+        if ctx.campos and ctx.campos[-1].get("fase") == "instr":
+            topo = ctx.campos[-1]
+            if sum(len(x) for x in topo["instr"]) <= INSTRUCAO_MAXIMA:
+                topo["instr"].append(f.text or "")
+            else:
+                topo["longo"] = True
+    elif loc == "fldData":
         return
     elif loc == "drawing":
         imagem = _ler_desenho(f, ctx)
@@ -422,6 +449,52 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
         c.somar("NOTA")
     else:
         c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _fld_char(tipo: str | None, partes: _Pedacos, ctx: _Contexto) -> None:
+    """Campo complexo: begin, instrText, separate, resultado, end (podem estar em runs diferentes).
+
+    PAGE e NUMPAGES com o begin e o end no mesmo paragrafo, sem campo dentro, viram um
+    run com `campo`; o texto e' o resultado (o que o Word mostrava). O resto mantem o
+    resultado como texto, e o aviso CAMPO diz que o campo se perde.
+    """
+    partes.descarregar()
+    pilha = ctx.campos
+    if tipo == "begin":
+        if len(pilha) >= ctx.lim["campo_profundidade"]:
+            pilha.append({"ignorado": True})
+            return
+        if pilha:
+            pilha[-1]["aninhado"] = True
+        pilha.append({"fase": "instr", "instr": [], "saida": partes.saida, "base": partes.base,
+                      "inicio": None, "aninhado": False})
+    elif tipo == "separate":
+        if pilha and not pilha[-1].get("ignorado"):
+            pilha[-1]["fase"] = "resultado"
+            if pilha[-1]["saida"] is partes.saida:
+                pilha[-1]["inicio"] = len(partes.saida)
+            else:
+                pilha[-1]["aninhado"] = True  # o resultado comeca em outro paragrafo
+    elif tipo == "end":
+        if not pilha:
+            return
+        campo = pilha.pop()
+        if campo.get("ignorado"):
+            ctx.coletor.somar("CAMPO")
+            return
+        instrucao = normalizar_instrucao("".join(campo["instr"]))
+        saida = partes.saida
+        inicio = campo["inicio"] if campo["inicio"] is not None else len(saida)
+        resultado = saida[inicio:] if campo["saida"] is saida else []
+        if (tipo_do_campo(instrucao) is None or campo.get("longo") or campo["aninhado"]
+                or campo["saida"] is not saida or any(r.imagem is not None or r.campo is not None
+                                                      for r in resultado)):
+            ctx.coletor.somar("CAMPO")
+            return
+        base = resultado[0] if resultado else campo["base"]
+        texto = "".join(r.texto for r in resultado).replace("\f", "")
+        del saida[inicio:]
+        saida.append(replace(base, texto=texto, campo=instrucao, imagem=None))
 
 
 def _medida_emu(valor: str | None) -> int | None:
@@ -518,8 +591,17 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             c.somar("HIPERLINK")
             _runs_em(f, ctx, saida)
         elif loc == "fldSimple":
-            c.somar("CAMPO")
-            _runs_em(f, ctx, saida)
+            instrucao = normalizar_instrucao(_atr(f, "instr") or "")
+            dentro: list[Run] = []
+            _runs_em(f, ctx, dentro)
+            if tipo_do_campo(instrucao) is not None and not any(
+                    r.imagem is not None or r.campo is not None for r in dentro):
+                base = dentro[0] if dentro else Run()
+                texto = "".join(r.texto for r in dentro).replace("\f", "")
+                saida.append(replace(base, texto=texto, campo=instrucao, imagem=None))
+            else:
+                c.somar("CAMPO")
+                saida.extend(dentro)
         elif loc in ("ins", "moveTo"):
             c.somar("REVISAO")
             _runs_em(f, ctx, saida)
@@ -567,7 +649,7 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
                     for r in runs]
     saida = [Paragrafo(runs=[], **props)]
     for run in runs:
-        if run.imagem is not None:
+        if run.imagem is not None or run.campo is not None:
             saida[-1].runs.append(run)
             continue
         for i, pedaco in enumerate(run.texto.split("\f")):
@@ -909,10 +991,99 @@ def _celula(tc, ctx: _Contexto) -> Celula | None:
     return celula
 
 
-def _checar_secao(sect, ctx: _Contexto) -> None:
-    """Cabecalho e rodape de uma secao (sectPr). Papel e margens: ver _pagina_de."""
-    if any(_local(x)[1] in ("headerReference", "footerReference") for x in sect):
-        ctx.coletor.somar("CABECALHO_RODAPE")
+def _faixas_da_secao(sect, ctx: _Contexto, final: bool) -> dict[tuple[str, str], str]:
+    """Referencias de cabecalho e rodape de uma secao: (onde, tipo) -> rId.
+
+    Como no Word, a secao herda o que nao declara. A secao que nao e' a ultima so'
+    acumula a heranca; a ultima devolve o que vale para o documento.
+    """
+    refs: dict[tuple[str, str], str] = {}
+    for x in sect:
+        ns, loc = _local(x)
+        if ns != W or loc not in ("headerReference", "footerReference"):
+            continue
+        tipo = _TIPO_FAIXA.get(_atr(x, "type") or "default")
+        rid = x.get(q("id", R_NS))
+        if tipo is None or not rid:
+            ctx.coletor.somar("CABECALHO_RODAPE")
+            continue
+        refs[("cabecalho" if loc == "headerReference" else "rodape", tipo)] = rid
+    if not final:
+        ctx.faixas_das_secoes.append(dict(refs))
+        ctx.faixas_herdadas.update(refs)
+        return refs
+    efetivas = {**ctx.faixas_herdadas, **refs}
+    if any(efetivas.get(k) != v for anteriores in ctx.faixas_das_secoes
+           for k, v in anteriores.items()):
+        ctx.coletor.somar("CABECALHO_SECAO")
+    return efetivas
+
+
+def _numeracao_da_secao(sect, pagina: Pagina, ctx: _Contexto) -> Pagina:
+    """Primeira pagina diferente (w:titlePg) e numeracao (w:pgNumType) do sectPr."""
+    titulo = sect.find(q("titlePg"))
+    if titulo is not None:
+        pagina = replace(pagina, primeira_diferente=_onoff(titulo))
+    num = sect.find(q("pgNumType"))
+    if num is not None:
+        formato = _atr(num, "fmt")
+        if formato is not None:
+            if formato in FORMATOS_NUMERO:
+                pagina = replace(pagina, formato_numero=formato)
+            else:
+                ctx.coletor.somar("NUMERO_PAGINA")  # chicago, ordinal, cardinalText...
+        inicio = _atr(num, "start")
+        if inicio is not None:
+            valor = _inteiro(inicio)
+            if valor is not None and 0 <= valor <= NUMERO_INICIAL_MAXIMO:
+                pagina = replace(pagina, numero_inicial=valor)
+            else:
+                ctx.coletor.somar("NUMERO_PAGINA")
+        if any(_atr(num, a) is not None for a in ("chapStyle", "chapSep")):
+            ctx.coletor.somar("NUMERO_PAGINA")
+    return pagina
+
+
+def _ler_faixa(rid: str, onde: str, ctx: _Contexto, tamanho_de, relacoes_de) -> list[Bloco] | None:
+    """Uma parte de cabecalho (w:hdr) ou rodape (w:ftr) -> blocos. None (com aviso) se falhar.
+
+    A imagem do cabecalho usa as relacoes da propria parte, nao as do documento.
+    """
+    c = ctx.coletor
+    relacao = ctx.relacoes.get(rid)
+    esperado = "/header" if onde == "cabecalho" else "/footer"
+    if relacao is None or relacao[2] or not relacao[0].endswith(esperado) \
+            or relacao[1] not in ctx.nomes:
+        c.somar("CABECALHO_RODAPE")
+        return None
+    alvo = relacao[1]
+    _validar_nome(alvo)
+    if tamanho_de(alvo) > ctx.lim["cabecalho_bytes"]:
+        c.somar("CABECALHO_GRANDE")
+        return None
+    profundidade = ctx.lim["profundidade"]
+    raiz = _parse(ctx.ler_parte(alvo), alvo, profundidade)
+    if _local(raiz) != (W, "hdr" if onde == "cabecalho" else "ftr"):
+        c.somar("CABECALHO_RODAPE")
+        return None
+    if _profundidade(raiz) > profundidade:
+        raise ErroDocx("XML_PROFUNDIDADE_EXCEDIDA", alvo)
+    relacoes_doc = ctx.relacoes
+    ctx.relacoes = relacoes_de(alvo)
+    try:
+        blocos: list[Bloco] = []
+        _blocos(raiz, blocos, ctx)
+    finally:
+        ctx.relacoes = relacoes_doc
+    _fechar_campos(ctx)
+    return blocos
+
+
+def _fechar_campos(ctx: _Contexto) -> None:
+    """Campo aberto que nunca fechou (arquivo cortado): o texto ficou, o campo nao."""
+    for _campo in ctx.campos:
+        ctx.coletor.somar("CAMPO")
+    ctx.campos = []
 
 
 #: Atributos do w:pgMar e o campo de Pagina que cada um preenche.
@@ -1099,15 +1270,14 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         if corpo is None:
             raise ErroDocx("XML_ESTRUTURA", "w:body ausente")
 
-        # Partes ligadas ao documento principal: numeracao e estilos.
-        numeracao: dict[str, str | None] = {}
-        estilos = None
-        relacoes: dict[str, tuple[str, str, bool]] = {}
-        rels_doc = caminho_dos_rels(alvo_doc)
-        if rels_doc in nomes:
-            base = posixpath.dirname(alvo_doc)
-            for rel in _parse(ler_parte(rels_doc), rels_doc, profundidade):
-                tipo = rel.get("Type", "")
+        def relacoes_de(parte: str) -> dict[str, tuple[str, str, bool]]:
+            """Relacoes de uma parte: rId -> (tipo, alvo resolvido, externo)."""
+            saida: dict[str, tuple[str, str, bool]] = {}
+            rels = caminho_dos_rels(parte)
+            if rels not in nomes:
+                return saida
+            base = posixpath.dirname(parte)
+            for rel in _parse(ler_parte(rels), rels, profundidade):
                 externo = rel.get("TargetMode") == "External"
                 bruto = rel.get("Target", "")
                 if externo:
@@ -1116,15 +1286,31 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                     alvo = bruto[1:]
                 else:
                     alvo = posixpath.normpath(posixpath.join(base, bruto))
-                relacoes[rel.get("Id", "")] = (tipo, alvo, externo)
-                if externo:
-                    continue
-                if tipo.endswith("/numbering") and alvo in nomes:
-                    _validar_nome(alvo)
-                    numeracao = _numeracao(_parse(ler_parte(alvo), alvo, profundidade))
-                elif tipo.endswith("/styles") and alvo in nomes:
-                    _validar_nome(alvo)
-                    estilos = _parse(ler_parte(alvo), alvo, profundidade)
+                saida[rel.get("Id", "")] = (rel.get("Type", ""), alvo, externo)
+            return saida
+
+        def tamanho_de(parte: str) -> int:
+            return z.getinfo(parte).file_size
+
+        # Partes ligadas ao documento principal: numeracao, estilos e configuracoes.
+        numeracao: dict[str, str | None] = {}
+        estilos = None
+        pares_impares = False
+        relacoes = relacoes_de(alvo_doc)
+        for tipo, alvo, externo in relacoes.values():
+            if externo or alvo not in nomes:
+                continue
+            if tipo.endswith("/numbering"):
+                _validar_nome(alvo)
+                numeracao = _numeracao(_parse(ler_parte(alvo), alvo, profundidade))
+            elif tipo.endswith("/styles"):
+                _validar_nome(alvo)
+                estilos = _parse(ler_parte(alvo), alvo, profundidade)
+            elif tipo.endswith("/settings"):
+                _validar_nome(alvo)
+                config = _parse(ler_parte(alvo), alvo, profundidade)
+                pares = config.find(q("evenAndOddHeaders"))
+                pares_impares = pares is not None and _onoff(pares)
 
         ctx = _Contexto(coletor, numeracao, lim)
         ctx.relacoes = relacoes
@@ -1140,14 +1326,26 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
 
         paras: list[Bloco] = []
         _blocos(corpo, paras, ctx)
+        _fechar_campos(ctx)
         sect_final = corpo.find(q("sectPr"))
+        refs_finais = dict(ctx.faixas_herdadas)
         if sect_final is not None:
-            _checar_secao(sect_final, ctx)
+            refs_finais = _faixas_da_secao(sect_final, ctx, final=True)
             ctx.pagina_final = _pagina_de(sect_final)
             if ctx.pagina_final is None:
                 # Papel ou margem que nao cabe numa pagina util: o EditDoc
                 # grava A4 com as margens padrao, e o aviso diz isso.
                 coletor.somar("PAPEL_INVALIDO")
+        pagina = ctx.pagina_final if ctx.pagina_final is not None else Pagina()
+        if sect_final is not None:
+            pagina = _numeracao_da_secao(sect_final, pagina, ctx)
+        pagina = replace(pagina, pares_impares=pares_impares)
+        cabecalhos: dict[str, list[Bloco]] = {}
+        rodapes: dict[str, list[Bloco]] = {}
+        for (onde, tipo), rid in sorted(refs_finais.items()):
+            blocos = _ler_faixa(rid, onde, ctx, tamanho_de, relacoes_de)
+            if blocos is not None:
+                (cabecalhos if onde == "cabecalho" else rodapes)[tipo] = blocos
         total_secoes = ctx.secoes + (1 if sect_final is not None else 0)
         if total_secoes > 1:
             # Cada secao tem o seu papel e as suas margens; o EditDoc tem um so'.
@@ -1158,8 +1356,8 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             _validar_nome(alvo_core)
             meta = _core(ler_parte(alvo_core), profundidade)
 
-    pagina = ctx.pagina_final if ctx.pagina_final is not None else Pagina()
-    doc = normalizar(Documento(paragrafos=paras, pagina=pagina, **meta))
+    doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
+                               rodapes=rodapes, **meta))
     return doc, coletor.avisos()
 
 

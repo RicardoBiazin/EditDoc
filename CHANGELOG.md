@@ -1,3 +1,52 @@
+## 0.0.8 - 2026-10-12
+
+Cabeçalho, rodapé e número de página (M5). O cabeçalho e o rodapé abrem do `.docx`, aparecem
+em cada página, são editados no lugar e voltam ao arquivo, com o número da página certo em
+cada folha.
+
+- Cabeçalho e rodapé no `.docx`: leitura e escrita das partes `word/headerN.xml` e
+  `word/footerN.xml`, com relação, referência no `sectPr` e tipo de conteúdo próprios. Três
+  variantes: padrão, primeira página (`w:titlePg`) e páginas pares (`w:evenAndOddHeaders`, no
+  `settings.xml`). Distâncias do cabeçalho e do rodapé (`w:pgMar`). O conteúdo é o mesmo do
+  corpo: parágrafos formatados, listas, tabelas e imagens na linha (cada parte com as suas
+  relações).
+- Campos PAGE e NUMPAGES: lidos como campo simples (`w:fldSimple`) ou complexo (`w:fldChar` e
+  `w:instrText`), no corpo, no cabeçalho e no rodapé. Gravados como campo complexo, como o
+  Word grava: no Word continuam campos. Formato do número (`w:pgNumType`: 1, 2, 3; i, ii, iii;
+  I, II, III; a, b, c; A, B, C), opção `\*` da instrução e número inicial (`w:start`).
+- Na tela: o cabeçalho e o rodapé são pintados na margem de cada página, em cinza claro, com o
+  número daquela página; o total acompanha a paginação. Se o cabeçalho (ou o rodapé) passa da
+  margem, o corpo desce, como no Word.
+- Edição no lugar: duplo clique no alto ou no pé da página entra na edição (o corpo esmaece, e
+  uma linha tracejada com o rótulo "Cabeçalho", "Rodapé", "Primeira página", "Página par" ou
+  "Página ímpar" marca a área). Clique no cabeçalho ou rodapé de outra página troca de área.
+  Duplo clique no corpo, Esc ou "Fechar cabeçalho e rodapé" voltam ao corpo, com o cursor onde
+  estava. Formatação, tabela, imagem e localizar funcionam dentro do cabeçalho. Desfazer e
+  refazer têm uma pilha própria em cada cabeçalho e rodapé.
+- Faixa: na aba Inserir, os botões Cabeçalho (editar, remover), Rodapé (editar, remover) e
+  Número de Página (início ou fim da página, à esquerda, centralizado ou à direita; "Página X
+  de Y"; número da página atual e total de páginas no cursor; formato; começar em...). Durante
+  a edição aparece a aba "Cabeçalho e Rodapé", com "Primeira página diferente", "Páginas pares
+  e ímpares diferentes", ir para o cabeçalho ou o rodapé e "Fechar cabeçalho e rodapé".
+- Avisos novos: CABECALHO_SECAO (seções com cabeçalhos diferentes: fica o da última seção,
+  com a herança do Word), CABECALHO_GRANDE (parte acima do limite), CABECALHO_RODAPE agora só
+  para referência quebrada ou parte danificada, e NUMERO_PAGINA (formato de numeração que o
+  EditDoc não mostra). O aviso CAMPO passou a valer só para os campos que não são número de
+  página (data, sumário, referência), que ficam com o último valor mostrado, como texto.
+- Limites contra arquivo hostil: parte de cabeçalho ou rodapé acima de 4 MB não é lida (com
+  aviso); só as partes da última seção são abertas (400 seções com cabeçalho abrem em 0,01 s);
+  campo aninhado mais de 8 níveis, ou com instrução acima de 255 caracteres, não é interpretado.
+- O validador do pacote confere também as partes de cabeçalho e rodapé (ordem, `xml:space`,
+  parágrafo final, `r:id`), a ordem dos filhos do `sectPr` e o equilíbrio dos `fldChar`. A
+  conferência do arquivo gravado compara cabeçalhos, rodapés e campos.
+
+Limites deste marco: uma seção só; a altura do cabeçalho que empurra o corpo é a mesma em
+todas as páginas (a maior das variantes), ao contrário do Word, que ajusta página a página.
+Copiar e colar um campo leva só o texto ao redor. Campo de página no corpo ocupa a largura do
+maior número do documento. "Número de Página" acrescenta um parágrafo ao cabeçalho que já tem
+texto (o Word troca o conteúdo). A abertura no Word ainda depende de conferência manual
+(amostra em `tests/saida/amostra_m5_cabecalho_rodape.docx`, gerada pela suíte).
+
 ## 0.0.7 - 2026-10-12
 
 Tabelas e imagens (M4). Tabela e imagem na linha do texto abrem do `.docx`, aparecem na visão

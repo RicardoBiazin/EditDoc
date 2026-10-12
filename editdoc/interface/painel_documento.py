@@ -11,10 +11,18 @@ QTextEdit oculto, compartilhando o documento, troca o pageSize e apaga a paginac
 Formato de digitacao: sem selecao, mergeCurrentCharFormat e setCurrentCharFormat mudam o
 formato do PROXIMO caractere digitado, nao o da palavra sob o caret (medido com
 QTextEdit antes de escrever isto).
+
+Edicao do cabecalho e do rodape (M5), no lugar, como no Word: duplo clique na margem
+de cima (ou de baixo) entra; duplo clique no corpo, ou Esc, sai. Na edicao o cursor
+(`_cursor`) e' do documento da variante, e `document()` devolve esse documento: os
+comandos de formatacao, tabela, imagem e busca continuam iguais. O corpo e' sempre
+`documento_corpo()`; e' ele que a janela grava e que diz se ha' alteracao. Cada
+variante tem o proprio desfazer.
 """
 
 from __future__ import annotations
 
+import math
 import re
 
 from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, Signal
@@ -24,11 +32,14 @@ from PySide6.QtWidgets import QApplication, QMenu
 
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao import tabelas as ed_tabelas
-from editdoc.interface.vista_paginas import VistaPaginas
-from editdoc.interface.layout_paginado import LayoutPaginado
+from editdoc.interface.cabecalhos import FaixaQt
+from editdoc.interface.vista_paginas import VistaPaginas, origem_da_faixa
+from editdoc.interface.layout_paginado import LayoutPaginado, retangulo_cursor_em
+from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.folhas import escala_do_zoom
 from editdoc.modelo.pagina import Pagina
+from editdoc.ponte_qt import campos as pq_campos
 from editdoc.ponte_qt import imagens as pq_imagens
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
 
@@ -71,6 +82,8 @@ class PainelDocumento(VistaPaginas):
     paginaAlterada = Signal()
     #: Recado curto para a barra de status (imagem recusada ao colar, por exemplo).
     mensagem = Signal(str)
+    #: Entrou ou saiu da edicao do cabecalho e do rodape (a faixa mostra a aba propria).
+    modoFaixaAlterado = Signal()
 
     def __init__(self, fonte: str, tamanho: float, parent=None) -> None:
         layout = LayoutPaginado(Pagina(), fonte, float(tamanho))
@@ -82,13 +95,24 @@ class PainelDocumento(VistaPaginas):
         #: Arrasto de alca de imagem: (posicao, canto, retangulo inicial na tela) ou None.
         self._redim: tuple[int, str, QRectF] | None = None
         self._redim_atual: QRectF | None = None
+        #: Cabecalho ou rodape em edicao (None = corpo), a pagina onde se edita, e o
+        #: cursor do corpo guardado durante a edicao.
+        self._edicao: FaixaQt | None = None
+        self._pagina_edicao = 0
+        self._cursor_corpo: QTextCursor | None = None
         doc = layout.doc
         doc.contentsChanged.connect(self.textChanged)
-        doc.undoAvailable.connect(self.undoAvailable)
-        doc.redoAvailable.connect(self.redoAvailable)
+        self._ligar_desfazer(doc)
+        layout.faixas.criada.connect(lambda faixa: self._ligar_desfazer(faixa.doc))
+        layout.faixas.alterado.connect(self._faixa_alterada)
 
     # ----- API do QTextEdit usada pelos comandos -------------------------
     def document(self) -> QTextDocument:
+        """O documento que o teclado edita: o corpo, ou o cabecalho em edicao."""
+        return self._edicao.doc if self._edicao is not None else self.layout_pag.doc
+
+    def documento_corpo(self) -> QTextDocument:
+        """O corpo, sempre (o que se grava e o que diz se ha' alteracao)."""
         return self.layout_pag.doc
 
     def textCursor(self) -> QTextCursor:
@@ -107,6 +131,7 @@ class PainelDocumento(VistaPaginas):
 
     def setPlainText(self, texto: str) -> None:
         """Como o QTextEdit: o cursor vai para o inicio e o desfazer e' zerado."""
+        self.sair_da_faixa()
         self.layout_pag.doc.setPlainText(texto)
         self._cursor = QTextCursor(self.layout_pag.doc)
         self._depois_de_mover()
@@ -115,18 +140,21 @@ class PainelDocumento(VistaPaginas):
         self._inserir(texto)
 
     def clear(self) -> None:
+        self.sair_da_faixa()
         self.layout_pag.doc.clear()
         self._cursor = QTextCursor(self.layout_pag.doc)
         self._depois_de_mover()
 
     def undo(self) -> None:
-        if self.layout_pag.doc.isUndoAvailable():
-            self.layout_pag.doc.undo(self._cursor)
+        doc = self.document()
+        if doc.isUndoAvailable():
+            doc.undo(self._cursor)
             self._depois_de_mover()
 
     def redo(self) -> None:
-        if self.layout_pag.doc.isRedoAvailable():
-            self.layout_pag.doc.redo(self._cursor)
+        doc = self.document()
+        if doc.isRedoAvailable():
+            doc.redo(self._cursor)
             self._depois_de_mover()
 
     def selectAll(self) -> None:
@@ -217,15 +245,20 @@ class PainelDocumento(VistaPaginas):
 
     # ----- pagina ---------------------------------------------------------
     def configuracao_pagina(self) -> Pagina:
-        return self.layout_pag.pagina
+        """A pagina do arquivo (sem o corpo empurrado pelo cabecalho)."""
+        return self.layout_pag.pagina_arquivo
 
     def definir_configuracao_pagina(self, pagina: Pagina) -> None:
-        """Papel, orientacao ou margens. Refaz a paginacao; nao mexe no texto."""
+        """Papel, orientacao, margens ou cabecalho. Refaz a paginacao; nao mexe no texto."""
         self.layout_pag.definir_pagina(pagina)
         self._limpar_cache()
         self._altura_doc_anterior = None
         self._atualizar_geometria()
-        self.garantir_visivel(self.layout_pag.retangulo_cursor(self._cursor.position()))
+        if self._edicao is not None:
+            # "Primeira pagina diferente" ou "pares e impares" trocam a variante da pagina.
+            self._trocar_faixa(self._edicao.onde, self._pagina_edicao)
+        else:
+            self.garantir_visivel(self.layout_pag.retangulo_cursor(self._cursor.position()))
         self.paginaAlterada.emit()
         self.viewport().update()
 
@@ -233,8 +266,145 @@ class PainelDocumento(VistaPaginas):
         return self.layout_pag.numero_paginas()
 
     def pagina_atual(self) -> int:
-        """Pagina do caret, a partir de 0."""
+        """Pagina do caret, a partir de 0. Na edicao do cabecalho, a pagina editada."""
+        if self._edicao is not None:
+            return self._pagina_edicao
         return self.layout_pag.pagina_do_cursor(self._cursor.position())
+
+    # ----- cabecalho e rodape (M5) ----------------------------------------
+    def editando_faixa(self) -> FaixaQt | None:
+        """A variante de cabecalho ou rodape em edicao, ou None."""
+        return self._edicao
+
+    def carregar_faixas(self, modelo) -> None:
+        """Cabecalhos e rodapes do modelo (ao abrir). Sai da edicao antes."""
+        self.sair_da_faixa()
+        self.layout_pag.faixas.carregar(modelo)
+        self._recalcular_margens()
+
+    def faixas_do_modelo(self) -> tuple[dict, dict]:
+        """(cabecalhos, rodapes) para gravar."""
+        return self.layout_pag.faixas.extrair()
+
+    def entrar_na_faixa(self, onde: str, indice: int | None = None,
+                        ponto: QPointF | None = None) -> None:
+        """Edita o cabecalho (ou rodape) da pagina `indice` (padrao: a do caret)."""
+        if indice is None:
+            indice = self.pagina_atual()
+        indice = min(max(int(indice), 0), self._paginas() - 1)
+        if self._edicao is None:
+            self._cursor_corpo = QTextCursor(self._cursor)
+        self._trocar_faixa(onde, indice, ponto)
+
+    def _trocar_faixa(self, onde: str, indice: int, ponto: QPointF | None = None) -> None:
+        pagina = self.layout_pag.pagina_arquivo
+        faixa = self.layout_pag.faixas.obter(onde, tipo_da_pagina(indice, pagina), criar=True)
+        mesma = faixa is self._edicao
+        self._edicao = faixa
+        self._pagina_edicao = indice
+        if ponto is not None:
+            pos = self._posicao_na_faixa(faixa, indice, ponto)
+            self._cursor = QTextCursor(faixa.doc)
+            self._cursor.setPosition(pos)
+        elif not mesma:
+            self._cursor = QTextCursor(faixa.doc)
+        self._recalcular_margens()
+        self._repassar_estado_do_desfazer()
+        self.modoFaixaAlterado.emit()
+        self._depois_de_mover()
+
+    def sair_da_faixa(self) -> None:
+        """Volta ao corpo, com o cursor onde estava. Sem efeito fora da edicao."""
+        if self._edicao is None:
+            return
+        self._edicao = None
+        cursor = self._cursor_corpo
+        self._cursor_corpo = None
+        self._cursor = QTextCursor(cursor) if cursor is not None else QTextCursor(self.layout_pag.doc)
+        self._recalcular_margens()
+        self._repassar_estado_do_desfazer()
+        self.modoFaixaAlterado.emit()
+        self._depois_de_mover()
+
+    def _ligar_desfazer(self, doc: QTextDocument) -> None:
+        """Desfazer e refazer de cada documento chegam a janela so' quando ele e' o ativo."""
+        doc.undoAvailable.connect(lambda v, d=doc: d is self.document() and self.undoAvailable.emit(v))
+        doc.redoAvailable.connect(lambda v, d=doc: d is self.document() and self.redoAvailable.emit(v))
+
+    def _repassar_estado_do_desfazer(self) -> None:
+        doc = self.document()
+        self.undoAvailable.emit(doc.isUndoAvailable())
+        self.redoAvailable.emit(doc.isRedoAvailable())
+
+    def _faixa_alterada(self) -> None:
+        """O usuario mudou um cabecalho ou rodape: o documento fica alterado, e o corpo
+        pode descer (cabecalho mais alto que a margem)."""
+        self.layout_pag.doc.setModified(True)
+        self._recalcular_margens()
+        self.viewport().update()
+
+    def _recalcular_margens(self) -> None:
+        if self.layout_pag.recalcular_margens():
+            self._limpar_cache()
+            self._altura_doc_anterior = None
+            self._atualizar_geometria()
+            self.paginaAlterada.emit()
+        self.viewport().update()
+
+    def _faixa_editada(self):
+        if self._edicao is None:
+            return None
+        return self._edicao, self._cursor
+
+    def _origem_da_faixa_na_tela(self, faixa: FaixaQt, n: int) -> tuple[float, float, float]:
+        """(x, y, escala): o ponto (0, 0) do documento da faixa na pagina n, na tela."""
+        m = self._mapa()
+        x, y, _w, _h = m.folha_na_tela(n)
+        faixa.preparar(n, self._paginas(), self.layout_pag.pagina_arquivo)
+        ox, oy = origem_da_faixa(self.layout_pag.pagina_arquivo, faixa.onde, faixa.altura())
+        return x + ox * m.escala, y + oy * m.escala, m.escala
+
+    def _posicao_na_faixa(self, faixa: FaixaQt, n: int, p: QPointF) -> int:
+        x, y, escala = self._origem_da_faixa_na_tela(faixa, n)
+        pos = faixa.doc.documentLayout().hitTest(
+            QPointF((p.x() - x) / escala, (p.y() - y) / escala), Qt.FuzzyHit)
+        return min(max(pos, 0), faixa.doc.characterCount() - 1)
+
+    def zona_em(self, p: QPointF) -> tuple[str, int]:
+        """("cabecalho" | "rodape" | "corpo", pagina) do ponto do viewport.
+
+        O limite e' o da pagina efetiva: o cabecalho que empurrou o corpo continua
+        cabecalho ate' onde o corpo comeca.
+        """
+        m = self._mapa()
+        n_total = self._paginas()
+        cy = p.y() + m.origem_y
+        n = min(max(math.floor((cy - m.vao) / m.passo_vertical), 0), n_total - 1)
+        x, y, largura, altura = m.folha_na_tela(n)
+        tx, ty = (p.x() - x) / m.escala, (p.y() - y) / m.escala
+        efetiva = self.layout_pag.pagina
+        if 0 <= tx <= efetiva.largura_tw and 0 <= ty <= efetiva.altura_tw:
+            if ty < efetiva.margem_sup_tw:
+                return "cabecalho", n
+            if ty > efetiva.altura_tw - efetiva.margem_inf_tw:
+                return "rodape", n
+        return "corpo", n
+
+    def _retangulo_do_caret(self, m, n_total: int) -> QRectF | None:
+        if self._edicao is None:
+            return super()._retangulo_do_caret(m, n_total)
+        x, y, escala = self._origem_da_faixa_na_tela(self._edicao, self._pagina_edicao)
+        c = retangulo_cursor_em(self._edicao.doc, self._cursor.position())
+        return QRectF(x + c.x() * escala, y + c.y() * escala, 1.0, c.height() * escala)
+
+    def _garantir_visivel_na_tela(self, r: QRectF) -> None:
+        vp = self.viewport()
+        vb = self.verticalScrollBar()
+        if r.top() < 0:
+            vb.setValue(vb.value() + math.floor(r.top()) - 16)
+        elif r.bottom() > vp.height():
+            vb.setValue(vb.value() + math.ceil(r.bottom() - vp.height()) + 16)
+        self.viewport().update()
 
     def recuos_do_paragrafo(self) -> tuple[int, int]:
         """(recuo esquerdo, recuo da primeira linha) do paragrafo do caret, em twips."""
@@ -254,14 +424,20 @@ class PainelDocumento(VistaPaginas):
     def inserir_quebra_de_pagina(self) -> None:
         """Ctrl+Enter: o texto depois do caret comeca no topo da proxima pagina.
 
-        Dentro de tabela vira Enter comum: o EditDoc nao quebra pagina dentro de celula.
+        Dentro de tabela, e no cabecalho e no rodape, vira Enter comum: o EditDoc nao
+        quebra pagina dentro de celula, e cabecalho nao tem pagina.
         """
-        self._quebrar(quebra=self._cursor.currentTable() is None)
+        self._quebrar(quebra=self._cursor.currentTable() is None and self._edicao is None)
 
     # ----- estado e sinais internos ----------------------------------------
     def _depois_de_mover(self) -> None:
         self.mostrar_caret_agora()
-        self.garantir_visivel(self.layout_pag.retangulo_cursor(self._cursor.position()))
+        if self._edicao is not None:
+            r = self._retangulo_do_caret(self._mapa(), self._paginas())
+            if r is not None:
+                self._garantir_visivel_na_tela(r)
+        else:
+            self.garantir_visivel(self.layout_pag.retangulo_cursor(self._cursor.position()))
         self.copyAvailable.emit(self._cursor.hasSelection())
         self.cursorPositionChanged.emit()
         self.currentCharFormatChanged.emit(self.currentCharFormat())
@@ -275,10 +451,12 @@ class PainelDocumento(VistaPaginas):
         return self._cursor.position()
 
     def _selecao_atual(self) -> QTextCursor | None:
-        return self._cursor
+        # Na edicao do cabecalho a selecao e' do cabecalho (desenhar_faixas a pinta).
+        return self._cursor if self._edicao is None else None
 
     def _posicao_imagem_selecionada(self) -> int | None:
-        return self.imagem_selecionada()
+        # As alcas de imagem sao do corpo; no cabecalho, o tamanho muda pelo dialogo.
+        return self.imagem_selecionada() if self._edicao is None else None
 
     def _retangulo_redimensionando(self) -> QRectF | None:
         return self._redim_atual
@@ -302,10 +480,11 @@ class PainelDocumento(VistaPaginas):
             self._cursor.removeSelectedText()
         self._limpar_estrutural()
         formato = self._cursor.charFormat()
-        if formato.isImageFormat():
-            # Digitar logo depois de uma imagem: o texto nao herda o formato de imagem.
+        if formato.isImageFormat() or pq_campos.eh_campo(formato):
+            # Digitar logo depois de uma imagem ou de um campo: o texto nao herda o
+            # formato de objeto (cada letra viraria outra imagem ou outro campo).
             limpo = QTextCharFormat(formato)
-            for propriedade in _PROPS_IMAGEM:
+            for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO):
                 limpo.clearProperty(propriedade)
             self._cursor.insertText(texto, limpo)
         else:
@@ -356,6 +535,11 @@ class PainelDocumento(VistaPaginas):
 
     def _pagina_do_teclado(self, anterior: bool, modo) -> None:
         """PageUp/PageDown: anda uma altura de tela, mantendo a coluna do caret."""
+        if self._edicao is not None:
+            # Cabecalho nao tem paginas: vai ao inicio ou ao fim dele.
+            self._cursor.movePosition(M.Start if anterior else M.End, modo)
+            self._depois_de_mover()
+            return
         r = self.layout_pag.retangulo_cursor(self._cursor.position())
         altura = self.viewport().height() / escala_do_zoom(self._zoom)
         alvo = QPointF(r.x(), r.y() + (-altura if anterior else altura))
@@ -384,6 +568,10 @@ class PainelDocumento(VistaPaginas):
         alt = bool(mod & Alt)
         shift = bool(mod & Shift)
         modo = Selecionar if shift else Mover
+
+        if k == Key.Key_Escape and self._edicao is not None:
+            self.sair_da_faixa()
+            return True
 
         if ctrl and not alt:
             if k in (Key.Key_Return, Key.Key_Enter):
@@ -467,7 +655,9 @@ class PainelDocumento(VistaPaginas):
         return pos
 
     def imagem_em(self, p: QPointF) -> int | None:
-        """Posicao da imagem sob o ponto do viewport, ou None."""
+        """Posicao da imagem sob o ponto do viewport, ou None (sempre None no cabecalho)."""
+        if self._edicao is not None:
+            return None
         pos = self.posicao_em(p)
         for k in (pos, pos - 1):
             r = self.retangulo_imagem_na_tela(k)
@@ -477,6 +667,8 @@ class PainelDocumento(VistaPaginas):
 
     def alca_em(self, p: QPointF) -> tuple[int, str, QRectF] | None:
         """(imagem, canto, retangulo) se o ponto esta' numa alca da imagem selecionada."""
+        if self._edicao is not None:
+            return None
         pos = self.imagem_selecionada()
         if pos is None:
             return None
@@ -503,8 +695,31 @@ class PainelDocumento(VistaPaginas):
         altura = largura * r.height() / max(r.width(), 1e-6)
         return QRectF(r.left(), r.bottom() - altura, largura, altura)
 
+    def _clique_na_faixa(self, ev) -> None:
+        """Clique durante a edicao do cabecalho: posiciona no cabecalho ou rodape clicado.
+
+        Clique simples no corpo nao faz nada (como no Word): sai-se com duplo clique ou Esc.
+        """
+        zona, n = self.zona_em(ev.position())
+        if zona == "corpo":
+            self._arrastando = False
+            return
+        estender = bool(ev.modifiers() & Shift)
+        alvo = self.layout_pag.faixas.obter(zona, tipo_da_pagina(n, self.layout_pag.pagina_arquivo))
+        if alvo is not self._edicao or n != self._pagina_edicao:
+            self._trocar_faixa(zona, n, ev.position())
+        else:
+            pos = self._posicao_na_faixa(self._edicao, n, ev.position())
+            self._cursor.setPosition(pos, Selecionar if estender else Mover)
+            self._depois_de_mover()
+        self._arrastando = True
+
     def mousePressEvent(self, ev) -> None:  # noqa: N802
         self.setFocus()
+        if ev.button() == Qt.MouseButton.LeftButton and self._edicao is not None:
+            self._clique_na_faixa(ev)
+            ev.accept()
+            return
         if ev.button() == Qt.MouseButton.LeftButton:
             alca = self.alca_em(ev.position())
             if alca is not None:
@@ -531,6 +746,29 @@ class PainelDocumento(VistaPaginas):
 
     def mouseDoubleClickEvent(self, ev) -> None:  # noqa: N802
         if ev.button() == Qt.MouseButton.LeftButton:
+            zona, n = self.zona_em(ev.position())
+            if self._edicao is None and zona != "corpo":
+                # Duplo clique na margem de cima ou de baixo: edita o cabecalho ou o rodape.
+                self.entrar_na_faixa(zona, n, ev.position())
+                self._arrastando = False
+                ev.accept()
+                return
+            if self._edicao is not None and zona == "corpo":
+                # Duplo clique no corpo: volta ao corpo, com o caret no ponto clicado.
+                self.sair_da_faixa()
+                self._cursor.setPosition(self.posicao_em(ev.position()))
+                self._arrastando = False
+                self._depois_de_mover()
+                ev.accept()
+                return
+            if self._edicao is not None:
+                self._cursor.setPosition(self._posicao_na_faixa(self._edicao, self._pagina_edicao,
+                                                                ev.position()))
+                self._cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+                self._arrastando = False
+                self._depois_de_mover()
+                ev.accept()
+                return
             self._cursor.setPosition(self.posicao_em(ev.position()))
             self._cursor.select(QTextCursor.SelectionType.WordUnderCursor)
             self._arrastando = False
@@ -541,6 +779,10 @@ class PainelDocumento(VistaPaginas):
         if self._redim is not None:
             self._redim_atual = self._retangulo_do_arrasto(ev.position())
             self.viewport().update()
+        elif self._arrastando and self._edicao is not None:
+            self._cursor.setPosition(self._posicao_na_faixa(self._edicao, self._pagina_edicao,
+                                                            ev.position()), Selecionar)
+            self._depois_de_mover()
         elif self._arrastando:
             self._cursor.setPosition(self.posicao_em(ev.position()), Selecionar)
             self._depois_de_mover()
@@ -560,7 +802,7 @@ class PainelDocumento(VistaPaginas):
 
     def contextMenuEvent(self, ev) -> None:  # noqa: N802
         menu = QMenu(self)
-        doc = self.layout_pag.doc
+        doc = self.document()
         menu.addAction("Desfazer", self.undo).setEnabled(doc.isUndoAvailable())
         menu.addAction("Refazer", self.redo).setEnabled(doc.isRedoAvailable())
         menu.addSeparator()

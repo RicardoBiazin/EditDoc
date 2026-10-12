@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QTextListFormat
 from PySide6.QtWidgets import QTextEdit
 
+from editdoc.edicao import cabecalhos as ed_cabecalhos
 from editdoc.edicao import formatacao, tabelas
 from editdoc.modelo.folhas import passo_de_zoom
 from editdoc.modelo.unidades import RECUO_PADRAO_PX
@@ -95,7 +96,64 @@ DEFINICOES = (
     Definicao("dividir_celula", "Dividir células", (), dica="Desfazer a mescla da célula"),
     Definicao("inserir_imagem", "Imagem...", (), dica="Inserir imagem de um arquivo"),
     Definicao("tamanho_imagem", "Tamanho da imagem...", (), dica="Tamanho da imagem em centímetros"),
+    # Cabecalho, rodape e numero de pagina (M5).
+    Definicao("editar_cabecalho", "Editar cabeçalho", (),
+              dica="Editar o cabeçalho (ou dê um duplo clique no alto da página)"),
+    Definicao("editar_rodape", "Editar rodapé", (),
+              dica="Editar o rodapé (ou dê um duplo clique no pé da página)"),
+    Definicao("remover_cabecalho", "Remover cabeçalho", (), dica="Apagar o conteúdo do cabeçalho"),
+    Definicao("remover_rodape", "Remover rodapé", (), dica="Apagar o conteúdo do rodapé"),
+    Definicao("numero_topo_esquerda", "Início da página, à esquerda", (),
+              dica="Número da página no cabeçalho, à esquerda"),
+    Definicao("numero_topo_centro", "Início da página, centralizado", (),
+              dica="Número da página no cabeçalho, centralizado"),
+    Definicao("numero_topo_direita", "Início da página, à direita", (),
+              dica="Número da página no cabeçalho, à direita"),
+    Definicao("numero_rodape_esquerda", "Fim da página, à esquerda", (),
+              dica="Número da página no rodapé, à esquerda"),
+    Definicao("numero_rodape_centro", "Fim da página, centralizado", (),
+              dica="Número da página no rodapé, centralizado"),
+    Definicao("numero_rodape_direita", "Fim da página, à direita", (),
+              dica="Número da página no rodapé, à direita"),
+    Definicao("numero_x_de_y", "Página X de Y (fim da página, centralizado)", (),
+              dica="\"Página 1 de 5\" no rodapé"),
+    Definicao("campo_pagina", "Número da página atual, no cursor", (),
+              dica="Inserir o número da página no ponto do cursor"),
+    Definicao("campo_total", "Total de páginas, no cursor", (),
+              dica="Inserir o total de páginas no ponto do cursor"),
+    Definicao("formato_decimal", "1, 2, 3", (), True, "Números arábicos"),
+    Definicao("formato_romano", "i, ii, iii", (), True, "Romanos minúsculos"),
+    Definicao("formato_romano_maiusculo", "I, II, III", (), True, "Romanos maiúsculos"),
+    Definicao("formato_letra", "a, b, c", (), True, "Letras minúsculas"),
+    Definicao("formato_letra_maiuscula", "A, B, C", (), True, "Letras maiúsculas"),
+    Definicao("numero_inicial", "Começar a numeração em...", (),
+              dica="Número da primeira página"),
+    Definicao("primeira_diferente", "Primeira página diferente", (), True,
+              "Cabeçalho e rodapé próprios na primeira página"),
+    Definicao("pares_impares", "Páginas pares e ímpares diferentes", (), True,
+              "Cabeçalho e rodapé próprios nas páginas pares"),
+    Definicao("ir_cabecalho", "Ir para o cabeçalho", (), dica="Ir para o cabeçalho"),
+    Definicao("ir_rodape", "Ir para o rodapé", (), dica="Ir para o rodapé"),
+    Definicao("fechar_cabecalho", "Fechar cabeçalho e rodapé", (),
+              dica="Voltar ao corpo do documento (Esc)"),
 )
+
+#: Numero de pagina: id da acao -> (onde, alinhamento, "Pagina X de Y").
+NUMERO_DAS_ACOES = {
+    "numero_topo_esquerda": ("cabecalho", "esquerda", False),
+    "numero_topo_centro": ("cabecalho", "centro", False),
+    "numero_topo_direita": ("cabecalho", "direita", False),
+    "numero_rodape_esquerda": ("rodape", "esquerda", False),
+    "numero_rodape_centro": ("rodape", "centro", False),
+    "numero_rodape_direita": ("rodape", "direita", False),
+    "numero_x_de_y": ("rodape", "centro", True),
+}
+#: Formato do numero da pagina: id da acao -> w:pgNumType w:fmt.
+FORMATO_DAS_ACOES = {"formato_decimal": "decimal", "formato_romano": "lowerRoman",
+                     "formato_romano_maiusculo": "upperRoman", "formato_letra": "lowerLetter",
+                     "formato_letra_maiuscula": "upperLetter"}
+#: Comandos que so' valem durante a edicao do cabecalho e do rodape.
+EDICAO_DE_FAIXA = ("ir_cabecalho", "ir_rodape", "fechar_cabecalho")
 
 #: Comandos que so' valem com o cursor numa tabela (o atualizador os habilita).
 TABELA = ("inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerda",
@@ -156,7 +214,25 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         "excluir_tabela": lambda: tabelas.excluir_tabela(editor),
         "mesclar_celulas": lambda: tabelas.mesclar_celulas(editor),
         "dividir_celula": lambda: tabelas.dividir_celula(editor),
+        # Cabecalho e rodape (M5).
+        "editar_cabecalho": lambda: editor.entrar_na_faixa("cabecalho"),
+        "editar_rodape": lambda: editor.entrar_na_faixa("rodape"),
+        "ir_cabecalho": lambda: editor.entrar_na_faixa("cabecalho", editor.pagina_atual()),
+        "ir_rodape": lambda: editor.entrar_na_faixa("rodape", editor.pagina_atual()),
+        "fechar_cabecalho": editor.sair_da_faixa,
+        "remover_cabecalho": lambda: ed_cabecalhos.remover(editor, "cabecalho"),
+        "remover_rodape": lambda: ed_cabecalhos.remover(editor, "rodape"),
+        "campo_pagina": lambda: ed_cabecalhos.inserir_campo_no_cursor(editor, "PAGE"),
+        "campo_total": lambda: ed_cabecalhos.inserir_campo_no_cursor(editor, "NUMPAGES"),
+        "numero_inicial": lambda: _chamar(layout, "numero_inicial"),
+        "primeira_diferente": lambda: _chamar(layout, "primeira_diferente"),
+        "pares_impares": lambda: _chamar(layout, "pares_impares"),
     }
+    for id_, (onde, alinhamento, total) in NUMERO_DAS_ACOES.items():
+        executores_inserir[id_] = (lambda o=onde, a=alinhamento, t=total:
+                                   ed_cabecalhos.inserir_numero_de_pagina(editor, o, a, t))
+    for id_, formato in FORMATO_DAS_ACOES.items():
+        executores_inserir[id_] = lambda f=formato: _chamar(layout, "formato_numero", f)
     executores_layout: dict[str, Callable[[], None]] = {
         "quebra_pagina": editor.inserir_quebra_de_pagina,
         "ampliar": lambda: editor.definir_zoom(
@@ -262,3 +338,7 @@ class Comandos(QObject):
         predefinicao = pagina.nome_das_margens()
         for id_, nome in MARGENS_DAS_ACOES.items():
             self._acoes[id_].setChecked(nome == predefinicao)
+        self._acoes["primeira_diferente"].setChecked(pagina.primeira_diferente)
+        self._acoes["pares_impares"].setChecked(pagina.pares_impares)
+        for id_, formato in FORMATO_DAS_ACOES.items():
+            self._acoes[id_].setChecked(formato == pagina.formato_numero)

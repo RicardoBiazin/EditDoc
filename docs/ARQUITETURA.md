@@ -90,6 +90,46 @@ acima de 2000 linhas, 63 colunas ou 5000 células, ou aninhada mais de 4 níveis
 flutuante (`wp:anchor`) vira imagem na linha, com aviso; o posicionamento flutuante fica para
 depois da 0.1.0 (formas e caixas de texto).
 
+## Cabeçalho, rodapé e número de página
+
+Implementados no M5 (0.0.8).
+
+- Modelo: `Documento.cabecalhos` e `Documento.rodapes` levam o tipo (`padrao`, `primeira`,
+  `par`) aos blocos daquela parte (parágrafos, tabelas e imagens, como no corpo). Tipo ausente =
+  o arquivo não tem a parte. `Pagina` ganhou `primeira_diferente` (`w:titlePg`),
+  `pares_impares` (`w:evenAndOddHeaders`, no `settings.xml`), `formato_numero` e
+  `numero_inicial` (`w:pgNumType`). Distâncias: `cabecalho_tw` e `rodape_tw` (`w:pgMar`).
+- Campo: um `Run` com `campo` (a instrução, `PAGE` ou `NUMPAGES` com as opções) e o texto do
+  último resultado. `modelo/campos.py` calcula o valor de cada página (decimal, romanos, letras,
+  número inicial) e qual variante vale em cada página. No `.docx` o campo sai como campo
+  complexo (`fldChar` begin/separate/end), como o Word grava; o leitor aceita também
+  `fldSimple`. Outros campos (DATE, TOC, REF) ficam com o último resultado como texto, com o
+  aviso CAMPO.
+- Qt: cada variante é um `QTextDocument` próprio (`interface/cabecalhos.py`), no mesmo
+  dispositivo de 1440 dpi do corpo, com a largura do corpo e sem paginação; cada um tem o seu
+  desfazer. O campo é um objeto na linha (`ponte_qt/campos.py`): o manipulador do layout
+  calcula o texto na hora de pintar, então o mesmo documento mostra 1 numa página e 2 na outra
+  sem mudar o texto, o desfazer ou o "alterado". No cabeçalho, o contexto diz a página que está
+  sendo pintada e o layout é refeito com `markContentsDirty`; no corpo, a página sai da posição
+  do objeto, e a largura é a do maior valor possível.
+- Visão: o cabeçalho e o rodapé não entram no cache de tiles; são pintados por cima, em cada
+  folha visível (`desenhar_faixas`), esmaecidos fora da edição. Na edição o corpo esmaece, e
+  uma linha tracejada com rótulo ("Cabeçalho - Primeira página") marca a área.
+- Corpo empurrado: se o cabeçalho passa da margem de cima (ou o rodapé da de baixo), o corpo
+  desce, como no Word. `LayoutPaginado` tem duas páginas: a do arquivo (`pagina_arquivo`, que
+  se grava) e a efetiva (`pagina`, que a tela usa). Diferença do Word: a altura é a mesma em
+  todas as páginas (a maior das variantes em uso), porque o corpo de cada página tem o mesmo
+  tamanho no layout do Qt.
+- Edição no lugar: duplo clique na margem entra; duplo clique no corpo ou Esc sai. Na edição,
+  `PainelDocumento.document()` devolve o documento do cabeçalho, e os comandos (formatação,
+  tabela, imagem, busca) funcionam sem mudança. O corpo é sempre `documento_corpo()`: é ele que
+  a janela grava e que diz se há alteração.
+
+Limites: uma seção só (de várias seções, valem os cabeçalhos da última, com a herança do Word,
+e o aviso CABECALHO_SECAO); parte de cabeçalho acima de 4 MB não é lida (aviso); campo
+aninhado mais de 8 níveis não é interpretado. Copiar e colar um campo leva só o texto ao
+redor (o HTML do Qt não carrega o objeto).
+
 ## Estilos e formatação
 
 - O estilo nomeado fica numa propriedade de usuário do bloco ou do fragmento.
@@ -123,7 +163,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M2 `.docx` de texto | 0.0.5 (feito) | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
 | M3 Visão em páginas | 0.0.6 (feito) | A4, Carta, Ofício, margens, régua, quebras, zoom, Página X de Y |
 | M4 Tabelas e imagens | 0.0.7 (feito) | tabela e imagem inline, no `.docx` e na visão |
-| M5 Cabeçalho e rodapé | 0.0.8 | edição no lugar, número de página |
+| M5 Cabeçalho e rodapé | 0.0.8 (feito) | edição no lugar, número de página |
 | M6 Estilos e faixa final | 0.0.9 | galeria, aba Exibir e abas contextuais de tabela e imagem |
 | M7 Impressão e PDF | 0.0.10 | imprimir, pré-visualizar, exportar PDF |
 | M8 Polimento | 0.1.0 | recuperação automática, preferências, acessibilidade, documentação final |

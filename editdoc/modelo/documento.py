@@ -16,6 +16,16 @@ Imagem na linha do texto: um `Run` com `imagem` e o texto CARACTERE_OBJETO
 (U+FFFC, o mesmo caractere que o Qt usa para o objeto). Assim o texto do
 paragrafo conta a imagem, e a conferencia do arquivo gravado ve a imagem sumir.
 
+Campo (M5): um `Run` com `campo` (a instrucao, "PAGE" ou "NUMPAGES" com as opcoes)
+e o texto do ultimo resultado que o arquivo mostrava. O valor real depende da
+pagina e e' calculado na tela (modelo/campos.py); o texto so' vai para o arquivo
+como resultado guardado, e o Word recalcula.
+
+Cabecalho e rodape (M5): `Documento.cabecalhos` e `Documento.rodapes` levam o tipo
+("padrao", "primeira", "par") aos blocos daquela parte. Tipo ausente = o arquivo
+nao tem a parte. A escolha de qual aparece em cada pagina esta' em `Pagina`
+(primeira_diferente, pares_impares).
+
 `normalizar` funde runs vizinhos de mesma formatacao e descarta runs vazios.
 Dois documentos com o mesmo texto e a mesma formatacao so' sao iguais depois de
 normalizados: o Qt e o XML podem dividir o mesmo texto em runs diferentes. Ela
@@ -63,6 +73,9 @@ class Run:
     cor_hex: str | None = None  # "RRGGBB", sem '#', em maiusculas
     # Run de imagem: texto == CARACTERE_OBJETO e a formatacao de texto nao se aplica.
     imagem: Imagem | None = None
+    # Campo (M5): instrucao normalizada ("PAGE", "NUMPAGES \* roman"...). O texto e' o
+    # ultimo resultado guardado. Campo nunca funde com o vizinho.
+    campo: str | None = None
 
 
 def run_de_imagem(imagem: Imagem) -> Run:
@@ -159,6 +172,13 @@ class Documento:
     autor: str = ""
     criado_em: str | None = None  # ISO 8601 UTC, ex. "2026-10-11T12:00:00Z"
     modificado_em: str | None = None
+    # Cabecalho e rodape (M5): tipo ("padrao", "primeira", "par") -> blocos.
+    cabecalhos: dict[str, list[Bloco]] = field(default_factory=dict)
+    rodapes: dict[str, list[Bloco]] = field(default_factory=dict)
+
+
+#: Tipos de cabecalho e rodape, na ordem do .docx (default, first, even).
+TIPOS_DE_FAIXA = ("padrao", "primeira", "par")
 
 
 def _formato_de(run: Run) -> tuple:
@@ -169,14 +189,15 @@ def _formato_de(run: Run) -> tuple:
 def _normalizar_paragrafo(paragrafo: Paragrafo) -> None:
     fundidos: list[Run] = []
     for run in paragrafo.runs:
-        if run.imagem is not None:
-            # Imagem nunca funde: duas imagens iguais lado a lado sao duas imagens.
+        if run.imagem is not None or run.campo is not None:
+            # Imagem e campo nunca fundem: duas imagens iguais lado a lado sao duas
+            # imagens, e o campo PAGE seguido de outro PAGE sao dois campos.
             fundidos.append(run)
             continue
         if run.texto == "":
             continue
         anterior = fundidos[-1] if fundidos else None
-        if anterior is not None and anterior.imagem is None and \
+        if anterior is not None and anterior.imagem is None and anterior.campo is None and \
                 _formato_de(anterior) == _formato_de(run):
             anterior.texto += run.texto
         else:
@@ -221,6 +242,10 @@ def normalizar(documento: Documento) -> Documento:
     tabelas na forma canonica (celula e corpo terminam em paragrafo)."""
     saida = copy.deepcopy(documento)
     _normalizar_blocos(saida.paragrafos, em_celula=False)
+    # Cabecalho e rodape terminam em paragrafo, como a celula (o Word exige ao menos um).
+    for faixas in (saida.cabecalhos, saida.rodapes):
+        for blocos in faixas.values():
+            _normalizar_blocos(blocos, em_celula=True)
     return saida
 
 

@@ -67,8 +67,8 @@ CATALOGO: dict[str, tuple] = {
                   "nesta versão e sai do arquivo ao salvar.",
         True),
     "CAMPO": (
-        lambda n: f"{n} {_plural(n, 'campo (número de página, data ou outro) foi gravado', 'campos (número de página, data ou outros) foram gravados')} "
-                  "como texto fixo.",
+        lambda n: f"{n} {_plural(n, 'campo que não é número de página (data, sumário, referência ou outro) ficou', 'campos que não são número de página (data, sumário, referência ou outros) ficaram')} "
+                  "com o último valor mostrado, como texto fixo. O campo se perde ao salvar.",
         True),
     "HIPERLINK": (
         lambda n: f"{n} {_plural(n, 'hiperlink foi mantido', 'hiperlinks foram mantidos')} "
@@ -79,8 +79,20 @@ CATALOGO: dict[str, tuple] = {
                   "ao salvar.",
         True),
     "CABECALHO_RODAPE": (
-        lambda n: "O documento tem cabeçalho ou rodapé, que não é editado nesta versão "
-                  "e sai do arquivo ao salvar.",
+        lambda n: f"{n} {_plural(n, 'cabeçalho ou rodapé não pôde ser lido', 'cabeçalhos ou rodapés não puderam ser lidos')} "
+                  "(parte ausente, de tipo errado ou danificada) e sai do arquivo ao salvar.",
+        True),
+    "CABECALHO_SECAO": (
+        lambda n: "O documento tem seções com cabeçalho ou rodapé próprios. O EditDoc mantém "
+                  "só os da última seção, que passam a valer para o documento inteiro.",
+        True),
+    "CABECALHO_GRANDE": (
+        lambda n: f"{n} {_plural(n, 'cabeçalho ou rodapé é grande demais', 'cabeçalhos ou rodapés são grandes demais')} "
+                  "para abrir e sai do arquivo ao salvar.",
+        True),
+    "NUMERO_PAGINA": (
+        lambda n: "O formato ou o número inicial da numeração de páginas não é mostrado pelo "
+                  "EditDoc. A numeração sai como 1, 2, 3 ao salvar.",
         True),
     "SECAO": (
         lambda n: f"{n} {_plural(n, 'quebra de seção não é preservada', 'quebras de seção não são preservadas')}. "

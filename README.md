@@ -4,10 +4,12 @@ Editor de documentos no formato `.docx`, com a aparência de um processador de
 texto de escritório: páginas A4, faixa de opções, estilos, tabelas, imagens,
 cabeçalho e rodapé.
 
-> **Versão 0.0.7: tabelas e imagens.** Visão em páginas (A4, Carta e Ofício, régua, quebras,
-> zoom) com tabelas (mesclas, bordas, sombreamento, Tab entre células, aba Inserir) e imagens
-> na linha do texto (inserir, colar, redimensionar), abertas e salvas em `.docx`. Cabeçalho e
-> rodapé chegam no M5. A primeira versão completa é a 0.1.0. O plano está em
+> **Versão 0.0.8: cabeçalho, rodapé e número de página.** Visão em páginas (A4, Carta e
+> Ofício, régua, quebras, zoom) com tabelas, imagens na linha do texto e, agora, cabeçalho e
+> rodapé editados no lugar (duplo clique na margem), com primeira página diferente, páginas
+> pares e ímpares diferentes e os campos de número de página e total de páginas ("Página X
+> de Y"), tudo aberto e salvo em `.docx`. Estilos e a faixa final chegam no M6. A primeira
+> versão completa é a 0.1.0. O plano está em
 > [docs/ARQUITETURA.md](docs/ARQUITETURA.md), e os resultados dos spikes e do gate em
 > [docs/SPIKES.md](docs/SPIKES.md).
 

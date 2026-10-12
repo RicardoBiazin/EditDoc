@@ -18,10 +18,11 @@ from PySide6.QtGui import (QImage, QTextBlockFormat, QTextCharFormat, QTextDocum
 
 from editdoc import log_interno
 from editdoc.modelo import imagem as mod_imagem
+from editdoc.modelo.campos import tipo_do_campo
 from editdoc.modelo.documento import (CARACTERE_OBJETO, Celula, Documento, Imagem, Linha,
                                       Paragrafo, Run, Tabela)
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
-from editdoc.ponte_qt import imagens
+from editdoc.ponte_qt import campos, imagens
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
                                       ler_json)
@@ -132,7 +133,16 @@ def _paragrafo(bloco) -> Paragrafo:
         frag = it.fragment()
         if frag.isValid() and frag.text():
             cf = frag.charFormat()
-            if cf.isImageFormat():
+            if campos.eh_campo(cf):
+                # Campo (M5): um run por caractere de objeto, com o resultado guardado.
+                for caractere in frag.text():
+                    if caractere == CARACTERE_OBJETO:
+                        run = _run(campos.resultado_de(cf), cf)
+                        instrucao = campos.instrucao_de(cf)
+                        # Instrucao estranha (formato montado a mao): fica o texto, sem campo.
+                        run.campo = instrucao if tipo_do_campo(instrucao) else None
+                        p.runs.append(run)
+            elif cf.isImageFormat():
                 # Imagens iguais lado a lado viram um fragmento so': uma por caractere.
                 for caractere in frag.text():
                     if caractere != CARACTERE_OBJETO:
@@ -254,6 +264,11 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int) -> Tabela:
             linha.altura_exata = bool(dado_linha.get("altura_exata"))
         tabela.linhas.append(linha)
     return tabela
+
+
+def extrair_blocos(documento_qt: QTextDocument, largura_corpo_tw: int = _CORPO_PADRAO_TW) -> list:
+    """Blocos de um documento de cabecalho ou rodape."""
+    return _blocos(documento_qt.rootFrame().begin(), largura_corpo_tw)
 
 
 def extrair(documento_qt: QTextDocument) -> Documento:

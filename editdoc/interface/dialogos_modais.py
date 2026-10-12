@@ -218,3 +218,24 @@ def pedir_margens(pai: QWidget | None, atual: Pagina) -> Pagina | None:
                "de largura e de altura.")
         return None
     return novo
+
+
+def pedir_numero_inicial(pai: QWidget | None, atual: int | None,
+                         maximo: int = 32767) -> tuple[bool, int | None]:
+    """Numero da primeira pagina. (False, None) se cancelar; (True, None) = comecar em 1
+    sem numero fixo (continua); (True, n) = comecar em n."""
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"Numeração de páginas - {APP}")
+    grade = QFormLayout(dialogo)
+    fixo = QCheckBox("Começar em:")
+    fixo.setChecked(atual is not None)
+    valor = QSpinBox()
+    valor.setRange(0, maximo)
+    valor.setValue(atual if atual is not None else 1)
+    valor.setEnabled(atual is not None)
+    fixo.toggled.connect(valor.setEnabled)
+    grade.addRow(fixo, valor)
+    grade.addRow(_botoes_ok(dialogo))
+    if dialogo.exec() != QDialog.DialogCode.Accepted:
+        return False, None
+    return True, (valor.value() if fixo.isChecked() else None)

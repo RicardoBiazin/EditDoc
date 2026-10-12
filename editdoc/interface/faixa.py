@@ -10,8 +10,9 @@ no menu e na dica (tooltip). Botao nao usa setDefaultAction, porque o Qt copia
 o texto da acao para o botao e nao deixa encurtar: cada botao sincroniza com a
 acao por sinal.
 
-Abas: Pagina Inicial, Inserir (M4: tabela e imagem) e Layout (M3). Dois estados
-por grupo. O estado intermediario, com botoes menores em tres linhas, e as abas
+Abas: Pagina Inicial, Inserir (M4: tabela e imagem; M5: cabecalho, rodape e numero
+de pagina) e Layout (M3). A aba "Cabeçalho e Rodapé" (M5) so' aparece durante a
+edicao do cabecalho, como a aba contextual do Word. Dois estados por grupo. O estado intermediario, com botoes menores em tres linhas, e as abas
 contextuais (Layout da Tabela, Formato da Imagem) entram no M6; ate' la os
 comandos de tabela ficam na aba Inserir e no menu de contexto.
 """
@@ -25,7 +26,8 @@ from PySide6.QtWidgets import (QComboBox, QFontComboBox, QFrame, QHBoxLayout, QL
                                QWidget, QWidgetAction)
 
 from editdoc.edicao import formatacao, tabelas
-from editdoc.interface.comandos import MARGENS_DAS_ACOES, PAPEL_DAS_ACOES, Comandos
+from editdoc.interface.comandos import (FORMATO_DAS_ACOES, MARGENS_DAS_ACOES, PAPEL_DAS_ACOES,
+                                        Comandos)
 from editdoc.interface.planejamento import recolher_grupos
 from editdoc.interface.seletor_grade import SeletorDeGrade
 
@@ -47,7 +49,14 @@ ROTULOS = {
     "selecionar_tudo": "Selecionar", "quebra_pagina": "Quebra",
     "excluir_tabela": "Excluir tabela", "inserir_imagem": "Imagem",
     "tamanho_imagem": "Tamanho da imagem",
+    "primeira_diferente": "Primeira página diferente",
+    "pares_impares": "Pares e ímpares diferentes",
+    "ir_cabecalho": "Ir para o cabeçalho", "ir_rodape": "Ir para o rodapé",
+    "fechar_cabecalho": "Fechar cabeçalho e rodapé",
 }
+
+#: Nome da aba contextual do cabecalho e do rodape.
+ABA_CABECALHO = "Cabeçalho e Rodapé"
 
 
 class BotaoAcao(QToolButton):
@@ -86,6 +95,36 @@ def _menu(texto: str, acoes: list[QAction]) -> QToolButton:
     menu = QMenu(botao)
     for acao in acoes:
         menu.addAction(acao)
+    botao.setMenu(menu)
+    return botao
+
+
+def _menu_numero_de_pagina(comandos: Comandos) -> QToolButton:
+    """Botao "Número de Página" com os submenus de posicao, campo no cursor e formato."""
+    c = comandos
+    botao = QToolButton()
+    botao.setText("Número de Página ▾")
+    botao.setToolTip("Número de página no cabeçalho ou no rodapé")
+    botao.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    botao.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    botao.setAutoRaise(True)
+    botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    menu = QMenu(botao)
+    topo = menu.addMenu("Início da página")
+    for id_ in ("numero_topo_esquerda", "numero_topo_centro", "numero_topo_direita"):
+        topo.addAction(c.acao(id_))
+    fim = menu.addMenu("Fim da página")
+    for id_ in ("numero_rodape_esquerda", "numero_rodape_centro", "numero_rodape_direita",
+                "numero_x_de_y"):
+        fim.addAction(c.acao(id_))
+    menu.addSeparator()
+    menu.addAction(c.acao("campo_pagina"))
+    menu.addAction(c.acao("campo_total"))
+    menu.addSeparator()
+    formato = menu.addMenu("Formato do número")
+    for id_ in FORMATO_DAS_ACOES:
+        formato.addAction(c.acao(id_))
+    menu.addAction(c.acao("numero_inicial"))
     botao.setMenu(menu)
     return botao
 
@@ -243,8 +282,22 @@ class Faixa(QFrame):
             _botao(c, "excluir_tabela"),
             _botao(c, "inserir_imagem"),
             _botao(c, "tamanho_imagem"),
+            _menu("Cabeçalho", [c.acao("editar_cabecalho"), c.acao("remover_cabecalho")]),
+            _menu("Rodapé", [c.acao("editar_rodape"), c.acao("remover_rodape")]),
+            _menu_numero_de_pagina(c),
         ])
         inserir_linha.layout().addStretch(1)
+        # Aba contextual do cabecalho e do rodape (M5): so' aparece na edicao.
+        cabecalho_linha = _linha([
+            _menu_numero_de_pagina(c),
+            _botao(c, "primeira_diferente"),
+            _botao(c, "pares_impares"),
+            _botao(c, "ir_cabecalho"),
+            _botao(c, "ir_rodape"),
+            _botao(c, "fechar_cabecalho"),
+        ])
+        cabecalho_linha.layout().addStretch(1)
+        cabecalho_linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         inserir_linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
 
         topo = QHBoxLayout()
@@ -257,7 +310,10 @@ class Faixa(QFrame):
         self._abas.addTab("Página Inicial")
         self._abas.addTab("Inserir")
         self._abas.addTab("Layout")
+        self._abas.addTab(ABA_CABECALHO)
+        self._abas.setTabVisible(3, False)
         self._abas.setExpanding(False)
+        self._aba_antes_da_faixa = 0
         topo.addWidget(self._abas, 1)
 
         grupos = QHBoxLayout()
@@ -273,7 +329,10 @@ class Faixa(QFrame):
         self._conteudo.addWidget(pagina_inicial)
         self._conteudo.addWidget(inserir_linha)
         self._conteudo.addWidget(layout_linha)
+        self._conteudo.addWidget(cabecalho_linha)
         self._abas.currentChanged.connect(self._conteudo.setCurrentIndex)
+        if hasattr(editor, "modoFaixaAlterado"):
+            editor.modoFaixaAlterado.connect(self._modo_da_faixa)
 
         vertical = QVBoxLayout(self)
         vertical.setContentsMargins(MARGEM_FAIXA, 4, MARGEM_FAIXA, 4)
@@ -303,6 +362,26 @@ class Faixa(QFrame):
     def resizeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
         super().resizeEvent(evento)
         self.ajustar()
+
+    def _modo_da_faixa(self) -> None:
+        """Entrou na edicao do cabecalho: mostra a aba contextual; saiu: esconde e volta."""
+        editando = self._editor.editando_faixa() is not None
+        indice = 3
+        if editando and not self._abas.isTabVisible(indice):
+            self._aba_antes_da_faixa = self._abas.currentIndex()
+            self._abas.setTabVisible(indice, True)
+            self._abas.setCurrentIndex(indice)
+        elif not editando and self._abas.isTabVisible(indice):
+            if self._abas.currentIndex() == indice:
+                self._abas.setCurrentIndex(self._aba_antes_da_faixa)
+            self._abas.setTabVisible(indice, False)
+
+    def aba_atual(self) -> str:
+        return self._abas.tabText(self._abas.currentIndex())
+
+    def abas_visiveis(self) -> list[str]:
+        return [self._abas.tabText(i) for i in range(self._abas.count())
+                if self._abas.isTabVisible(i)]
 
     def abrir_aba(self, nome: str) -> None:
         """Mostra a aba pelo nome ("Página Inicial", "Inserir", "Layout")."""

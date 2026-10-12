@@ -15,11 +15,21 @@ modo que o estilo nao muda a aparencia. Celula sempre termina em paragrafo, e o
 corpo nao termina em tabela: o Word repara o arquivo que nao segue isso.
 
 Imagens (M4): cada imagem distinta (por conteudo) vira uma parte em word/media,
-com os bytes originais, uma relacao e um tipo de conteudo por extensao.
+com os bytes originais e um tipo de conteudo por extensao. Cada parte que usa a
+imagem (documento, cabecalho, rodape) tem a sua propria relacao para ela.
+
+Cabecalho e rodape (M5): uma parte word/headerN.xml ou footerN.xml por tipo
+(padrao, primeira, par), com relacao no documento, referencia no sectPr, tipo de
+conteudo proprio e, se tiver imagem, relacoes proprias. `w:titlePg` no sectPr e
+`w:evenAndOddHeaders` no settings.xml dizem qual vale em cada pagina.
+
+Campos (M5): PAGE e NUMPAGES saem como campo complexo (fldChar begin, instrText,
+separate, o ultimo resultado, end), que e' como o Word grava. O Word recalcula.
 """
 
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import hashlib
 import io
@@ -33,13 +43,15 @@ from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.padroes import (ESPACO_DEPOIS_PADRAO_TW, FONTE_PADRAO, LINHA_PADRAO,
                                          TAMANHO_PADRAO_MEIO_PT)
-from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CONFIG, CT_CORE, CT_DOCUMENTO,
-                                        CT_ESTILOS, CT_NUMERACAO, CT_RELS, CT_XML, DC,
-                                        DCT, EP, PIC_NS, PKG_CT, PKG_REL, R_NS, RT, RT_CORE,
-                                        RT_IMAGEM, URI_IMAGEM, W, WP_NS, XML_NS, XSI, q)
+from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFIG, CT_CORE,
+                                        CT_DOCUMENTO, CT_ESTILOS, CT_NUMERACAO, CT_RELS,
+                                        CT_RODAPE, CT_XML, DC, DCT, EP, PIC_NS, PKG_CT, PKG_REL,
+                                        R_NS, RT, RT_CABECALHO, RT_CORE, RT_IMAGEM, RT_RODAPE,
+                                        URI_IMAGEM, W, WP_NS, XML_NS, XSI, q)
 from editdoc.modelo import imagem as mod_imagem
-from editdoc.modelo.documento import (Bloco, Borda, Celula, Documento, Imagem, Paragrafo, Run,
-                                      Tabela, bordas_padrao)
+from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
+from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Celula, Documento, Imagem,
+                                      Paragrafo, Run, Tabela, bordas_padrao)
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
 _JC_TABELA = {"esquerda": "left", "centro": "center", "direita": "right"}
@@ -56,6 +68,8 @@ _SEPARADORES = re.compile("(\t|\n|\u2028)")
 _HEX6 = re.compile(r"[0-9A-Fa-f]{6}")
 _ZIP_DATA = (1980, 1, 1, 0, 0, 0)  # data fixa: saida igual entre gravacoes
 _VERT = {"subscrito": "subscript", "sobrescrito": "superscript"}
+#: Tipo do modelo -> w:type de headerReference/footerReference.
+_TIPO_FAIXA = {"padrao": "default", "primeira": "first", "par": "even"}
 
 
 
@@ -162,28 +176,43 @@ def _rpr(run: Run) -> etree._Element | None:
     return rpr
 
 
-class _Midias:
-    """Imagens do documento: uma parte por conteudo distinto, com a sua relacao."""
+class _Relacoes:
+    """Relacoes de uma parte (documento, cabecalho ou rodape), com rId sequencial."""
 
-    PRIMEIRO_RID = 4  # rId1 a rId3: estilos, configuracoes e numeracao
+    def __init__(self, primeiro: int) -> None:
+        self._proximo = primeiro
+        self._por_alvo: dict[tuple[str, str], str] = {}
+        self.itens: list[tuple[str, str, str]] = []
+
+    def adicionar(self, tipo: str, alvo: str) -> str:
+        chave = (tipo, alvo)
+        if chave not in self._por_alvo:
+            rid = f"rId{self._proximo}"
+            self._proximo += 1
+            self._por_alvo[chave] = rid
+            self.itens.append((rid, tipo, alvo))
+        return self._por_alvo[chave]
+
+
+class _Midias:
+    """Imagens do documento inteiro: uma parte em word/media por conteudo distinto."""
+
+    PRIMEIRO_RID = 4  # rId1 a rId3 do documento: estilos, configuracoes e numeracao
 
     def __init__(self) -> None:
-        self._por_hash: dict[str, tuple[str, str]] = {}  # sha256 -> (rId, parte)
+        self._por_hash: dict[str, str] = {}  # sha256 -> alvo relativo a word/
         self.partes: list[tuple[str, bytes]] = []
-        self.relacoes: list[tuple[str, str, str]] = []
         self.extensoes: set[str] = set()
         self._proximo_id_desenho = 1
 
-    def registrar(self, imagem: Imagem) -> tuple[str, str]:
+    def registrar(self, imagem: Imagem) -> str:
+        """Alvo da imagem relativo a word/ ("media/image1.png"); cria a parte na primeira vez."""
         chave = hashlib.sha256(imagem.dados).hexdigest()
         if chave not in self._por_hash:
             extensao, _tipo = mod_imagem.FORMATOS[imagem.formato]
             n = len(self._por_hash) + 1
-            rid = f"rId{self.PRIMEIRO_RID + n - 1}"
-            parte = f"word/media/image{n}.{extensao}"
-            self._por_hash[chave] = (rid, parte)
-            self.partes.append((parte, imagem.dados))
-            self.relacoes.append((rid, RT_IMAGEM, f"media/image{n}.{extensao}"))
+            self._por_hash[chave] = f"media/image{n}.{extensao}"
+            self.partes.append((f"word/media/image{n}.{extensao}", imagem.dados))
             self.extensoes.add(extensao)
         return self._por_hash[chave]
 
@@ -198,13 +227,17 @@ class _Ctx:
         self.coletor = coletor
         self.listas = _Listas()
         self.midias = _Midias()
+        #: relacoes da parte que esta' sendo escrita (troca no cabecalho e no rodape)
+        self.relacoes = _Relacoes(_Midias.PRIMEIRO_RID)
 
 
 def _desenho(r, imagem: Imagem, ctx: _Ctx) -> None:
     """w:drawing/wp:inline com a figura, na ordem do esquema (a mesma do Word)."""
     if imagem.formato not in mod_imagem.FORMATOS:
         raise ValueError(f"formato de imagem invalido: {imagem.formato!r}")
-    rid, parte = ctx.midias.registrar(imagem)
+    alvo = ctx.midias.registrar(imagem)
+    parte = "word/" + alvo
+    rid = ctx.relacoes.adicionar(RT_IMAGEM, alvo)
     ident = ctx.midias.id_de_desenho()
     cx, cy = str(int(imagem.largura_emu)), str(int(imagem.altura_emu))
     wp = lambda nome: "{%s}%s" % (WP_NS, nome)  # noqa: E731
@@ -282,6 +315,9 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
             r = etree.SubElement(pe, q("r"))
             _desenho(r, run.imagem, ctx)
             continue
+        if run.campo is not None:
+            _campo(pe, run, coletor)
+            continue
         if run.texto == "":
             continue
         r = etree.SubElement(pe, q("r"))
@@ -289,6 +325,33 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
         if rpr is not None:
             r.append(rpr)
         _conteudo_run(r, run.texto, coletor)
+
+
+def _campo(pe, run: Run, coletor: Coletor) -> None:
+    """Campo complexo, como o Word grava: begin, instrucao, separate, resultado, end.
+
+    Cada pedaco e' um w:r com a formatacao do campo, para que o numero recalculado pelo
+    Word saia com a mesma fonte.
+    """
+    instrucao, _n = texto_gravavel(run.campo or "")
+    if tipo_do_campo(instrucao) is None:
+        raise ValueError(f"campo nao suportado: {run.campo!r}")
+    rpr = _rpr(run)
+
+    def novo_run():
+        r = etree.SubElement(pe, q("r"))
+        if rpr is not None:
+            r.append(copy.deepcopy(rpr))
+        return r
+
+    etree.SubElement(novo_run(), q("fldChar")).set(q("fldCharType"), "begin")
+    instr = etree.SubElement(novo_run(), q("instrText"))
+    instr.set("{%s}space" % XML_NS, "preserve")
+    instr.text = f" {instrucao} "
+    etree.SubElement(novo_run(), q("fldChar")).set(q("fldCharType"), "separate")
+    if run.texto:
+        _conteudo_run(novo_run(), run.texto, coletor)
+    etree.SubElement(novo_run(), q("fldChar")).set(q("fldCharType"), "end")
 
 
 def _borda_xml(pai, nome: str, borda: Borda) -> None:
@@ -402,15 +465,65 @@ def _blocos(pai, blocos: list[Bloco], ctx: _Ctx, em_celula: bool) -> None:
             etree.SubElement(pai, q("p"))
 
 
-def _document_xml(doc: Documento, ctx: _Ctx) -> bytes:
-    raiz = etree.Element(q("document"), nsmap={"w": W, "r": R_NS, "wp": WP_NS, "a": A_NS,
-                                               "pic": PIC_NS})
+_NSMAP_PARTE = {"w": W, "r": R_NS, "wp": WP_NS, "a": A_NS, "pic": PIC_NS}
+
+
+class _Faixas:
+    """Partes de cabecalho e rodape ja escritas: (nome da parte, bytes, relacoes da parte)."""
+
+    def __init__(self) -> None:
+        self.partes: list[tuple[str, bytes]] = []
+        self.tipos: list[tuple[str, str]] = []  # (/word/headerN.xml, tipo de conteudo)
+        self.referencias: list[tuple[str, str, str]] = []  # (elemento, w:type, rId)
+
+
+def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
+    """Cada cabecalho e rodape do modelo vira uma parte, na ordem padrao, primeira, par.
+
+    As relacoes da parte (imagens) sao proprias; a relacao do documento para a parte
+    entra nas relacoes do documento (ctx.relacoes), que ja' tem as imagens do corpo.
+    """
+    faixas = _Faixas()
+    relacoes_doc = ctx.relacoes
+    for onde, modelo, raiz_nome, prefixo, rt, ct, elemento in (
+            ("cabecalho", doc.cabecalhos, "hdr", "header", RT_CABECALHO, CT_CABECALHO,
+             "headerReference"),
+            ("rodape", doc.rodapes, "ftr", "footer", RT_RODAPE, CT_RODAPE, "footerReference")):
+        n = 0
+        for tipo in TIPOS_DE_FAIXA:
+            if tipo not in modelo:
+                continue
+            n += 1
+            nome = f"{prefixo}{n}.xml"
+            ctx.relacoes = _Relacoes(1)
+            ctx.listas.encerrar()
+            raiz = etree.Element(q(raiz_nome), nsmap=_NSMAP_PARTE)
+            _blocos(raiz, modelo[tipo], ctx, em_celula=True)  # termina em paragrafo
+            faixas.partes.append((f"word/{nome}", _xml(raiz)))
+            if ctx.relacoes.itens:
+                faixas.partes.append((f"word/_rels/{nome}.rels", _rels_xml(ctx.relacoes.itens)))
+            faixas.tipos.append((f"/word/{nome}", ct))
+            rid = relacoes_doc.adicionar(rt, nome)
+            faixas.referencias.append((elemento, _TIPO_FAIXA[tipo], rid))
+    ctx.relacoes = relacoes_doc
+    ctx.listas.encerrar()
+    return faixas
+
+
+def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
+    raiz = etree.Element(q("document"), nsmap=_NSMAP_PARTE)
     body = etree.SubElement(raiz, q("body"))
     _blocos(body, doc.paragrafos, ctx, em_celula=False)
     if not doc.paragrafos:
         etree.SubElement(body, q("p"))  # o Word exige ao menos um paragrafo
+    faixas = _escrever_faixas(doc, ctx)
     pagina = doc.pagina
     sect = etree.SubElement(body, q("sectPr"))
+    # EG_HdrFtrReferences vem antes de pgSz no CT_SectPr.
+    for elemento, tipo, rid in faixas.referencias:
+        ref = etree.SubElement(sect, q(elemento))
+        ref.set(q("type"), tipo)
+        ref.set("{%s}id" % R_NS, rid)
     pg = etree.SubElement(sect, q("pgSz"))
     pg.set(q("w"), str(pagina.largura_tw))
     pg.set(q("h"), str(pagina.altura_tw))
@@ -423,7 +536,17 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> bytes:
             ("header", pagina.cabecalho_tw), ("footer", pagina.rodape_tw),
             ("gutter", pagina.medianiz_tw)):
         mar.set(q(nome), str(valor))
-    return _xml(raiz)
+    if pagina.formato_numero != "decimal" or pagina.numero_inicial is not None:
+        if pagina.formato_numero not in FORMATOS_NUMERO:
+            raise ValueError(f"formato de numero invalido: {pagina.formato_numero!r}")
+        num = etree.SubElement(sect, q("pgNumType"))
+        if pagina.formato_numero != "decimal":
+            num.set(q("fmt"), pagina.formato_numero)
+        if pagina.numero_inicial is not None:
+            num.set(q("start"), str(min(max(int(pagina.numero_inicial), 0), NUMERO_INICIAL_MAXIMO)))
+    if pagina.primeira_diferente:
+        etree.SubElement(sect, q("titlePg"))
+    return _xml(raiz), faixas
 
 
 def _styles_xml() -> bytes:
@@ -529,10 +652,13 @@ def _numbering_xml(numeracoes: int) -> bytes:
     return _xml(raiz)
 
 
-def _settings_xml() -> bytes:
+def _settings_xml(pares_impares: bool = False) -> bytes:
     raiz = etree.Element(q("settings"), nsmap={"w": W})
     etree.SubElement(raiz, q("zoom")).set(q("percent"), "100")
     etree.SubElement(raiz, q("defaultTabStop")).set(q("val"), "708")
+    if pares_impares:
+        # Na ordem do CT_Settings: depois de defaultTabStop, antes de characterSpacingControl.
+        etree.SubElement(raiz, q("evenAndOddHeaders"))
     etree.SubElement(raiz, q("characterSpacingControl")).set(q("val"), "doNotCompress")
     compat = etree.SubElement(raiz, q("compat"))
     cs = etree.SubElement(compat, q("compatSetting"))
@@ -563,7 +689,8 @@ def _app_xml() -> bytes:
     return _xml(raiz)
 
 
-def _content_types_xml(extensoes_de_imagem: set[str] = frozenset()) -> bytes:
+def _content_types_xml(extensoes_de_imagem: set[str] = frozenset(),
+                       extras: list[tuple[str, str]] = ()) -> bytes:
     raiz = etree.Element("{%s}Types" % PKG_CT, nsmap={None: PKG_CT})
     etree.SubElement(raiz, "{%s}Default" % PKG_CT, Extension="rels", ContentType=CT_RELS)
     etree.SubElement(raiz, "{%s}Default" % PKG_CT, Extension="xml", ContentType=CT_XML)
@@ -578,6 +705,7 @@ def _content_types_xml(extensoes_de_imagem: set[str] = frozenset()) -> bytes:
         "/docProps/core.xml": CT_CORE,
         "/docProps/app.xml": CT_APP,
     }
+    overrides.update(dict(extras))
     for parte, tipo in overrides.items():
         etree.SubElement(raiz, "{%s}Override" % PKG_CT, PartName=parte, ContentType=tipo)
     return _xml(raiz)
@@ -610,9 +738,9 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     agora = _agora_iso()
     criado = doc.criado_em or agora
     modificado = doc.modificado_em or agora
-    documento_xml = _document_xml(doc, ctx)
+    documento_xml, faixas = _document_xml(doc, ctx)
     partes = [
-        ("[Content_Types].xml", _content_types_xml(ctx.midias.extensoes)),
+        ("[Content_Types].xml", _content_types_xml(ctx.midias.extensoes, faixas.tipos)),
         ("_rels/.rels", _rels_xml([
             ("rId1", RT + "officeDocument", "word/document.xml"),
             ("rId2", RT_CORE, "docProps/core.xml"),
@@ -623,11 +751,12 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
             ("rId1", RT + "styles", "styles.xml"),
             ("rId2", RT + "settings", "settings.xml"),
             ("rId3", RT + "numbering", "numbering.xml"),
-            *ctx.midias.relacoes,
+            *ctx.relacoes.itens,
         ])),
+        *faixas.partes,
         ("word/styles.xml", _styles_xml()),
         ("word/numbering.xml", _numbering_xml(ctx.listas.numeracoes)),
-        ("word/settings.xml", _settings_xml()),
+        ("word/settings.xml", _settings_xml(doc.pagina.pares_impares)),
         ("docProps/core.xml", _core_xml(doc, criado, modificado)),
         ("docProps/app.xml", _app_xml()),
         *ctx.midias.partes,

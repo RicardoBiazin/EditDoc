@@ -10,6 +10,7 @@ geometria vem de largura_tw e altura_tw, que ficam como o arquivo as diz.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 
 #: 1 cm em twips (1440 twips por polegada, 2,54 cm por polegada).
@@ -51,6 +52,13 @@ class Pagina:
     rodape_tw: int = 720
     medianiz_tw: int = 0
     paisagem: bool = False
+    # Cabecalho e rodape (M5). `primeira_diferente` e' o w:titlePg do sectPr;
+    # `pares_impares` e' o w:evenAndOddHeaders do settings.xml (vale para o documento
+    # inteiro, e o EditDoc tem uma secao so'). Numero de pagina: w:pgNumType.
+    primeira_diferente: bool = False
+    pares_impares: bool = False
+    formato_numero: str = "decimal"  # um de FORMATOS_NUMERO (modelo/campos.py)
+    numero_inicial: int | None = None  # None = continua (comeca em 1)
 
     def corpo_largura_tw(self) -> int:
         return self.largura_tw - self.margem_esq_tw - self.margem_dir_tw
@@ -104,3 +112,33 @@ class Pagina:
 def pagina_padrao() -> Pagina:
     """A4 em retrato, margens Normal."""
     return Pagina()
+
+
+def pagina_efetiva(pagina: Pagina, altura_cabecalho_tw: float, altura_rodape_tw: float) -> Pagina:
+    """A pagina com o corpo empurrado pelo cabecalho e pelo rodape, como o Word faz.
+
+    O cabecalho comeca a `cabecalho_tw` do alto da folha; se a base dele passa da margem
+    de cima, o corpo desce. O rodape termina a `rodape_tw` do pe' da folha; se o topo dele
+    sobe alem da margem de baixo, o corpo encurta. Altura 0 = sem cabecalho (ou rodape).
+
+    Diferenca do Word: o EditDoc usa a mesma altura em todas as paginas (a maior das
+    variantes em uso), porque o corpo de cada pagina tem o mesmo tamanho no layout.
+    O corpo nunca fica abaixo de CORPO_MINIMO_TW: o excesso sai do cabecalho e do rodape.
+    """
+    sup = pagina.margem_sup_tw
+    inf = pagina.margem_inf_tw
+    if altura_cabecalho_tw > 0:
+        sup = max(sup, pagina.cabecalho_tw + math.ceil(altura_cabecalho_tw))
+    if altura_rodape_tw > 0:
+        inf = max(inf, pagina.rodape_tw + math.ceil(altura_rodape_tw))
+    excesso = sup + inf - (pagina.altura_tw - CORPO_MINIMO_TW)
+    if excesso > 0:
+        # Devolve o excesso, primeiro do rodape, depois do cabecalho, sem passar da
+        # margem do arquivo (que ja' e' valida). O que sobra fica sobreposto.
+        tira = min(inf - pagina.margem_inf_tw, excesso)
+        inf -= tira
+        excesso -= tira
+        sup -= min(sup - pagina.margem_sup_tw, excesso)
+    if (sup, inf) == (pagina.margem_sup_tw, pagina.margem_inf_tw):
+        return pagina
+    return replace(pagina, margem_sup_tw=sup, margem_inf_tw=inf)
