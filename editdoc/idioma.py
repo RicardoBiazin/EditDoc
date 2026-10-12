@@ -24,7 +24,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from editword import log_interno
+from editdoc import log_interno
 
 log = log_interno.obter(__name__)
 

@@ -1,6 +1,6 @@
 # Avisos de terceiros
 
-Componentes que o EditWord usa, com a licença de cada um. Atualizar a cada
+Componentes que o EditDoc usa, com a licença de cada um. Atualizar a cada
 dependência nova.
 
 ## Dentro do programa

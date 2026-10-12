@@ -1,11 +1,11 @@
 """Confere que o executavel ABRE a janela de verdade.
 
-    .venv\\Scripts\\python.exe ferramentas\\fumaca_exe.py [caminho\\EditWord.exe]
+    .venv\\Scripts\\python.exe ferramentas\\fumaca_exe.py [caminho\\EditDoc.exe]
 
 O --autoverificacao prova que os modulos estao dentro do .exe. Nao prova que o
 programa sobe: um problema de DLL, de tema ou de manifesto so' aparece com o
 processo rodando. Esta fumaca sobe o .exe com %APPDATA% isolado, espera uma
-janela com titulo "EditWord", e falha se o processo morrer antes, se a janela
+janela com titulo "EditDoc", e falha se o processo morrer antes, se a janela
 nao aparecer em 30 s, ou se o log registrou excecao nao tratada.
 
 So' a API do Windows via ctypes, sem Qt e sem pywin32, de proposito: a
@@ -59,11 +59,11 @@ def falha(mensagem: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    exe = pathlib.Path(argv[0]) if argv else RAIZ / "dist" / "EditWord" / "EditWord.exe"
+    exe = pathlib.Path(argv[0]) if argv else RAIZ / "dist" / "EditDoc" / "EditDoc.exe"
     if not exe.is_file():
         return falha(f"{exe} nao existe")
 
-    appdata = pathlib.Path(tempfile.mkdtemp(prefix="editword-fumaca-"))
+    appdata = pathlib.Path(tempfile.mkdtemp(prefix="editdoc-fumaca-"))
     processo = subprocess.Popen([str(exe)], env=dict(os.environ, APPDATA=str(appdata)))
     try:
         limite = time.monotonic() + LIMITE_S
@@ -73,10 +73,10 @@ def main(argv: list[str]) -> int:
                 return falha(f"o processo terminou com codigo {processo.returncode} "
                              "antes de abrir a janela")
             titulos = titulos_visiveis(processo.pid)
-            if any(t.startswith("EditWord") for t in titulos):
+            if any(t.startswith("EditDoc") for t in titulos):
                 break
             if time.monotonic() > limite:
-                return falha(f"nenhuma janela 'EditWord' apareceu em {LIMITE_S} s")
+                return falha(f"nenhuma janela 'EditDoc' apareceu em {LIMITE_S} s")
             time.sleep(0.5)
 
         time.sleep(1.0)  # deixa o programa terminar de montar a tela
@@ -84,7 +84,7 @@ def main(argv: list[str]) -> int:
             return falha("o processo morreu depois de abrir a janela "
                          f"(codigo {processo.returncode})")
 
-        log = appdata / "EditWord" / "editword.log"
+        log = appdata / "EditDoc" / "editdoc.log"
         if log.is_file():
             texto = log.read_text(encoding="utf-8", errors="replace")
             if "EXCECAO NAO TRATADA" in texto:

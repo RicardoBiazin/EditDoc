@@ -16,10 +16,10 @@ daqui, o documento muda junto, no mesmo commit.
 ## Camadas
 
 ```
-editword/modelo/        o documento, puro Python, sem Qt e sem lxml
-editword/formato_docx/  leitura e escrita de .docx (lxml + zipfile), sem Qt
-editword/ponte_qt/      modelo <-> QTextDocument; é o único que importa QtGui
-editword/interface/     janelas, faixa, visão em páginas, diálogos
+editdoc/modelo/        o documento, puro Python, sem Qt e sem lxml
+editdoc/formato_docx/  leitura e escrita de .docx (lxml + zipfile), sem Qt
+editdoc/ponte_qt/      modelo <-> QTextDocument; é o único que importa QtGui
+editdoc/interface/     janelas, faixa, visão em páginas, diálogos
 ```
 
 O modelo intermediário existe para duas coisas: a fidelidade do ida-e-volta é

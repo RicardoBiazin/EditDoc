@@ -9,7 +9,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QMainWindow
 
-from editword import APP, VERSAO, recursos
+from editdoc import APP, VERSAO, recursos
 
 
 class JanelaPrincipal(QMainWindow):

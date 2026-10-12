@@ -17,7 +17,7 @@ def testar_build() -> None:
     texto = bruto.decode("utf-8", errors="replace")
     # Os marcadores [N/5] dividem as etapas. Procurar "PyInstaller" sozinho
     # acharia a checagem de pre-requisito, que vem antes dos testes.
-    ordem = ["[1/5]", "rodar_todos.py", "[2/5]", "EditWord.spec", "[3/5]",
+    ordem = ["[1/5]", "rodar_todos.py", "[2/5]", "EditDoc.spec", "[3/5]",
              "--autoverificacao", "[4/5]", "fumaca_exe.py", "[5/5]",
              "empacotar_zip.py"]
     posicoes = [texto.find(p) for p in ordem]
@@ -27,8 +27,8 @@ def testar_build() -> None:
 
 
 def testar_spec() -> None:
-    secao("EditWord.spec: o que o pacote precisa carregar")
-    spec = ler("EditWord.spec")
+    secao("EditDoc.spec: o que o pacote precisa carregar")
+    spec = ler("EditDoc.spec")
     checa("recursos" in spec, "recursos entram no pacote")
     checa("qtbase_pt_BR.qm" in spec, "traducao do Qt entra no pacote")
     checa('collect_data_files("docx")' in spec,

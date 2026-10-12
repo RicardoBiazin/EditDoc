@@ -11,8 +11,8 @@ from ajudantes import (RAIZ, checa, checa_igual, drenar_eventos, preparar_qt,
 if not preparar_qt():
     raise SystemExit(pular("PySide6 nao esta instalado neste venv"))
 
-from editword import APP, VERSAO, configuracao  # noqa: E402
-from editword.interface.janela_principal import JanelaPrincipal  # noqa: E402
+from editdoc import APP, VERSAO, configuracao  # noqa: E402
+from editdoc.interface.janela_principal import JanelaPrincipal  # noqa: E402
 
 
 def testar_janela() -> None:

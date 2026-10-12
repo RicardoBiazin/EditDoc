@@ -1,4 +1,4 @@
-"""Preferencias do usuario em `%APPDATA%\\EditWord\\config.json`.
+"""Preferencias do usuario em `%APPDATA%\\EditDoc\\config.json`.
 
 Regras, todas travadas por `tests/teste_base.py`:
 
@@ -20,7 +20,7 @@ import json
 import os
 import pathlib
 
-from editword import log_interno
+from editdoc import log_interno
 
 log = log_interno.obter(__name__)
 

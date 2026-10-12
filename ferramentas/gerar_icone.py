@@ -1,4 +1,4 @@
-"""Gera os dois .ico do EditWord, sem nenhuma dependencia.
+"""Gera os dois .ico do EditDoc, sem nenhuma dependencia.
 
     .venv\\Scripts\\python.exe ferramentas\\gerar_icone.py
 
@@ -181,7 +181,7 @@ def ico(imagens: list[Imagem]) -> bytes:
 
 
 def main() -> int:
-    pasta = RAIZ / "editword" / "recursos"
+    pasta = RAIZ / "editdoc" / "recursos"
     pasta.mkdir(parents=True, exist_ok=True)
     for nome, desenho in (("icone.ico", desenhar_app),
                           ("icone_arquivo.ico", desenhar_arquivo)):

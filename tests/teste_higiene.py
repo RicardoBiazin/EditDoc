@@ -46,7 +46,7 @@ def achados(texto: str, origem: str) -> list[str]:
 
 
 def fontes() -> list[pathlib.Path]:
-    arquivos = sorted((RAIZ / "editword").rglob("*.py")) + [RAIZ / "app.py"]
+    arquivos = sorted((RAIZ / "editdoc").rglob("*.py")) + [RAIZ / "app.py"]
     return [a for a in arquivos if "__pycache__" not in a.parts]
 
 

@@ -1,8 +1,8 @@
-r"""Empacota dist\EditWord\ num ZIP pronto para entregar.
+r"""Empacota dist\EditDoc\ num ZIP pronto para entregar.
 
 O one-dir tem ~200 arquivos. Extrair isso no Explorer sem uma pasta na raiz
 despeja tudo onde o usuario estiver -- por isso o ZIP carrega a pasta
-`EditWord/` dentro, e nao o conteudo solto.
+`EditDoc/` dentro, e nao o conteudo solto.
 """
 
 from __future__ import annotations
@@ -14,16 +14,16 @@ import zipfile
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
-from editword import VERSAO                                    # noqa: E402
+from editdoc import VERSAO                                    # noqa: E402
 
 
 def main() -> int:
-    origem = RAIZ / "dist" / "EditWord"
+    origem = RAIZ / "dist" / "EditDoc"
     if not origem.is_dir():
         print(f"ERRO: {origem} nao existe. Rode o build.bat primeiro.")
         return 1
 
-    destino = RAIZ / "dist" / f"EditWord-{VERSAO}-win64.zip"
+    destino = RAIZ / "dist" / f"EditDoc-{VERSAO}-win64.zip"
     arquivos = sorted(p for p in origem.rglob("*") if p.is_file())
     total = sum(p.stat().st_size for p in arquivos)
 
@@ -31,7 +31,7 @@ def main() -> int:
                          compresslevel=9) as zip_:
         for arquivo in arquivos:
             zip_.write(arquivo,
-                       str(pathlib.Path("EditWord")
+                       str(pathlib.Path("EditDoc")
                            / arquivo.relative_to(origem)))
 
     print(destino)

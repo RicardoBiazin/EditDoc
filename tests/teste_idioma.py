@@ -12,7 +12,7 @@ if not preparar_qt():
 from PySide6.QtCore import QLocale  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialogButtonBox  # noqa: E402
 
-from editword import idioma  # noqa: E402
+from editdoc import idioma  # noqa: E402
 
 
 def testar_botoes() -> None:

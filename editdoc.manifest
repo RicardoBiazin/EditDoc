@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="EditWord" version="0.0.1.0"
+  <assemblyIdentity type="win32" name="EditDoc" version="0.0.2.0"
                     processorArchitecture="amd64"/>
-  <description>EditWord - editor de documentos .docx</description>
+  <description>EditDoc - editor de documentos .docx</description>
 
   <!-- asInvoker, nunca requireAdministrator. Um editor nao precisa de
        privilegio, e ELEVADO o arrastar-e-soltar do Explorer para de funcionar:

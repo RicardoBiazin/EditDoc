@@ -93,11 +93,11 @@ def isolar_appdata() -> None:
     escreveu. Fica aqui, e nao em cada teste, porque toda suite chama isto antes
     de qualquer coisa.
     """
-    if os.environ.get("EDITWORD_APPDATA_ISOLADO"):
+    if os.environ.get("EDITDOC_APPDATA_ISOLADO"):
         return
-    pasta = pathlib.Path(tempfile.mkdtemp(prefix="editword-appdata-suite-"))
+    pasta = pathlib.Path(tempfile.mkdtemp(prefix="editdoc-appdata-suite-"))
     os.environ["APPDATA"] = str(pasta)
-    os.environ["EDITWORD_APPDATA_ISOLADO"] = "1"
+    os.environ["EDITDOC_APPDATA_ISOLADO"] = "1"
     atexit.register(shutil.rmtree, pasta, True)
 
 
@@ -141,7 +141,7 @@ def drenar_eventos(rodadas: int = 4) -> None:
 
 
 @contextlib.contextmanager
-def pasta_temporaria(prefixo: str = "editword-teste-") -> Iterator[pathlib.Path]:
+def pasta_temporaria(prefixo: str = "editdoc-teste-") -> Iterator[pathlib.Path]:
     """Pasta temporaria, apagada no fim mesmo se o teste estourar."""
     caminho = pathlib.Path(tempfile.mkdtemp(prefix=prefixo))
     try:

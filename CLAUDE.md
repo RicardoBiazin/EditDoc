@@ -1,4 +1,4 @@
-# CLAUDE.md: EditWord
+# CLAUDE.md: EditDoc
 
 Editor de documentos `.docx` em Python 3.13 + PySide6 6.11.2. Este arquivo é lido
 antes de qualquer alteração. As regras abaixo existem porque a alternativa já
@@ -13,8 +13,8 @@ causou defeito.
    troca). O original fica intacto se qualquer etapa falhar.
 3. **Texto de tela é pt-BR com acentos.** Comentário, docstring e log podem ser
    ASCII. Strings de interface, não.
-4. **Versão em três lugares, que têm de bater:** `editword/__init__.py`
-   (`VERSAO`), `versao.txt` e `editword.manifest`. `tests/teste_base.py` confere.
+4. **Versão em três lugares, que têm de bater:** `editdoc/__init__.py`
+   (`VERSAO`), `versao.txt` e `editdoc.manifest`. `tests/teste_base.py` confere.
 5. **Dependência de execução fixa com `==`.** Nada de PyMuPDF ou outra AGPL/GPL
    dentro do pacote. Toda dependência nova entra em `AVISOS_DE_TERCEIROS.md`.
 6. **Nenhum documento real no repositório.** `.gitignore` bloqueia `*.docx`;
@@ -22,9 +22,9 @@ causou defeito.
 
 ## Estrutura
 
-- `editword/`: pacote. `configuracao.py`, `log_interno.py`, `idioma.py`,
+- `editdoc/`: pacote. `configuracao.py`, `log_interno.py`, `idioma.py`,
   `recursos.py` são infraestrutura.
-- `editword/interface/`: tudo que importa Qt. `janela_principal.py` é a casca.
+- `editdoc/interface/`: tudo que importa Qt. `janela_principal.py` é a casca.
 - `app.py`: ponto de entrada e `--autoverificacao`.
 - `tests/`: suites sem pytest. `rodar_todos.py` roda cada uma em processo próprio.
 - `ferramentas/`: `gerar_icone.py`, `empacotar_zip.py`, `fumaca_exe.py`.
@@ -59,7 +59,7 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | Onde | Armadilha |
 |---|---|
 | `idioma.py` | O `QTranslator` precisa de referência viva, senão o coletor o destrói e os textos voltam ao inglês. Guardado em `app._tradutores`. |
-| `EditWord.spec` | Os `.qm` vão em `datas` para a pasta `traducoes`; o PyInstaller não os inclui sozinho. |
+| `EditDoc.spec` | Os `.qm` vão em `datas` para a pasta `traducoes`; o PyInstaller não os inclui sozinho. |
 | `build.bat` | Fim de linha CRLF. Com LF o `cmd` executa a linha seguinte pela metade. |
 | `build.bat` | `tasklist \| find` trava o build sem console anexado. Usar o código de saída do PowerShell. |
 | `gerar_icone.py` | Forma de 1 px some a 16 px. O traço é grosso de propósito. |

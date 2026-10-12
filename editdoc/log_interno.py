@@ -1,4 +1,4 @@
-"""Log em `%APPDATA%\\EditWord`, e o relatorio de erro nao tratado.
+"""Log em `%APPDATA%\\EditDoc`, e o relatorio de erro nao tratado.
 
 Um programa que mexe em arquivo do usuario nao pode quebrar em silencio: sem
 traceback e sem registro da ultima operacao, qualquer defeito vira adivinhacao.
@@ -25,7 +25,7 @@ import pathlib
 import sys
 import traceback
 
-APP = "EditWord"
+APP = "EditDoc"
 
 #: Teto do arquivo de log, com uma copia anterior guardada. 2 MB cobrem varios
 #: dias de uso e cabem num anexo de e-mail.
@@ -36,7 +36,7 @@ _configurado = False
 
 
 def pasta() -> pathlib.Path:
-    """`%APPDATA%\\EditWord`, criada se preciso. Cai para o TEMP se falhar."""
+    """`%APPDATA%\\EditDoc`, criada se preciso. Cai para o TEMP se falhar."""
     base = os.environ.get("APPDATA") or os.environ.get("TEMP") or "."
     alvo = pathlib.Path(base) / APP
     try:
@@ -48,7 +48,7 @@ def pasta() -> pathlib.Path:
 
 
 def caminho_do_log() -> pathlib.Path:
-    return pasta() / "editword.log"
+    return pasta() / "editdoc.log"
 
 
 def caminho_do_erro() -> pathlib.Path:
@@ -62,7 +62,7 @@ def configurar(nivel: int = logging.INFO) -> None:
         return
     _configurado = True
 
-    raiz = logging.getLogger("editword")
+    raiz = logging.getLogger("editdoc")
     raiz.setLevel(nivel)
     raiz.propagate = False
 
@@ -87,8 +87,8 @@ def configurar(nivel: int = logging.INFO) -> None:
 def obter(nome: str) -> logging.Logger:
     """O logger de um modulo. `obter(__name__)`, como no resto do projeto."""
     configurar()
-    return logging.getLogger(nome if nome.startswith("editword")
-                             else f"editword.{nome}")
+    return logging.getLogger(nome if nome.startswith("editdoc")
+                             else f"editdoc.{nome}")
 
 
 def instalar_captura_de_erros() -> None:

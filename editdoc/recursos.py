@@ -1,4 +1,4 @@
-"""Localiza os arquivos de `editword/recursos/` com e sem PyInstaller.
+"""Localiza os arquivos de `editdoc/recursos/` com e sem PyInstaller.
 
 Sem este modulo os temas desaparecem no .exe: o PyInstaller descompacta os
 `datas` em `sys._MEIPASS`, que nao e' a pasta do pacote nem a pasta do
@@ -12,7 +12,7 @@ import sys
 
 
 def raiz() -> pathlib.Path:
-    """Pasta que contem `editword/recursos`."""
+    """Pasta que contem `editdoc/recursos`."""
     interna = getattr(sys, "_MEIPASS", None)
     if interna:
         return pathlib.Path(interna)
@@ -21,7 +21,7 @@ def raiz() -> pathlib.Path:
 
 def caminho(*partes: str) -> pathlib.Path:
     """Caminho de um recurso embutido, ex.: caminho("temas", "escuro.json")."""
-    return raiz().joinpath("editword", "recursos", *partes)
+    return raiz().joinpath("editdoc", "recursos", *partes)
 
 
 def icone_do_aplicativo():

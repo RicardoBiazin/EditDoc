@@ -14,7 +14,7 @@ from ajudantes import RAIZ, checa, checa_igual, isolar_appdata, resumir, secao
 
 isolar_appdata()
 
-from editword import VERSAO, configuracao, log_interno, recursos  # noqa: E402
+from editdoc import VERSAO, configuracao, log_interno, recursos  # noqa: E402
 
 
 def ler(nome: str) -> str:
@@ -37,7 +37,7 @@ def testar_versao() -> None:
     checa_igual(campos.get("ProductVersion"), VERSAO, "ProductVersion bate com VERSAO")
     # Olha so' o assemblyIdentity: o <?xml version="1.0"?> do topo casaria antes.
     manifesto = re.search(r'<assemblyIdentity[^>]*\sversion="([\d.]+)"',
-                          ler("editword.manifest"))
+                          ler("editdoc.manifest"))
     checa_igual(manifesto.group(1) if manifesto else None, VERSAO + ".0",
                 "manifest traz VERSAO.0")
     checa(re.search(rf"^## {re.escape(VERSAO)}\b", ler("CHANGELOG.md"), re.M)
@@ -87,10 +87,10 @@ def testar_configuracao() -> None:
 
 def testar_log() -> None:
     secao("log: nome do logger, pasta isolada e linha de partida")
-    checa_igual(log_interno.obter("editword.teste").name, "editword.teste",
+    checa_igual(log_interno.obter("editdoc.teste").name, "editdoc.teste",
                 "logger de modulo mantem o nome")
-    checa_igual(log_interno.obter("teste_solto").name, "editword.teste_solto",
-                "nome sem prefixo ganha editword.")
+    checa_igual(log_interno.obter("teste_solto").name, "editdoc.teste_solto",
+                "nome sem prefixo ganha editdoc.")
     caminho = log_interno.caminho_do_log()
     checa(str(caminho).startswith(os.environ["APPDATA"]),
           "o log fica dentro do %APPDATA% isolado")
@@ -102,7 +102,7 @@ def testar_log() -> None:
 def testar_icone() -> None:
     secao("icone: o .ico esta' embutido e tem cabecalho valido")
     alvo = recursos.caminho("icone.ico")
-    checa(alvo.is_file(), "editword/recursos/icone.ico existe")
+    checa(alvo.is_file(), "editdoc/recursos/icone.ico existe")
     dados = alvo.read_bytes() if alvo.is_file() else b""
     checa(dados[:4] == b"\x00\x00\x01\x00", "cabecalho e' de icone (ICO)")
     checa(len(dados) > 4000, "traz os tamanhos, e nao um icone de 1 pixel")

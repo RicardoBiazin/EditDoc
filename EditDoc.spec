@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Receita do PyInstaller do EditWord. Quem roda e' o build.bat.
+"""Receita do PyInstaller do EditDoc. Quem roda e' o build.bat.
 
-    .venv\\Scripts\\python.exe -m PyInstaller --noconfirm --clean EditWord.spec
+    .venv\\Scripts\\python.exe -m PyInstaller --noconfirm --clean EditDoc.spec
 
-EDITWORD_UM_ARQUIVO=1 gera o executavel unico (build.bat umarquivo); sem a
+EDITDOC_UM_ARQUIVO=1 gera o executavel unico (build.bat umarquivo); sem a
 variavel, gera a pasta one-dir, que e' o que se entrega em ZIP.
 """
 
@@ -14,11 +14,11 @@ import PySide6
 from PyInstaller.utils.hooks import collect_data_files
 
 RAIZ = pathlib.Path(SPECPATH)
-UM_ARQUIVO = os.environ.get("EDITWORD_UM_ARQUIVO") == "1"
+UM_ARQUIVO = os.environ.get("EDITDOC_UM_ARQUIVO") == "1"
 TRADUCOES = pathlib.Path(PySide6.__file__).parent / "translations"
-ICONE = RAIZ / "editword" / "recursos" / "icone.ico"
+ICONE = RAIZ / "editdoc" / "recursos" / "icone.ico"
 
-# Modulos que o EditWord nao usa. Cada um tirado daqui precisa passar na
+# Modulos que o EditDoc nao usa. Cada um tirado daqui precisa passar na
 # autoverificacao do .exe, que o build.bat roda logo depois.
 EXCLUDES = [
     "tkinter",
@@ -60,7 +60,7 @@ if not ICONE.is_file():
     raise SystemExit(f"ERRO: {ICONE} nao existe. Rode ferramentas/gerar_icone.py.")
 
 datas = [
-    (str(RAIZ / "editword" / "recursos"), "editword/recursos"),
+    (str(RAIZ / "editdoc" / "recursos"), "editdoc/recursos"),
     (str(TRADUCOES / "qtbase_pt_BR.qm"), "traducoes"),
     (str(TRADUCOES / "qt_pt_BR.qm"), "traducoes"),
 ]
@@ -94,10 +94,10 @@ if UM_ARQUIVO:
         a.binaries,
         a.datas,
         [],
-        name="EditWord",
+        name="EditDoc",
         icon=str(ICONE),
         version=str(RAIZ / "versao.txt"),
-        manifest=str(RAIZ / "editword.manifest"),
+        manifest=str(RAIZ / "editdoc.manifest"),
         console=False,
         upx=False,
     )
@@ -107,10 +107,10 @@ else:
         a.scripts,
         [],
         exclude_binaries=True,
-        name="EditWord",
+        name="EditDoc",
         icon=str(ICONE),
         version=str(RAIZ / "versao.txt"),
-        manifest=str(RAIZ / "editword.manifest"),
+        manifest=str(RAIZ / "editdoc.manifest"),
         console=False,
         upx=False,
     )
@@ -120,5 +120,5 @@ else:
         a.datas,
         strip=False,
         upx=False,
-        name="EditWord",
+        name="EditDoc",
     )

@@ -3,8 +3,8 @@ chcp 65001 >nul
 setlocal
 
 rem ===========================================================================
-rem  build.bat            gera dist\EditWord\EditWord.exe  (one-dir, entregue em ZIP)
-rem  build.bat umarquivo  gera dist\EditWord.exe            (portatil)
+rem  build.bat            gera dist\EditDoc\EditDoc.exe  (one-dir, entregue em ZIP)
+rem  build.bat umarquivo  gera dist\EditDoc.exe            (portatil)
 rem
 rem  SEMPRE o python do .venv, nunca o `python` do PATH.
 rem ===========================================================================
@@ -46,20 +46,20 @@ if /i "%~1"=="umarquivo" (
     echo === [2/5] Empacotando ONE-FILE ===
     echo     AVISO: o modo um-arquivo descompacta o pacote em %%TEMP%% a CADA
     echo     abertura. Use-o para pendrive; para uso diario, prefira o one-dir.
-    set "EDITWORD_UM_ARQUIVO=1"
+    set "EDITDOC_UM_ARQUIVO=1"
 ) else (
     echo === [2/5] Empacotando ONE-DIR ===
-    set "EDITWORD_UM_ARQUIVO="
+    set "EDITDOC_UM_ARQUIVO="
 )
 
 rem Uma instancia rodando segura os arquivos de dist\. O PyInstaller falharia no
 rem meio, e o que sobra e' um dist pela metade. A checagem usa o codigo de saida
 rem do PowerShell, e nao "tasklist | find": o find fica esperando o pipe quando o
 rem build roda sem console anexado, e o build trava sem imprimir nada.
-powershell -NoProfile -NonInteractive -Command "if (Get-Process EditWord -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }"
+powershell -NoProfile -NonInteractive -Command "if (Get-Process EditDoc -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }"
 if errorlevel 1 (
     echo.
-    echo BUILD ABORTADO: ha um EditWord.exe em execucao.
+    echo BUILD ABORTADO: ha um EditDoc.exe em execucao.
     echo Feche o programa e rode de novo.
     echo.
     exit /b 1
@@ -69,7 +69,7 @@ if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 
 rem O __pycache__ tambem sai: um .pyc antigo pode ter a versao errada.
-for %%p in (editword editword\interface tests ferramentas .) do @if exist "%%p\__pycache__" rmdir /s /q "%%p\__pycache__"
+for %%p in (editdoc editdoc\interface tests ferramentas .) do @if exist "%%p\__pycache__" rmdir /s /q "%%p\__pycache__"
 
 if exist dist (
     echo.
@@ -78,7 +78,7 @@ if exist dist (
     exit /b 1
 )
 
-"%PY%" -m PyInstaller --noconfirm --clean EditWord.spec
+"%PY%" -m PyInstaller --noconfirm --clean EditDoc.spec
 if errorlevel 1 (
     echo.
     echo BUILD ABORTADO: o PyInstaller falhou.
@@ -88,8 +88,8 @@ if errorlevel 1 (
 rem -- 3. Autoverificacao do executavel -----------------------------------------
 echo.
 echo === [3/5] Autoverificacao do executavel gerado ===
-set "EXE=dist\EditWord\EditWord.exe"
-if /i "%~1"=="umarquivo" set "EXE=dist\EditWord.exe"
+set "EXE=dist\EditDoc\EditDoc.exe"
+if /i "%~1"=="umarquivo" set "EXE=dist\EditDoc.exe"
 
 if not exist "%EXE%" (
     echo ERRO: "%EXE%" nao foi gerado.
@@ -100,7 +100,7 @@ if not exist "%EXE%" (
 if errorlevel 1 (
     echo.
     echo BUILD ABORTADO: o executavel NAO passou na autoverificacao.
-    echo Causa mais provavel: um modulo em `excludes` do EditWord.spec e' usado
+    echo Causa mais provavel: um modulo em `excludes` do EditDoc.spec e' usado
     echo em tempo de execucao.
     exit /b 1
 )
