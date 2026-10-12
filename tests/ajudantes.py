@@ -182,3 +182,21 @@ def pasta_temporaria(prefixo: str = "editdoc-teste-") -> Iterator[pathlib.Path]:
         yield caminho
     finally:
         shutil.rmtree(caminho, ignore_errors=True)
+
+
+def usar_fontes_do_documento() -> list[str]:
+    """Carrega Calibri e as variantes de Segoe UI (negrito, italico) para o texto do documento.
+
+    Sem a variante negrito, o Qt simula o negrito pintando o texto duas vezes, e o PDF
+    traz cada glifo em dobro ("22" no lugar de "2"). So' as suites de impressao chamam:
+    as outras medem larguras com a fonte que ja' tinham.
+    """
+    from PySide6.QtGui import QFontDatabase
+
+    pasta = pathlib.Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    carregadas: list[str] = []
+    for nome in ("calibri.ttf", "calibrib.ttf", "calibrii.ttf", "calibriz.ttf",
+                 "segoeuib.ttf", "segoeuii.ttf", "segoeuiz.ttf"):
+        if (pasta / nome).is_file() and QFontDatabase.addApplicationFont(str(pasta / nome)) >= 0:
+            carregadas.append(nome)
+    return carregadas

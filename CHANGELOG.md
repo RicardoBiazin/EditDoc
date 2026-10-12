@@ -1,3 +1,38 @@
+## 0.0.10 - 2026-10-12
+
+Impressão e PDF (M7). O documento sai em PDF e na impressora exatamente como está na tela:
+mesmas quebras de página, cabeçalho e rodapé com o número certo em cada folha, tabelas e
+imagens.
+
+- Arquivo > Exportar > PDF: escolhe todas as páginas, a página atual ou um intervalo
+  ("1-3, 5"; intervalo inválido é recusado com aviso), e se o PDF abre ao terminar. O papel e
+  a orientação são os do documento (A4, Carta, Ofício, paisagem ou tamanho livre), o texto
+  sai como texto (pode ser selecionado e pesquisado no leitor), com as fontes embutidas, e o
+  PDF leva o título e o autor do documento e "EditDoc 0.0.10" como criador. A gravação é
+  atômica e conferida: um PDF que já existia só é trocado depois que o novo foi relido do
+  disco.
+- Arquivo > Imprimir (Ctrl+P): diálogo do Windows com impressora, intervalo, página atual,
+  cópias e agrupar; a impressora recebe o papel do documento. Se ela não tem esse papel, o
+  EditDoc pergunta antes de imprimir no papel dela; sem impressora instalada, avisa e sugere
+  o PDF.
+- Arquivo > Visualizar impressão (Ctrl+F2): as folhas como sairão no papel, com navegação,
+  zoom, uma ou várias páginas e o botão Imprimir.
+- Documento longo: exportar e imprimir mostram o progresso, página a página, com
+  Cancelar; cancelar a exportação não grava nada.
+- Arquivo > Exportar > Texto sem formatação (.txt): o texto do corpo em UTF-8, um parágrafo
+  por linha, as células da tabela separadas por tabulação.
+- Nada da tela vai para o papel: fundo, sombra, marcas de formatação, linha de quebra de
+  página, o cabeçalho esmaecido e o rótulo da edição do cabeçalho, cursor e seleção.
+- A autoverificação do executável exporta e imprime (em PDF) um documento de duas páginas e
+  confere as páginas, o texto e a fonte embutida.
+
+Limites deste marco: a imagem sai com a resolução da prévia da tela (até 1800 px no lado
+maior), não com os bytes originais. A impressora com área não imprimível corta o que estiver
+na borda da folha. "Salvar como" continua só `.docx`: o PDF é exportação, para que salvar
+nunca troque o documento por um arquivo que não volta a abrir no EditDoc. O `.txt` leva o
+último valor guardado dos campos de número de página. A impressão em impressora real
+depende de conferência manual (amostra em `tests/saida/amostra_m7.pdf`, gerada pela suíte).
+
 ## 0.0.9 - 2026-10-12
 
 Estilos e faixa final (M6). Os estilos do `.docx` abrem, aparecem na tela, são aplicados e

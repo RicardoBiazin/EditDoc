@@ -36,6 +36,13 @@ DEFINICOES = (
     Definicao("salvar", "Salvar", ("Ctrl+S",), dica="Salvar"),
     Definicao("salvar_como", "Salvar como", ("F12", "Ctrl+Shift+S"), dica="Salvar como"),
     Definicao("fechar", "Fechar", ("Ctrl+W",), dica="Fechar documento"),
+    # Impressao e PDF (M7).
+    Definicao("imprimir", "Imprimir...", ("Ctrl+P",), dica="Imprimir"),
+    Definicao("visualizar_impressao", "Visualizar impressão", ("Ctrl+F2",),
+              dica="Ver as páginas como serão impressas"),
+    Definicao("exportar_pdf", "PDF...", (), dica="Exportar o documento como PDF"),
+    Definicao("exportar_txt", "Texto sem formatação (.txt)...", (),
+              dica="Exportar só o texto do documento"),
     Definicao("desfazer", "Desfazer", ("Ctrl+Z",), dica="Desfazer"),
     Definicao("refazer", "Refazer", ("Ctrl+Y", "Ctrl+Shift+Z"), dica="Refazer"),
     Definicao("recortar", "Recortar", ("Ctrl+X",), dica="Recortar"),
@@ -211,7 +218,8 @@ ESPACAMENTOS = {"espaco_1": 100, "espaco_115": 115, "espaco_15": 150, "espaco_2"
 
 
 #: Comandos de arquivo: quem os executa e' a janela. Ver `ao_arquivo` em Comandos.
-ARQUIVO = ("novo", "abrir", "salvar", "salvar_como", "fechar")
+ARQUIVO = ("novo", "abrir", "salvar", "salvar_como", "fechar", "imprimir",
+           "visualizar_impressao", "exportar_pdf", "exportar_txt")
 
 
 def _nada() -> None:

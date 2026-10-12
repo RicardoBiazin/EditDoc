@@ -7,8 +7,11 @@ QMessageBox nem QFileDialog diretamente. O nome de cada funcao diz a pergunta.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QMessageBox, QSpinBox, QWidget)
+                               QFormLayout, QLineEdit, QMessageBox, QRadioButton, QSpinBox,
+                               QWidget)
 
 from editdoc import APP
 from editdoc.modelo.pagina import CORPO_MINIMO_TW, TWIPS_POR_CM, Pagina
@@ -239,3 +242,98 @@ def pedir_numero_inicial(pai: QWidget | None, atual: int | None,
     if dialogo.exec() != QDialog.DialogCode.Accepted:
         return False, None
     return True, (valor.value() if fixo.isChecked() else None)
+
+
+# -- impressao e PDF (M7) -------------------------------------------------------------
+
+FILTRO_PDF = "Documento PDF (*.pdf)"
+FILTRO_TXT = "Texto sem formatação (*.txt)"
+
+
+@dataclass
+class OpcoesPdf:
+    #: folhas a exportar, indices a partir de 0
+    paginas: list[int]
+    #: abrir o PDF no leitor padrao depois de gravar
+    abrir: bool = False
+
+
+def _com_extensao(caminho: str, extensao: str) -> str:
+    return caminho if caminho.lower().endswith(extensao) else caminho + extensao
+
+
+def pedir_opcoes_pdf(pai: QWidget | None, total: int, atual: int,
+                     abrir: bool = False) -> OpcoesPdf | None:
+    """Paginas (todas, a atual ou um intervalo como "1-3, 5") e "abrir ao terminar"."""
+    from editdoc.modelo.intervalo import analisar_intervalo
+
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"Exportar PDF - {APP}")
+    grade = QFormLayout(dialogo)
+    todas = QRadioButton(f"Todas ({total} página{'s' if total != 1 else ''})")
+    todas.setChecked(True)
+    so_atual = QRadioButton(f"Página atual ({atual + 1})")
+    intervalo = QRadioButton("Páginas:")
+    campo = QLineEdit()
+    campo.setPlaceholderText("por exemplo: 1-3, 5")
+    campo.setMaxLength(200)
+    campo.textEdited.connect(lambda _t: intervalo.setChecked(True))
+    grade.addRow(todas)
+    grade.addRow(so_atual)
+    grade.addRow(intervalo, campo)
+    abrir_depois = QCheckBox("Abrir o PDF depois de exportar")
+    abrir_depois.setChecked(abrir)
+    grade.addRow(abrir_depois)
+    escolha: list[list[int]] = []
+
+    def aceitar() -> None:
+        if todas.isChecked():
+            escolha[:] = [list(range(total))]
+        elif so_atual.isChecked():
+            escolha[:] = [[atual]]
+        else:
+            paginas = analisar_intervalo(campo.text(), total)
+            if paginas is None:
+                avisar(dialogo, "Exportar PDF", "Intervalo de páginas inválido. Use números "
+                       f"de 1 a {total}, separados por vírgula, como 1-3, 5.")
+                campo.setFocus()
+                return
+            escolha[:] = [paginas]
+        dialogo.accept()
+
+    botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+    botoes.accepted.connect(aceitar)
+    botoes.rejected.connect(dialogo.reject)
+    grade.addRow(botoes)
+    if dialogo.exec() != QDialog.DialogCode.Accepted or not escolha:
+        return None
+    return OpcoesPdf(paginas=escolha[0], abrir=abrir_depois.isChecked())
+
+
+def pedir_salvar_pdf(pai: QWidget | None, sugestao: str) -> str | None:
+    caminho, _filtro = QFileDialog.getSaveFileName(pai, "Exportar PDF", sugestao, FILTRO_PDF)
+    return _com_extensao(caminho, ".pdf") if caminho else None
+
+
+def pedir_salvar_txt(pai: QWidget | None, sugestao: str) -> str | None:
+    caminho, _filtro = QFileDialog.getSaveFileName(pai, "Exportar texto", sugestao, FILTRO_TXT)
+    return _com_extensao(caminho, ".txt") if caminho else None
+
+
+def pedir_impressao(pai: QWidget | None, impressora, total: int, atual: int) -> bool:
+    """Dialogo Imprimir do sistema: impressora, intervalo, copias e agrupar. True = imprimir."""
+    from PySide6.QtPrintSupport import QAbstractPrintDialog, QPrintDialog
+
+    dialogo = QPrintDialog(impressora, pai)
+    dialogo.setWindowTitle(f"Imprimir - {APP}")
+    opcoes = QAbstractPrintDialog.PrintDialogOption
+    dialogo.setOptions(opcoes.PrintPageRange | opcoes.PrintCurrentPage
+                       | opcoes.PrintCollateCopies | opcoes.PrintShowPageSize)
+    dialogo.setMinMax(1, max(1, total))
+    return dialogo.exec() == QDialog.DialogCode.Accepted
+
+
+def mostrar_previa(dialogo) -> None:
+    """A pre-visualizacao e' modal: fica aberta ate' o usuario fechar ou imprimir."""
+    dialogo.exec()

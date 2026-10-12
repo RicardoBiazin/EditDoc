@@ -115,4 +115,11 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | `QFontComboBox` no offscreen | Sem a fonte instalada, `setCurrentFont` mostra outra. O dialogo de estilo so' troca a fonte se o usuario mexer no combo. |
 | `isHidden()` antes do `show()` | Um filho de janela que ainda nao apareceu responde `isHidden() == True`. Estado de "mostrar regua" fica num atributo, nao no widget. |
 | faixa e larguras | `teste_faixa` exige: tudo expandido em 1920, so' Edicao recolhida em 1400, Fonte expandida em 820. A galeria tem preferencia sobre Edicao e encolhe antes dos outros grupos (`recolher_com_galeria`); mudar largura de grupo pede medir de novo com Segoe UI 9. |
+| `pathlib.write_text` no Windows | Grava em modo texto e troca `\n` por `\r\n`. Script que edita fonte do repositório usa `read_bytes`/`write_bytes` (o `.gitattributes` pede LF). |
+| PDF no offscreen | Sem fonte carregada, o `QPdfWriter` nao escreve texto nenhum (nem caixa). Sem a variante negrito, o Qt simula o negrito pintando duas vezes, e o PDF traz cada glifo em dobro ("22"). As suites de impressao chamam `usar_fontes_do_documento()`. |
+| `QPrintPreviewDialog` | Guarda so' um ponteiro para o `QPrinter`: sem referencia no Python o primeiro `show()` derruba o processo. `criar_previa` guarda em `dialogo._impressora`. |
+| impressao e cache | `atualizar_campos` antes de imprimir refaz o layout dos campos do corpo sem invalidar os tiles. Quem imprime chama `preparar_para_impressao()` da vista, que limpa o cache junto. |
+| `QPrinter.setPageLayout` | Com margem zero numa impressora de verdade, a margem e' ajustada ao minimo e a chamada devolve False. Papel e orientacao vao separados (`setPageSize`, `setPageOrientation`) com `setFullPage(True)`. |
+| PDF e copias | `QPrinter` em `PdfFormat` tem `supportsMultipleCopies() == False`: as copias sao repetidas pelo EditDoc, senao sai uma so'. |
+| leitor de PDF dos testes | Cortar o stream no `endstream` estraga o dado comprimido que termina em byte de fim de linha. `tests/leitor_pdf.py` usa o `/Length` (indireto no QPdfWriter). |
 | campo no `.docx` | `instrText` com espaco precisa de `xml:space="preserve"` (o validador confere, como o `w:t`), e begin/end tem de fechar no mesmo paragrafo: senao o Word engole o texto seguinte como instrucao. |

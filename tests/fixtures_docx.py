@@ -416,3 +416,16 @@ def docx_com_estilos_do_word(corpo_xml: str = CORPO_COM_ESTILOS,
         "word/theme/theme1.xml": TEMA_DO_WORD.encode("utf-8"),
     }, relacoes_extra=[("rId90", RT_TEMA, "theme/theme1.xml")],
         tipos_extra=[("/word/theme/theme1.xml", CT_TEMA)])
+
+# -- impressao e PDF (M7) -----------------------------------------------------------------
+
+def documento_m7(paginas_de_texto: int = 110):
+    """Amostra do M7: a do M5 (capa, pares e impares, imagem e tabela no cabecalho,
+    "Pagina X de Y" no rodape, campo no corpo) mais tabela mesclada e imagem no corpo."""
+    doc = documento_com_cabecalhos(paginas_de_texto)
+    doc.titulo = "Amostra M7: impressão e PDF"
+    doc.autor = "Equipe EditDoc"
+    extra = documento_com_tabela_e_imagem().paragrafos
+    doc.paragrafos[2:2] = [Paragrafo(runs=[Run("Tabela e imagem no corpo, como saem no papel:")]),
+                           *extra[1:]]
+    return doc

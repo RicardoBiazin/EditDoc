@@ -88,6 +88,10 @@ SUITES = [
      "galeria e painel de estilos acompanham o cursor; faixa final sem corte em todas as abas"),
     ("teste_exibir.py",
      "Exibir: zoom por modo, folhas lado a lado, regua, marcas, navegacao; Layout do paragrafo"),
+    ("teste_pdf.py",
+     "exportar PDF: paginas e papel da tela, texto extraivel, rodape por folha, intervalo, cancelar"),
+    ("teste_impressao.py",
+     "imprimir em PdfFormat: intervalo, copias, papel, sem impressora, Ctrl+P e pre-visualizacao"),
 ]
 
 

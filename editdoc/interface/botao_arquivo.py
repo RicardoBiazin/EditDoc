@@ -1,4 +1,5 @@
-"""Botao Arquivo da faixa: Novo, Abrir, Salvar, Salvar como, Abrir recente, Fechar.
+"""Botao Arquivo da faixa: Novo, Abrir, Salvar, Salvar como, Abrir recente, Exportar,
+Imprimir, Visualizar impressao, Fechar.
 
 Os comandos sao os QAction de `comandos.py`, os mesmos do atalho. O submenu de
 recentes se monta na hora em que abre, para refletir a lista atual.
@@ -23,7 +24,7 @@ class BotaoArquivo(QToolButton):
         self._recentes_de = recentes
         self._abrir_recente = abrir_recente
         self.setText("Arquivo ▾")
-        self.setToolTip("Arquivo: novo, abrir, salvar e fechar")
+        self.setToolTip("Arquivo: novo, abrir, salvar, exportar, imprimir e fechar")
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setAutoRaise(True)
@@ -35,6 +36,13 @@ class BotaoArquivo(QToolButton):
         self._menu_recentes = QMenu("Abrir recente", menu)
         self._menu_recentes.aboutToShow.connect(self._montar_recentes)
         menu.addMenu(self._menu_recentes)
+        menu.addSeparator()
+        self._menu_exportar = QMenu("Exportar", menu)
+        for id_ in ("exportar_pdf", "exportar_txt"):
+            self._menu_exportar.addAction(comandos.acao(id_))
+        menu.addMenu(self._menu_exportar)
+        for id_ in ("imprimir", "visualizar_impressao"):
+            menu.addAction(comandos.acao(id_))
         menu.addSeparator()
         menu.addAction(comandos.acao("fechar"))
         self.setMenu(menu)
@@ -56,3 +64,6 @@ class BotaoArquivo(QToolButton):
 
     def menu_recentes(self) -> QMenu:
         return self._menu_recentes
+
+    def menu_exportar(self) -> QMenu:
+        return self._menu_exportar

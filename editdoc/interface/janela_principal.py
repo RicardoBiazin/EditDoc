@@ -8,6 +8,9 @@ pendentes passam por aqui.
 Sem gerente (testes), a janela funciona sozinha; novo, abrir e recentes ficam sem
 efeito, porque quem abre outras janelas e' o gerente.
 
+Impressao e PDF (M7): exportar, imprimir e visualizar passam por `interface/impressao.py`,
+com a mesma pintura da tela; os dialogos sao de `dialogos_modais`.
+
 Estilos e Exibir (M6): a galeria fica na faixa; o painel de estilos e o painel de
 navegacao sao QDockWidget opcionais (direita e esquerda), escondidos ao abrir. A janela
 mantem a galeria, o painel de estilos, os campos da aba Layout e os botoes de mostrar em
@@ -35,7 +38,7 @@ from editdoc.formato_docx import conferencia
 from editdoc.formato_docx.avisos import Aviso
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import escrever_com_avisos
-from editdoc.interface import dialogo_estilo, dialogos_modais
+from editdoc.interface import dialogo_estilo, dialogos_modais, impressao
 from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
@@ -51,6 +54,7 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.documento import Documento
 from editdoc.modelo.estatisticas import contar
 from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
+from editdoc.modelo.texto_plano import texto_do_documento
 from editdoc.ponte_qt import de_qt, para_qt
 from editdoc.ponte_qt import estilos as pq_estilos
 
@@ -88,6 +92,8 @@ class JanelaPrincipal(QMainWindow):
         self._autor = ""
         self._criado_em: str | None = None
         self._ja_confirmou_fechamento = False
+        #: Exportar PDF: lembra a escolha "abrir depois de exportar" enquanto a janela vive.
+        self._abrir_pdf = False
         self._fonte_cfg = (cfg["fonte_padrao"], float(cfg["tamanho_padrao"]))
         self.setWindowIcon(recursos.icone_do_aplicativo())
         self.resize(cfg["janela_largura"], cfg["janela_altura"])
@@ -100,6 +106,10 @@ class JanelaPrincipal(QMainWindow):
                                      "salvar": self.salvar,
                                      "salvar_como": self.salvar_como,
                                      "fechar": self.close,
+                                     "imprimir": self.imprimir,
+                                     "visualizar_impressao": self.visualizar_impressao,
+                                     "exportar_pdf": self.exportar_pdf,
+                                     "exportar_txt": self.exportar_txt,
                                  }, ao_layout={
                                      "papel": self._mudar_papel,
                                      "orientacao": self._mudar_orientacao,
@@ -579,6 +589,142 @@ class JanelaPrincipal(QMainWindow):
         if escolha == "salvar":
             return self.salvar()
         return escolha == "descartar"
+
+    # -- impressao e PDF (M7) --------------------------------------------------
+
+    def _sugestao(self, extensao: str) -> str:
+        """Nome sugerido para exportar: o do documento, com a extensao nova, na mesma pasta."""
+        if self.caminho is None:
+            return f"Documento{extensao}"
+        return str(self.caminho.with_suffix(extensao))
+
+    def _metadados_pdf(self) -> impressao.Metadados:
+        """Titulo e autor do docProps/core.xml; sem titulo, o nome do arquivo."""
+        titulo = self._titulo or (self.caminho.stem if self.caminho is not None
+                                  else "Documento em branco")
+        return impressao.Metadados(titulo=titulo, autor=self._autor)
+
+    def exportar_pdf(self) -> bool:
+        """Arquivo > Exportar > PDF: paginas, destino e a gravacao, com progresso e cancelar."""
+        painel = self.painel
+        painel.preparar_para_impressao()
+        total, atual = painel.total_de_paginas(), painel.pagina_atual()
+        opcoes = dialogos_modais.pedir_opcoes_pdf(self, total, atual, self._abrir_pdf)
+        if opcoes is None:
+            return False
+        self._abrir_pdf = opcoes.abrir
+        destino = dialogos_modais.pedir_salvar_pdf(self, self._sugestao(".pdf"))
+        if not destino:
+            return False
+        alvo = pathlib.Path(destino)
+        barra = impressao.BarraDeProgresso(self, "Exportar PDF", "Gerando o PDF.",
+                                           len(opcoes.paginas))
+        try:
+            impressao.exportar_pdf(alvo, painel.layout_pag, opcoes.paginas,
+                                   self._metadados_pdf(), barra)
+        except impressao.Cancelado:
+            self.statusBar().showMessage("Exportação cancelada. Nenhum arquivo foi gravado.", 6000)
+            return False
+        except (gravacao.SemEspaco, gravacao.FalhaNaTroca) as erro:
+            dialogos_modais.avisar(self, "Exportar PDF", str(erro))
+            return False
+        except (OSError, impressao.PdfInvalido, impressao.FalhaNaImpressao) as erro:
+            log.error("exportacao de PDF para %s falhou: %s", alvo, erro)
+            dialogos_modais.avisar(self, "Exportar PDF", "Não foi possível gravar o PDF. Verifique "
+                                   "se ele não está aberto em outro programa e se há espaço em "
+                                   "disco. Um arquivo que já existia NÃO foi alterado.")
+            return False
+        finally:
+            barra.fechar()
+        n = len(opcoes.paginas)
+        self.statusBar().showMessage(
+            f"PDF exportado: {alvo.name} ({n} página{'s' if n != 1 else ''})", 6000)
+        if opcoes.abrir and not impressao.abrir_arquivo(alvo):
+            dialogos_modais.avisar(self, "Exportar PDF", "O PDF foi gravado, mas o Windows não "
+                                   "abriu um leitor de PDF para ele.")
+        return True
+
+    def exportar_txt(self) -> bool:
+        """Arquivo > Exportar > Texto sem formatacao: so' o texto do corpo, em UTF-8."""
+        destino = dialogos_modais.pedir_salvar_txt(self, self._sugestao(".txt"))
+        if not destino:
+            return False
+        alvo = pathlib.Path(destino)
+        texto = texto_do_documento(de_qt.extrair(self.painel.documento_corpo()))
+        try:
+            gravacao.gravar_bytes(alvo, texto.encode("utf-8"))
+        except (gravacao.SemEspaco, gravacao.FalhaNaTroca) as erro:
+            dialogos_modais.avisar(self, "Exportar texto", str(erro))
+            return False
+        except OSError as erro:
+            log.error("exportacao de texto para %s falhou: %s", alvo, erro)
+            dialogos_modais.avisar(self, "Exportar texto", "Não foi possível gravar o arquivo de "
+                                   "texto. Um arquivo que já existia NÃO foi alterado.")
+            return False
+        self.statusBar().showMessage(f"Texto exportado: {alvo.name}", 6000)
+        return True
+
+    def imprimir(self) -> bool:
+        """Ctrl+P: dialogo do sistema, papel do documento, paginas com progresso e cancelar."""
+        if not impressao.impressoras():
+            dialogos_modais.avisar(self, "Imprimir", "Nenhuma impressora está instalada no "
+                                   "Windows. Para ter o documento pronto para imprimir em outro "
+                                   "lugar, use Arquivo > Exportar > PDF.")
+            return False
+        painel = self.painel
+        painel.preparar_para_impressao()
+        total, atual = painel.total_de_paginas(), painel.pagina_atual()
+        pagina = painel.layout_pag.pagina_arquivo
+        impressora = impressao.nova_impressora()
+        impressao.configurar_impressora(impressora, pagina)
+        if not dialogos_modais.pedir_impressao(self, impressora, total, atual):
+            return False
+        # A impressora pode ter mudado no dialogo: o papel e' conferido na escolhida.
+        if not impressao.configurar_impressora(impressora, pagina):
+            pergunta = (f"A impressora \"{impressora.printerName()}\" não aceita o papel do "
+                        f"documento, {impressao.descrever_papel(pagina)}. Imprimir no papel dela, "
+                        "sem mudar o tamanho do texto? Parte da página pode ficar de fora.")
+            if not dialogos_modais.confirmar(self, "Imprimir", pergunta):
+                return False
+        paginas = impressao.paginas_da_impressora(impressora, total, atual)
+        barra = impressao.BarraDeProgresso(self, "Imprimir", "Enviando para a impressora.",
+                                           len(paginas))
+        try:
+            enviadas = impressao.imprimir(impressora, painel.layout_pag, paginas, barra)
+        except impressao.Cancelado:
+            self.statusBar().showMessage("Impressão cancelada.", 6000)
+            return False
+        except impressao.FalhaNaImpressao as erro:
+            log.error("impressao em %s falhou: %s", impressora.printerName(), erro)
+            dialogos_modais.avisar(self, "Imprimir", "Não foi possível começar a impressão em "
+                                   f"\"{impressora.printerName()}\". Confira se a impressora "
+                                   "está ligada e disponível.")
+            return False
+        finally:
+            barra.fechar()
+        self.statusBar().showMessage(
+            f"Enviado para {impressora.printerName() or 'a impressora'}: {enviadas} "
+            f"página{'s' if enviadas != 1 else ''}.", 6000)
+        return True
+
+    def visualizar_impressao(self) -> None:
+        """Pre-visualizacao: as folhas como saem no papel, com navegacao, zoom e Imprimir."""
+        painel = self.painel
+        painel.preparar_para_impressao()
+        impressora = impressao.nova_impressora(pdf=not impressao.impressoras())
+        impressao.configurar_impressora(impressora, painel.layout_pag.pagina_arquivo)
+
+        def progresso(total: int):
+            return impressao.BarraDeProgresso(self, "Visualizar impressão",
+                                              "Preparando as páginas.", total)
+
+        dialogo = impressao.criar_previa(self, painel.layout_pag, impressora,
+                                         painel.pagina_atual(), progresso)
+        try:
+            dialogos_modais.mostrar_previa(dialogo)
+        finally:
+            dialogo.deleteLater()
+        painel.setFocus()
 
     # -- comandos de janela ------------------------------------------------
 

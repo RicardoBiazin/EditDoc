@@ -3,8 +3,8 @@
 A edicao (caret, teclado, mouse, desfazer) e' de PainelDocumento, que herda desta
 classe. Aqui fica o que e' so' de pintura e de geometria.
 
-Cada folha e' pintada pela mesma funcao (`desenhar_folha`) que o PDF usaria, e o
-zoom so' muda a escala: nunca refaz o layout.
+Cada folha e' pintada pela mesma funcao (`desenhar_folha`) que o PDF e a impressora
+usam (`interface/impressao.py`, M7), e o zoom so' muda a escala: nunca refaz o layout.
 
 Cache de tiles (medido no Gate do M3, docs/SPIKES.md):
   - a folha e' cortada em tiles de TILE_PX pixels logicos, na coordenada da propria
@@ -570,6 +570,17 @@ class VistaPaginas(QAbstractScrollArea):
         self.verticalScrollBar().setValue(int(m.vao + linha * m.passo_vertical - folga))
 
     # ----- pintura --------------------------------------------------------
+    def preparar_para_impressao(self) -> None:
+        """Campos do corpo com o total atual antes de imprimir ou exportar (M7).
+
+        Mesma conta da pintura: se os campos mudaram, o cache de tiles sai junto, senao a
+        tela ficaria com o numero velho depois que a impressao refez o layout.
+        """
+        if self.layout_pag.atualizar_campos():
+            self._limpar_cache()
+            self._altura_doc_anterior = None
+            self.viewport().update()
+
     def paintEvent(self, ev) -> None:
         if self.layout_pag.atualizar_campos():
             # Total de paginas mudou e o corpo tem campo: o numero na tela muda.

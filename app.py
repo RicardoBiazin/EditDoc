@@ -10,7 +10,7 @@ arquivo.
 
 --autoverificacao nao mostra janela para o usuario: importa os modulos
 obrigatorios, carrega a traducao, faz uma ida-e-volta de .docx e constroi a janela
-principal. O build.bat o roda dentro do .exe antes de entregar; se algo faltou no
+principal, e exporta um PDF (M7). O build.bat o roda dentro do .exe antes de entregar; se algo faltou no
 empacotamento, aparece aqui. Sai com 0 quando passa e com 1 quando falha.
 """
 
@@ -29,6 +29,7 @@ OBRIGATORIOS = (
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "PySide6.QtNetwork",
+    "PySide6.QtPrintSupport",
     "lxml.etree",
     "editdoc.configuracao",
     "editdoc.idioma",
@@ -53,6 +54,9 @@ OBRIGATORIOS = (
     "editdoc.edicao.tabelas",
     "editdoc.edicao.imagens",
     "editdoc.interface.seletor_grade",
+    "editdoc.interface.impressao",
+    "editdoc.modelo.intervalo",
+    "editdoc.modelo.texto_plano",
 )
 
 #: Formatos de imagem que o .docx traz e o Qt precisa decodificar. JPEG e GIF vem de
@@ -106,6 +110,64 @@ def _formatos_de_imagem(falhas: list[str]) -> None:
             falhas.append(f"o Qt nao decodifica {formato}: falta o plugin de imagem no pacote")
 
 
+def _pdf_e_impressao(falhas: list[str]) -> None:
+    """Exporta um PDF de duas paginas e imprime numa impressora PDF, sem mostrar nada.
+
+    Pega o que so' o executavel congelado pode perder: o QtPrintSupport, o motor de PDF
+    do QtGui e as fontes. Com fontes no sistema (o .exe de verdade), exige texto como
+    texto e fonte embutida; no offscreen da suite, sem fontes, confere so' as paginas.
+    """
+    import re
+    import tempfile
+
+    from PySide6.QtGui import QFontDatabase
+
+    from editdoc.interface import impressao
+    from editdoc.interface.layout_paginado import LayoutPaginado
+    from editdoc.modelo.documento import Documento, Paragrafo, Run
+    from editdoc.modelo.pagina import Pagina
+    from editdoc.ponte_qt import para_qt
+
+    layout = None
+    try:
+        modelo = Documento(paragrafos=[Paragrafo(runs=[Run("autoverificacao do PDF")]),
+                                       Paragrafo(runs=[Run("segunda pagina")], quebra_antes=True)],
+                           rodapes={"padrao": [Paragrafo(runs=[Run("1", campo="PAGE")])]})
+        layout = LayoutPaginado(Pagina(), "Arial", 11)
+        para_qt.preencher(layout.doc, modelo)
+        layout.faixas.carregar(modelo)
+        paginas = list(range(layout.numero_paginas()))
+        dados = impressao.gerar_pdf(layout, paginas, impressao.Metadados("autoverificacao"))
+        impressao.conferir_pdf(dados, 2)
+        if QFontDatabase.families():
+            conteudo = b"".join(_inflar(m) for m in re.findall(
+                rb"/FlateDecode\s*>>\s*stream\r?\n(.*?)endstream", dados, re.S))
+            if b"Tj" not in conteudo or b"/FontFile2" not in dados:
+                falhas.append("o PDF nao traz texto com fonte embutida")
+        with tempfile.TemporaryDirectory(prefix="editdoc-autoverificacao-") as pasta:
+            destino = f"{pasta}/impressao.pdf"
+            impressora = impressao.nova_impressora(pdf=True)
+            impressora.setOutputFileName(destino)
+            impressao.configurar_impressora(impressora, Pagina())
+            impressao.imprimir(impressora, layout, paginas)
+            with open(destino, "rb") as arquivo:
+                impressao.conferir_pdf(arquivo.read(), 2)
+    except Exception as erro:  # noqa: BLE001 - interessa o motivo, qualquer um
+        falhas.append(f"exportar PDF ou imprimir falhou: {erro}")
+    finally:
+        if layout is not None:
+            layout.fechar()
+
+
+def _inflar(bruto: bytes) -> bytes:
+    """Descomprime o que der: o corte pelo "endstream" pode levar um byte a mais."""
+    import zlib
+    try:
+        return zlib.decompressobj().decompress(bruto)
+    except zlib.error:
+        return b""
+
+
 def autoverificacao() -> int:
     log = log_interno.obter("autoverificacao")
     falhas: list[str] = []
@@ -128,6 +190,7 @@ def autoverificacao() -> int:
         falhas.append("traducao qtbase_pt_BR nao carregou: botoes sairiam em ingles")
 
     _formatos_de_imagem(falhas)
+    _pdf_e_impressao(falhas)
 
     try:
         from editdoc.interface.janela_principal import JanelaPrincipal

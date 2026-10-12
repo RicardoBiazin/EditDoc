@@ -31,7 +31,8 @@ pesada roda fora da thread da interface.
 Implementada no M3 (0.0.6). Ficou assim:
 
 - `editdoc/interface/vista_paginas.py` é um `QAbstractScrollArea` que pinta as folhas. Uma
-  única função, `desenhar_folha`, pinta a página para a tela e para qualquer outro destino.
+  única função, `desenhar_folha`, pinta a página para a tela e para qualquer outro destino
+  (o PDF e a impressora usam a mesma, desde o M7).
 - `editdoc/interface/layout_paginado.py` guarda o `QTextDocument` com `pageSize` igual ao corpo
   da página e `documentMargin` zero. O layout roda num dispositivo de 1440 dpi: uma unidade vira
   um twip, a unidade do `.docx`.
@@ -167,6 +168,40 @@ pintadas por `desenhar_marcas`, na função da folha, e entram no cache de tiles
 `QTextOption` do Qt com marcas mudaria a largura do texto e a paginação. "Várias páginas"
 põe as folhas lado a lado (`Mapa.colunas`).
 
+## Impressão e PDF
+
+Implementados no M7 (0.0.10), em `editdoc/interface/impressao.py`.
+
+- Uma função pinta a folha n em qualquer `QPainter` (`pintar_pagina`): o corpo por
+  `desenhar_folha` e o cabeçalho e o rodapé por `desenhar_faixas`, as mesmas da tela, a
+  partir do mesmo `LayoutPaginado`. Por isso a paginação impressa é a da tela. Fica fora o
+  que só a tela tem: fundo, sombra, marcas de formatação, linha de quebra, véu e rótulo da
+  edição do cabeçalho, caret, seleção e alças. O cabeçalho sai com opacidade 1.
+- Escala: dpi do dispositivo / 1440. O PDF roda a 1440 dpi (escala 1). O texto sai como
+  texto, com a fonte TrueType embutida em subconjunto pelo `QPdfWriter`.
+- PDF: montado na memória (`QBuffer`) e gravado com a troca atômica, com conferência do
+  arquivo relido (começa com `%PDF-`, termina com `%%EOF`, tem o número de páginas
+  pedido). Cancelar no meio não grava nada. Papel e orientação vêm da página do
+  documento, folha a folha (`pagina_da_folha`): com uma seção, todas iguais; o laço já
+  troca o papel quando a folha seguinte for diferente. Metadados: título e autor do
+  `docProps/core.xml` (sem título, o nome do arquivo) e criador "EditDoc x.y.z".
+- Impressora: `QPrintDialog` com intervalo, página atual, cópias e agrupar; papel e
+  orientação do documento com `setFullPage` (a origem é o canto do papel). Se a
+  impressora não aceita o papel, o usuário escolhe se imprime no papel dela. Se o driver
+  não faz as cópias, o EditDoc repete as folhas, agrupadas ou não. Sem impressora
+  instalada, um aviso sugere o PDF.
+- Pré-visualização: `QPrintPreviewDialog` com o mesmo `paintRequested`; o Imprimir de
+  lá usa o intervalo e as cópias do diálogo dele.
+- Trabalho longo: `QProgressDialog` com Cancelar, chamado a cada folha (a janela continua
+  respondendo); medido: cerca de 2 ms por folha no PDF.
+- Testes sem impressora real: `QPrinter` em `PdfFormat`, e o PDF lido de volta por um
+  leitor mínimo (`tests/leitor_pdf.py`, só `re` e `zlib`; o PySide6-Essentials não traz o
+  QtPdf). A autoverificação do `.exe` exporta e imprime um PDF de duas páginas.
+
+Limites: a imagem sai na prévia do documento (no máximo 1800 px no lado maior), não nos
+bytes originais; a impressora com área não imprimível corta o que estiver na borda (como
+no Word); o `.txt` leva o último resultado guardado dos campos de página.
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado ou descartado com aviso. Se algo
@@ -192,7 +227,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M4 Tabelas e imagens | 0.0.7 (feito) | tabela e imagem inline, no `.docx` e na visão |
 | M5 Cabeçalho e rodapé | 0.0.8 (feito) | edição no lugar, número de página |
 | M6 Estilos e faixa final | 0.0.9 (feito) | galeria, abas Inserir, Layout e Exibir (abas contextuais de tabela e imagem ficaram para depois) |
-| M7 Impressão e PDF | 0.0.10 | imprimir, pré-visualizar, exportar PDF |
+| M7 Impressão e PDF | 0.0.10 (feito) | imprimir, pré-visualizar, exportar PDF (e texto `.txt`) |
 | M8 Polimento | 0.1.0 | recuperação automática, preferências, acessibilidade, documentação final |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
