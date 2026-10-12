@@ -60,6 +60,10 @@ def testar_formatacao_por_atalho() -> None:
     checa(ler(painel).italico, "Ctrl+I deixa em italico")
     QTest.keyClick(painel, Qt.Key.Key_U, CTRL)
     checa(ler(painel).sublinhado, "Ctrl+U sublinha")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 
@@ -85,6 +89,10 @@ def testar_paragrafo_por_atalho() -> None:
     checa_igual(ler(painel).espacamento, 100, "Ctrl+1 espacamento simples")
     QTest.keyClick(painel, Qt.Key.Key_L, CTRL | SHIFT)
     checa(ler(painel).marcadores, "Ctrl+Shift+L liga marcadores")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 
@@ -101,6 +109,10 @@ def testar_busca_por_atalho() -> None:
     QTest.keyClick(painel, Qt.Key.Key_H, CTRL)
     drenar_eventos()
     checa(janela.barra_busca._substituto.isVisible(), "Ctrl+H mostra o campo de substituir")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 
@@ -115,6 +127,10 @@ def testar_teclas_comuns() -> None:
     QTest.keyClick(painel, Qt.Key.Key_Q, CTRL)
     checa(not ler(painel).negrito and painel.toPlainText() == "um doi",
           "contraprova: Ctrl+Q, sem atalho, nao muda nada")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 

@@ -9,6 +9,11 @@ def ler(nome: str) -> str:
     return (RAIZ / nome).read_text(encoding="utf-8")
 
 
+def _traz_docx(texto: str) -> bool:
+    """O .spec ainda traz o python-docx para dentro do executavel?"""
+    return ('"docx"' in texto or "'docx'" in texto)
+
+
 def testar_build() -> None:
     secao("build.bat: cinco etapas, na ordem, com fim de linha CRLF")
     bruto = (RAIZ / "build.bat").read_bytes()
@@ -31,8 +36,10 @@ def testar_spec() -> None:
     spec = ler("EditDoc.spec")
     checa("recursos" in spec, "recursos entram no pacote")
     checa("qtbase_pt_BR.qm" in spec, "traducao do Qt entra no pacote")
-    checa('collect_data_files("docx")' in spec,
-          "templates do python-docx entram no pacote")
+    checa(not _traz_docx(spec),
+          "python-docx fica fora do executavel (so' desenvolvimento)")
+    checa(_traz_docx('collect_data_files("docx")'),
+          "contraprova: o detector pega a linha antiga do templates do python-docx")
     checa("hiddenimports" in spec and "lxml" in spec,
           "lxml declarado como importacao oculta")
     checa("manifest=" in spec and "version=" in spec,

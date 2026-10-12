@@ -76,7 +76,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 |---|---|---|
 | M0 Esqueleto | 0.0.1 (renomeado em 0.0.2) | repositório, build, testes e fumaça do `.exe` |
 | M1 Editor básico | 0.0.4 (feito) | visão provisória, faixa com colapso, formatação, desfazer, localizar |
-| M2 `.docx` de texto | 0.0.5 | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
+| M2 `.docx` de texto | 0.0.5 (feito) | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
 | M3 Visão em páginas | 0.0.6 | A4, margens, régua, quebras, zoom |
 | M4 Tabelas e imagens | 0.0.7 | tabela e imagem inline, no `.docx` e na visão |
 | M5 Cabeçalho e rodapé | 0.0.8 | edição no lugar, número de página |

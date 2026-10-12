@@ -97,6 +97,14 @@ campos; imagens; paginação; estilos (fora do modelo ainda); `sectPr`, `tblPr` 
 Escritor e leitor próprios, como previsto, a partir do M2. Abrir a amostra no Word
 continua como aceite manual.
 
+## Correção feita no M2
+
+A afirmação de que `setFontUnderline(False)` não limpa o sublinhado não se
+reproduziu no PySide6 6.11.2: o merge com esse formato limpa o estilo. O que se
+reproduz é outra coisa: texto inserido sem formato herda o sublinhado do vizinho.
+A ponte usa `setUnderlineStyle(NoUnderline)` de forma explícita, o que vale nos
+dois casos. Ver `tests/teste_docx_qt.py`.
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.

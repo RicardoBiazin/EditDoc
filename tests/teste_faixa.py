@@ -109,6 +109,10 @@ def testar_recolhimento() -> None:
     faixa.setMaximumWidth(16777215)
     drenar_eventos()
     checa(not _cortados(janela), "de volta ao tamanho normal, nada mais aparece cortado")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 
@@ -147,6 +151,10 @@ def testar_estado_acompanha_cursor() -> None:
     drenar_eventos()
     checa(not janela.comandos.acao("desfazer").isEnabled(),
           "desfazer desabilita quando nao ha o que desfazer")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 
@@ -167,6 +175,10 @@ def testar_custo_da_atualizacao() -> None:
     media_ms = sum(tempos) / len(tempos) * 1000
     print(f"  (media de atualizacao: {media_ms:.3f} ms em 1000 movimentos)")
     checa(media_ms < 1.0, f"atualizar a faixa leva menos de 1 ms em media ({media_ms:.3f} ms)")
+    # Fechar com alteracao pendente abriria o dialogo de descarte: um modal
+    # trava a suite. O documento e' declarado salvo antes; o fechamento com
+    # alteracao esta' em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
 
 

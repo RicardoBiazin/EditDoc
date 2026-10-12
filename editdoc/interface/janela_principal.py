@@ -1,41 +1,91 @@
-"""Janela principal: faixa de opcoes, documento, localizar e barra de status.
+"""Janela principal: faixa de opcoes, documento, aviso, localizar e barra de status.
 
-M1: um documento por janela, sem abrir nem salvar (chegam no M2). O documento
-vive no painel provisorio (QTextEdit). Os comandos vem de um so' registro, e a
-faixa, os atalhos e o menu usam os mesmos QAction.
+Um documento por janela. O documento vive no painel provisorio (QTextEdit). A
+janela guarda o estado do arquivo: caminho, assinatura do disco na ultima leitura
+ou gravacao, e os avisos do leitor. Salvar, salvar como e fechar com alteracoes
+pendentes passam por aqui.
+
+Sem gerente (testes), a janela funciona sozinha; novo, abrir e recentes ficam sem
+efeito, porque quem abre outras janelas e' o gerente.
 """
 
 from __future__ import annotations
 
+import os
+import pathlib
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
 
-from editdoc import APP, VERSAO, recursos
+from editdoc import APP, VERSAO, configuracao, log_interno, recursos
+from editdoc.armazenamento import gravacao
 from editdoc.edicao import busca
 from editdoc.edicao.busca import Opcoes
+from editdoc.formato_docx import conferencia
+from editdoc.formato_docx.avisos import Aviso
+from editdoc.formato_docx.erros import ErroDocx
+from editdoc.formato_docx.escritor import escrever_com_avisos
+from editdoc.interface import dialogos_modais
 from editdoc.interface.atualizador import AtualizadorDeEstado
+from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
+from editdoc.interface.botao_arquivo import BotaoArquivo
 from editdoc.interface.comandos import Comandos
 from editdoc.interface.faixa import Faixa
 from editdoc.interface.painel_documento import PainelDocumento
+from editdoc.modelo.documento import Documento
 from editdoc.modelo.estatisticas import contar
+from editdoc.ponte_qt import de_qt, para_qt
 
-#: Pausa depois da ultima tecla antes de recontar as palavras. Contar a cada
-#: tecla e' trabalho a toa num documento grande.
+log = log_interno.obter(__name__)
+
+#: Pausa depois da ultima tecla antes de recontar as palavras.
 ATRASO_ESTATISTICAS_MS = 400
 
 
+def titulo_da_janela(nome: str | None, sujo: bool, versao: str = VERSAO) -> str:
+    """'{nome} - EditDoc {versao}', ou 'Documento em branco - ...'. Asterisco na frente se sujo."""
+    base = f"{nome or 'Documento em branco'} - {APP} {versao}"
+    return f"*{base}" if sujo else base
+
+
+def assinatura(caminho: pathlib.Path | None) -> tuple[int, int] | None:
+    """(mtime_ns, tamanho) do arquivo no disco, ou None se ele nao existe."""
+    if caminho is None:
+        return None
+    try:
+        st = os.stat(caminho)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 class JanelaPrincipal(QMainWindow):
-    def __init__(self, cfg: dict) -> None:
+    def __init__(self, cfg: dict, gerente=None) -> None:
         super().__init__()
-        self.setWindowTitle(f"Documento em branco - {APP} {VERSAO}")
+        self._gerente = gerente
+        self.caminho: pathlib.Path | None = None
+        self._assinatura: tuple[int, int] | None = None
+        self._avisos: list[Aviso] = []
+        self._titulo = ""
+        self._autor = ""
+        self._criado_em: str | None = None
+        self._ja_confirmou_fechamento = False
         self.setWindowIcon(recursos.icone_do_aplicativo())
         self.resize(cfg["janela_largura"], cfg["janela_altura"])
 
         self.painel = PainelDocumento(cfg["fonte_padrao"], cfg["tamanho_padrao"])
         self.comandos = Comandos(self, self.painel, self._abrir_localizar,
-                                 self._abrir_substituir)
-        self.faixa = Faixa(self.comandos, self.painel)
+                                 self._abrir_substituir, ao_arquivo={
+                                     "novo": self._novo,
+                                     "abrir": self._abrir,
+                                     "salvar": self.salvar,
+                                     "salvar_como": self.salvar_como,
+                                     "fechar": self.close,
+                                 })
+        self.botao_arquivo = BotaoArquivo(self.comandos, self._recentes, self._abrir_recente)
+        self.faixa = Faixa(self.comandos, self.painel, self.botao_arquivo)
+        self.barra_aviso = BarraAviso()
         self.barra_busca = BarraBusca()
         self.barra_busca.hide()
         self.barra_busca.procurar.connect(self._procurar)
@@ -54,6 +104,7 @@ class JanelaPrincipal(QMainWindow):
         vertical.setContentsMargins(0, 0, 0, 0)
         vertical.setSpacing(0)
         vertical.addWidget(self.faixa)
+        vertical.addWidget(self.barra_aviso)
         vertical.addWidget(self.barra_busca)
         vertical.addWidget(self.painel, 1)
         self.setCentralWidget(centro)
@@ -65,13 +116,15 @@ class JanelaPrincipal(QMainWindow):
         self._timer.setInterval(ATRASO_ESTATISTICAS_MS)
         self._timer.timeout.connect(self.atualizar_estatisticas)
         self.painel.textChanged.connect(self._timer.start)
+        self.painel.document().modificationChanged.connect(lambda _=False: self._atualizar_titulo())
         self.atualizar_estatisticas()
+        self._atualizar_titulo()
+
+    # -- estatisticas e busca ----------------------------------------------
 
     def atualizar_estatisticas(self) -> None:
         contagem = contar(self.painel.toPlainText())
         self._rotulo_palavras.setText(f"Palavras: {contagem.palavras}")
-
-    # -- localizar e substituir ---------------------------------------------
 
     def _abrir_localizar(self) -> None:
         self.barra_busca.mostrar(substituir=False)
@@ -97,3 +150,178 @@ class JanelaPrincipal(QMainWindow):
             self.barra_busca.dizer("1 substituição")
         else:
             self.barra_busca.dizer(f"{trocas} substituições")
+
+    # -- estado do documento -----------------------------------------------
+
+    def _nome(self) -> str:
+        return self.caminho.name if self.caminho is not None else "Documento em branco"
+
+    def _atualizar_titulo(self) -> None:
+        nome = self.caminho.name if self.caminho is not None else None
+        self.setWindowTitle(titulo_da_janela(nome, self.painel.document().isModified()))
+
+    def sujo(self) -> bool:
+        return self.painel.document().isModified()
+
+    def caminho_chave(self) -> str | None:
+        """Caminho resolvido, em caixa baixa: impede abrir o mesmo arquivo em duas janelas."""
+        if self.caminho is None:
+            return None
+        return os.path.normcase(os.path.realpath(str(self.caminho)))
+
+    def carregar(self, modelo: Documento, avisos: list[Aviso], caminho: pathlib.Path) -> None:
+        """Poe o documento lido na janela. Nao deixa o documento sujo."""
+        para_qt.preencher(self.painel.document(), modelo)
+        self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
+        self.caminho = caminho
+        self._assinatura = assinatura(caminho)
+        self._avisos = list(avisos)
+        cursor = self.painel.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        self.painel.setTextCursor(cursor)
+        self.barra_aviso.mostrar(self._avisos)
+        self.atualizar_estatisticas()
+        self._atualizar_titulo()
+
+    def trazer_para_frente(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+
+    # -- salvar ------------------------------------------------------------
+
+    def _modelo_atual(self) -> Documento:
+        modelo = de_qt.extrair(self.painel.document())
+        modelo.titulo = self._titulo
+        modelo.autor = self._autor
+        modelo.criado_em = self._criado_em
+        return modelo
+
+    def _mudou_no_disco(self) -> bool:
+        atual = assinatura(self.caminho)
+        return atual is not None and atual != self._assinatura
+
+    def salvar(self) -> bool:
+        if self.caminho is None:
+            return self.salvar_como()
+        if not self.sujo():
+            return True
+        return self._gravar(self.caminho, trocar=True)
+
+    def salvar_como(self) -> bool:
+        sugestao = self.caminho.name if self.caminho is not None else "Documento.docx"
+        escolhido = dialogos_modais.pedir_salvar_arquivo(self, sugestao)
+        if not escolhido:
+            return False
+        return self._gravar(pathlib.Path(escolhido), trocar=True)
+
+    def _gravar(self, alvo: pathlib.Path, trocar: bool) -> bool:
+        """Grava em `alvo`. `trocar` diz se o alvo vira o caminho do documento."""
+        try:
+            modelo = self._modelo_atual()
+            dados, avisos_gravacao = escrever_com_avisos(modelo)
+        except ErroDocx as erro:
+            log.error("montagem do .docx falhou: %s", erro.codigo)
+            dialogos_modais.avisar(self, "Salvar", "Não foi possível montar o arquivo. "
+                                   "O original NÃO foi alterado.")
+            return False
+
+        perdas = [a for a in (*self._avisos, *avisos_gravacao) if a.perde_ao_salvar]
+        if perdas:
+            escolha = dialogos_modais.pedir_perda(self, self._nome(),
+                                                  [a.texto for a in perdas])
+            if escolha == "cancelar":
+                return False
+            if escolha == "copia":
+                sugestao = f"{pathlib.Path(self._nome()).stem} (cópia).docx"
+                escolhido = dialogos_modais.pedir_salvar_arquivo(self, sugestao)
+                if not escolhido:
+                    return False
+                alvo = pathlib.Path(escolhido)
+                if self.caminho is None or alvo.resolve() != self.caminho.resolve():
+                    trocar = False
+
+        mesmo_arquivo = self.caminho is not None and alvo.resolve() == self.caminho.resolve()
+        if trocar and mesmo_arquivo and self._mudou_no_disco():
+            if not dialogos_modais.pedir_sobrescrever(self, alvo.name):
+                return False
+
+        try:
+            gravacao.gravar_bytes(alvo, dados, conferir=conferencia.conferidor(modelo))
+        except conferencia.FalhaDeConferencia as erro:
+            log.error("conferencia do arquivo gravado falhou: %s", erro)
+            dialogos_modais.avisar(self, "Salvar", "A conferência do arquivo gravado falhou. "
+                                   "O original NÃO foi alterado.")
+            return False
+        except ErroDocx as erro:
+            log.error("arquivo gravado nao pode ser lido: %s", erro.codigo)
+            dialogos_modais.avisar(self, "Salvar", "O arquivo gravado não pode ser lido de volta. "
+                                   "O original NÃO foi alterado.")
+            return False
+        except gravacao.SemEspaco as erro:
+            dialogos_modais.avisar(self, "Salvar", str(erro))
+            return False
+        except gravacao.FalhaNaTroca as erro:
+            dialogos_modais.avisar(self, "Salvar", str(erro))
+            return False
+        except OSError as erro:
+            log.error("gravacao de %s falhou: %s", alvo, erro)
+            dialogos_modais.avisar(self, "Salvar", "Não foi possível gravar o arquivo. Verifique "
+                                   "se ele não está aberto em outro programa e se há espaço "
+                                   "em disco. O original NÃO foi alterado.")
+            return False
+
+        if trocar:
+            self.caminho = alvo
+            self._assinatura = assinatura(alvo)
+            self._avisos = []
+            self.barra_aviso.mostrar([])
+            self.painel.document().setModified(False)
+            self._atualizar_titulo()
+            try:
+                configuracao.registrar_recente(str(alvo))
+            except OSError:
+                log.warning("nao foi possivel gravar a lista de recentes")
+            self.statusBar().showMessage(f"Salvo: {alvo.name}", 4000)
+        else:
+            self.statusBar().showMessage(
+                f"Cópia salva em {alvo.name}. O documento continua em {self._nome()}.", 6000)
+        return True
+
+    def pode_fechar(self) -> bool:
+        """Sem alteracao, sim. Com alteracao, pergunta: salvar, descartar ou cancelar."""
+        if not self.sujo():
+            return True
+        escolha = dialogos_modais.pedir_descartar(self, self._nome())
+        if escolha == "salvar":
+            return self.salvar()
+        return escolha == "descartar"
+
+    # -- comandos de janela ------------------------------------------------
+
+    def _novo(self) -> None:
+        if self._gerente is not None:
+            self._gerente.novo()
+
+    def _abrir(self) -> None:
+        caminho = dialogos_modais.pedir_abrir_arquivo(self)
+        if caminho and self._gerente is not None:
+            self._gerente.abrir(caminho)
+
+    def _abrir_recente(self, caminho: str) -> None:
+        if self._gerente is not None:
+            self._gerente.abrir(caminho)
+
+    def _recentes(self) -> list[str]:
+        return configuracao.recentes()
+
+    def closeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        if self._ja_confirmou_fechamento or self.pode_fechar():
+            if self._gerente is not None:
+                self._gerente.fechou(self)
+            evento.accept()
+        else:
+            evento.ignore()

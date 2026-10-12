@@ -56,8 +56,8 @@ def alternar_italico(editor: QTextEdit) -> None:
 
 
 def alternar_sublinhado(editor: QTextEdit) -> None:
-    # Limpar o sublinhado exige setUnderlineStyle(NoUnderline). Gravar
-    # setFontUnderline(False) nao limpa: medido no spike de .docx.
+    # Limpar o sublinhado com setUnderlineStyle(NoUnderline), que e' explicito e nao
+    # depende do formato herdado do vizinho.
     formato = QTextCharFormat()
     ligado = ler(editor).sublinhado
     formato.setUnderlineStyle(QTextCharFormat.UnderlineStyle.NoUnderline if ligado

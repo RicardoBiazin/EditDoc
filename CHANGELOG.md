@@ -1,3 +1,31 @@
+## 0.0.5 - 2026-10-11
+
+Abre e salva arquivos `.docx` de texto (M2). Tabelas, imagens, campos, cabeçalho e
+rodapé ainda não são editados: quando o arquivo os tem, o programa avisa, e ao
+salvar pede confirmação da perda.
+
+- Leitura e escrita de `.docx` próprias, com lxml e zipfile, sem Word: parágrafos,
+  negrito, itálico, sublinhado, tachado, subscrito, sobrescrito, tamanho, fonte,
+  cor, alinhamento, recuos, espaçamento entre linhas e listas simples.
+- Leitura defensiva: DOCTYPE recusado, limites de tamanho e de compressão, nomes
+  de parte validados. Arquivo hostil vira mensagem em português, nunca traceback.
+- Gravação atômica: o temporário (`.ewnew`) é relido do disco e conferido antes da
+  troca. Falha em qualquer etapa deixa o original intacto.
+- Uma janela por documento. Abrir um arquivo que já está aberto traz a janela para
+  a frente. Menu Arquivo, com Abrir recente (até 15 itens).
+- Barra de aviso para o que o programa não entende, com o botão Detalhes. Salvar
+  com perda pede: salvar mesmo assim, salvar cópia ou cancelar.
+- Fechar, ou sair, com alterações pendentes pergunta: salvar, descartar ou cancelar.
+- Instância única: um segundo arquivo aberto pelo Explorer vai para a janela que já
+  está aberta.
+- `associar.ps1` associa `.docx` ao EditDoc em HKCU, sem trocar o programa padrão.
+- `.doc`, `.docm` e `.dotx` são recusados com mensagem. Arquivo acima de 20 MB pede
+  confirmação antes de abrir.
+
+Limites deste marco: não há visão em páginas (M3). A abertura de um `.docx` gerado
+pelo EditDoc no Word, sem reparo, ainda não foi verificada: não há Word nesta
+máquina (pendência manual).
+
 # Changelog
 
 ## 0.0.4 - 2026-10-11

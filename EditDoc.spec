@@ -11,7 +11,6 @@ import os
 import pathlib
 
 import PySide6
-from PyInstaller.utils.hooks import collect_data_files
 
 RAIZ = pathlib.Path(SPECPATH)
 UM_ARQUIVO = os.environ.get("EDITDOC_UM_ARQUIVO") == "1"
@@ -64,15 +63,13 @@ datas = [
     (str(TRADUCOES / "qtbase_pt_BR.qm"), "traducoes"),
     (str(TRADUCOES / "qt_pt_BR.qm"), "traducoes"),
 ]
-# O python-docx le um template interno; sem ele o .exe nao cria nem le .docx.
-datas += collect_data_files("docx")
 
 a = Analysis(
     [str(RAIZ / "app.py")],
     pathex=[str(RAIZ)],
     binaries=[],
     datas=datas,
-    hiddenimports=["lxml.etree", "lxml._elementpath", "docx"],
+    hiddenimports=["lxml.etree", "lxml._elementpath"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

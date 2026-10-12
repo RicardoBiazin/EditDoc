@@ -76,6 +76,11 @@ def testar_arquivos() -> None:
           "toda dependencia de execucao tem versao exata (==)")
     checa(not any(re.search(r"pymupdf|fitz", linha, re.I) for linha in requisitos),
           "PyMuPDF (AGPL) fora do pacote")
+    checa(not any("python-docx" in linha for linha in requisitos),
+          "python-docx fora das dependencias de execucao")
+    dev = (RAIZ / "requirements-dev.txt").read_text(encoding="utf-8")
+    checa(re.search(r"^python-docx==[\d.]+$", dev, re.M) is not None,
+          "python-docx em requirements-dev.txt, com versao exata (so' oraculo de teste)")
     licenca = (RAIZ / "LICENSE").read_text(encoding="utf-8")
     checa(licenca.startswith("MIT License"), "a licenca e' MIT")
     ignorados = (RAIZ / ".gitignore").read_text(encoding="utf-8").splitlines()

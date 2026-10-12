@@ -24,6 +24,9 @@ from editdoc import log_interno
 
 log = log_interno.obter(__name__)
 
+#: Quantos arquivos o menu "Abrir recente" guarda.
+MAXIMO_RECENTES = 15
+
 
 def padrao() -> dict:
     return {
@@ -31,6 +34,7 @@ def padrao() -> dict:
         "janela_altura": 800,
         "fonte_padrao": "Calibri",
         "tamanho_padrao": 11,
+        "recentes": [],
     }
 
 
@@ -53,6 +57,8 @@ def carregar() -> dict:
     for chave, valor_padrao in valores.items():
         if chave in bruto and type(bruto[chave]) is type(valor_padrao):
             valores[chave] = bruto[chave]
+    # A lista so' guarda texto: um item de outro tipo (de outra versao) some.
+    valores["recentes"] = [r for r in valores["recentes"] if isinstance(r, str)][:MAXIMO_RECENTES]
     return valores
 
 
@@ -63,3 +69,25 @@ def gravar(valores: dict) -> None:
     novo.write_text(json.dumps(limpos, ensure_ascii=False, indent=2),
                     encoding="utf-8")
     os.replace(novo, alvo)
+
+
+def recentes() -> list[str]:
+    """Arquivos recentes que ainda existem, do mais novo para o mais antigo."""
+    existentes = []
+    for caminho in carregar()["recentes"]:
+        try:
+            if os.path.isfile(caminho):
+                existentes.append(caminho)
+        except (OSError, ValueError):
+            continue
+    return existentes
+
+
+def registrar_recente(caminho: str) -> None:
+    """Põe o arquivo no topo da lista. Sem diferenca de caixa; no maximo MAXIMO_RECENTES."""
+    valores = carregar()
+    chave = os.path.normcase(os.path.abspath(caminho))
+    outros = [r for r in valores["recentes"]
+              if os.path.normcase(os.path.abspath(r)) != chave]
+    valores["recentes"] = ([caminho] + outros)[:MAXIMO_RECENTES]
+    gravar(valores)

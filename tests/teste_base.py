@@ -82,6 +82,12 @@ def testar_configuracao() -> None:
                 "o que foi gravado volta igual")
     novo = configuracao.caminho().with_name(configuracao.caminho().name + ".novo")
     checa(not novo.exists(), "a gravacao atomica nao deixa o .novo para tras")
+    configuracao.caminho().write_text(
+        json.dumps({"recentes": ["a.docx", 7, None, "b.docx"]}), encoding="utf-8")
+    checa_igual(configuracao.carregar()["recentes"], ["a.docx", "b.docx"],
+                "recentes: item que nao e' texto some, o resto fica")
+    checa(configuracao.padrao()["recentes"] == [],
+          "contraprova: o padrao de recentes e' a lista vazia")
     limpar_config()
 
 

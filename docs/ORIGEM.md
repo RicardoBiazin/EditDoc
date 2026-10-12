@@ -16,8 +16,14 @@ repositórios são públicos e cada um precisa funcionar sozinho.
 | `tests/ajudantes.py` | `tests/ajudantes.py` | sem o isolamento de canal de instância única (ainda não existe); mesmo contrato de saída |
 | `tests/rodar_todos.py` | `tests/rodar_todos.py` | lista de suítes própria; sem tetos por suíte |
 | `build.bat` | `build.bat` | cinco etapas: inclui a fumaça que abre a janela |
+| `editdoc/instancia_unica.py` | `tfedit/instancia_unica.py` | variável `EDITDOC_CANAL` no lugar de `TFEDIT_CANAL`; mutex nomeado do Windows antes do `listen()` (medido: sem ele, duas instâncias abertas juntas viram duas janelas) |
+| `editdoc/cli.py` | `tfedit/cli.py` | sem `--linha` e `--coluna`; motivos de recusa em pt-BR; aceita `\\.\NUL` e caminho vazio como recusados |
+| `editdoc/armazenamento/gravacao.py` | `tfedit/gravacao.py` | só a parte de bytes prontos (`gravar_bytes`); conferência antes da troca; temporário `.ewnew`; sem a parte de pecas do documento |
+| `associar.ps1` | `associar.ps1` | só HKCU, sem item de menu de contexto para todos os arquivos; ProgID `EditDoc.Documento`; `SupportedTypes` só com as extensões pedidas |
 
 Escritos do zero: `app.py`, `editdoc/configuracao.py`, `editdoc/interface/`,
+`editdoc/formato_docx/` (leitor, escritor e validador de ordem), `editdoc/ponte_qt/`,
+`editdoc/modelo/documento.py`, `tests/fixtures_docx.py`,
 `ferramentas/gerar_icone.py` (o desenho é próprio, com outra cor),
 `ferramentas/fumaca_exe.py`, `EditDoc.spec`, as suítes de `tests/` e a
 documentação.

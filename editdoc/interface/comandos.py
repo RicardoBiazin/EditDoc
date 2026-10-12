@@ -28,6 +28,11 @@ class Definicao:
 
 
 DEFINICOES = (
+    Definicao("novo", "Novo", ("Ctrl+N",), dica="Novo documento"),
+    Definicao("abrir", "Abrir", ("Ctrl+O",), dica="Abrir"),
+    Definicao("salvar", "Salvar", ("Ctrl+S",), dica="Salvar"),
+    Definicao("salvar_como", "Salvar como", ("F12", "Ctrl+Shift+S"), dica="Salvar como"),
+    Definicao("fechar", "Fechar", ("Ctrl+W",), dica="Fechar documento"),
     Definicao("desfazer", "Desfazer", ("Ctrl+Z",), dica="Desfazer"),
     Definicao("refazer", "Refazer", ("Ctrl+Y", "Ctrl+Shift+Z"), dica="Refazer"),
     Definicao("recortar", "Recortar", ("Ctrl+X",), dica="Recortar"),
@@ -71,8 +76,17 @@ ALINHAMENTOS = {
 ESPACAMENTOS = {"espaco_1": 100, "espaco_115": 115, "espaco_15": 150, "espaco_2": 200}
 
 
+#: Comandos de arquivo: quem os executa e' a janela. Ver `ao_arquivo` em Comandos.
+ARQUIVO = ("novo", "abrir", "salvar", "salvar_como", "fechar")
+
+
+def _nada() -> None:
+    return None
+
+
 def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
-                ao_substituir: Callable[[], None]) -> dict[str, Callable[[], None]]:
+                ao_substituir: Callable[[], None],
+                ao_arquivo: dict[str, Callable[[], None]]) -> dict[str, Callable[[], None]]:
     fmt = formatacao
     executores: dict[str, Callable[[], None]] = {
         "desfazer": editor.undo,
@@ -101,6 +115,8 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         executores[id_] = lambda a=alinhamento: fmt.alinhar(editor, a)
     for id_, percentual in ESPACAMENTOS.items():
         executores[id_] = lambda p=percentual: fmt.definir_espacamento(editor, p)
+    for id_ in ARQUIVO:
+        executores[id_] = ao_arquivo.get(id_, _nada)
     return executores
 
 
@@ -109,10 +125,11 @@ class Comandos(QObject):
 
     def __init__(self, pai: QObject, editor: QTextEdit,
                  ao_localizar: Callable[[], None],
-                 ao_substituir: Callable[[], None]) -> None:
+                 ao_substituir: Callable[[], None],
+                 ao_arquivo: dict[str, Callable[[], None]] | None = None) -> None:
         super().__init__(pai)
         self._acoes: dict[str, QAction] = {}
-        self._executores = _executores(editor, ao_localizar, ao_substituir)
+        self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {})
         self._grupo_alinhamento = QActionGroup(self)
         self._grupo_alinhamento.setExclusive(True)
         self._grupo_espacamento = QActionGroup(self)

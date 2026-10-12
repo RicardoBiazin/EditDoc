@@ -50,6 +50,10 @@ def testar_contagem_de_palavras() -> None:
     QTest.qWait(600)
     checa_igual(janela._rotulo_palavras.text(), "Palavras: 4",
                 "depois de digitar e de uma pausa, a contagem atualiza sozinha")
+    # Fechar com alteracao pendente abre o dialogo de descarte, e um modal trava a
+    # suite. Aqui so' interessa a contagem: o documento e' declarado salvo antes de
+    # fechar. O fechamento com alteracao e' testado em tests/teste_documento.py.
+    janela.painel.document().setModified(False)
     janela.close()
     drenar_eventos()
 

@@ -141,7 +141,7 @@ class GrupoFaixa(QWidget):
 
 
 class Faixa(QFrame):
-    def __init__(self, comandos: Comandos, editor) -> None:
+    def __init__(self, comandos: Comandos, editor, botao_arquivo: QWidget | None = None) -> None:
         super().__init__()
         self._editor = editor
         c = comandos
@@ -204,6 +204,8 @@ class Faixa(QFrame):
 
         topo = QHBoxLayout()
         topo.setContentsMargins(0, 0, 0, 0)
+        if botao_arquivo is not None:
+            topo.addWidget(botao_arquivo)
         topo.addWidget(_botao(c, "desfazer"))
         topo.addWidget(_botao(c, "refazer"))
         abas = QTabBar()
