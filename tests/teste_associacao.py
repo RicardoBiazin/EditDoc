@@ -208,7 +208,11 @@ def testar_execucao() -> None:
         checa("não encontrei o EditDoc.exe" in texto,
               "e a mensagem diz, em portugues, que nao achou o executavel")
 
-    codigo, texto = executar()
+    # Um executavel que EXISTE, para a checagem de uso nao depender de o build ter
+    # rodado: no CI nao ha EditDoc.exe, e o script para na checagem do executavel
+    # antes de chegar na mensagem de uso.
+    cmd_existente = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    codigo, texto = executar("-Exe", cmd_existente)
     checa_igual(codigo, 1, "sem argumentos sai com 1")
     checa("Uso:" in texto and "-Simular" in texto,
           "sem argumentos, o script diz como usar")
