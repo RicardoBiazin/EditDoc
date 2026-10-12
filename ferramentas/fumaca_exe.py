@@ -73,10 +73,13 @@ def main(argv: list[str]) -> int:
                 return falha(f"o processo terminou com codigo {processo.returncode} "
                              "antes de abrir a janela")
             titulos = titulos_visiveis(processo.pid)
-            if any(t.startswith("EditDoc") for t in titulos):
+            # "EditDoc" em qualquer posicao: o titulo da janela principal e'
+            # "Documento em branco - EditDoc <versao>", nao so' "EditDoc ...".
+            if any("EditDoc" in t for t in titulos):
                 break
             if time.monotonic() > limite:
-                return falha(f"nenhuma janela 'EditDoc' apareceu em {LIMITE_S} s")
+                return falha(f"nenhuma janela com 'EditDoc' no titulo apareceu em "
+                             f"{LIMITE_S} s; titulos vistos: {titulos or 'nenhum'}")
             time.sleep(0.5)
 
         time.sleep(1.0)  # deixa o programa terminar de montar a tela

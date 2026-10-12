@@ -4,10 +4,10 @@ Editor de documentos no formato `.docx`, com a aparência de um processador de
 texto de escritório: páginas A4, faixa de opções, estilos, tabelas, imagens,
 cabeçalho e rodapé.
 
-> **Versão 0.0.3: esqueleto.** Ainda não edita nem abre documentos. Esta versão
-> existe para provar o pipeline de build, de testes e de empacotamento. A
-> primeira versão utilizável é a 0.1.0. O plano completo está em
-> [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
+> **Versão 0.0.4: editor básico.** Já edita, formata, localiza e substitui, mas
+> ainda não abre nem salva arquivos: isso chega na 0.0.5. A primeira versão
+> completa é a 0.1.0. O plano está em [docs/ARQUITETURA.md](docs/ARQUITETURA.md),
+> e os resultados dos spikes em [docs/SPIKES.md](docs/SPIKES.md).
 
 O EditDoc não é afiliado à Microsoft. Word é marca registrada da Microsoft.
 

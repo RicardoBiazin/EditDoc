@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.0.4 - 2026-10-11
+
+Primeiro editor de fato (M1): edita, formata e localiza. Ainda nao abre nem
+salva arquivos: isso chega no M2.
+
+- Faixa de opcoes com a aba Pagina Inicial: Area de transferencia, Fonte,
+  Paragrafo e Edicao, com desfazer e refazer no topo.
+- Recolhimento responsivo: de 1920 a 820 px a faixa recolhe os grupos em ordem
+  de prioridade, e nada fica cortado. A fonte e o tamanho nunca recolhem.
+- Formatacao: negrito, italico, sublinhado, tachado, subscrito, sobrescrito,
+  tamanho, familia, limpar formatacao, alinhamento, recuo e espacamento.
+- Listas com marcadores e numeracao.
+- Cada comando que muda o texto e' um passo de desfazer, mesmo em varios paragrafos.
+- Localizar e substituir, com diferenciar maiusculas e palavra inteira.
+- Barra de status com a contagem de palavras, atualizada depois de uma pausa.
+- Atalhos no padrao do Word (Ctrl+B, Ctrl+E, Ctrl+F e outros), com a mesma
+  definicao da faixa: um botao e um atalho nunca divergem.
+
+Limites deste marco: uma aba, dois estados por grupo (o estado intermediario
+chega no M6), a visao provisoria sobre QTextEdit (a visao em paginas chega no
+M3) e sem icones.
+
 ## 0.0.3 - 2026-10-11
 
 Spikes de viabilidade feitos antes do M1. Nenhuma mudança no programa: o código

@@ -74,14 +74,14 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 
 | Marco | Versão | Entrega |
 |---|---|---|
-| M0 Esqueleto | 0.0.1 | repositório, build, testes e fumaça do `.exe` |
-| M1 Editor básico | 0.0.2 | visão provisória, faixa com colapso, formatação, desfazer, localizar |
-| M2 `.docx` de texto | 0.0.3 | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
-| M3 Visão em páginas | 0.0.4 | A4, margens, régua, quebras, zoom |
-| M4 Tabelas e imagens | 0.0.5 | tabela e imagem inline, no `.docx` e na visão |
-| M5 Cabeçalho e rodapé | 0.0.6 | edição no lugar, número de página |
-| M6 Estilos e faixa final | 0.0.7 | galeria, abas Inserir, Layout e Exibir |
-| M7 Impressão e PDF | 0.0.8 | imprimir, pré-visualizar, exportar PDF |
+| M0 Esqueleto | 0.0.1 (renomeado em 0.0.2) | repositório, build, testes e fumaça do `.exe` |
+| M1 Editor básico | 0.0.4 (feito) | visão provisória, faixa com colapso, formatação, desfazer, localizar |
+| M2 `.docx` de texto | 0.0.5 | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
+| M3 Visão em páginas | 0.0.6 | A4, margens, régua, quebras, zoom |
+| M4 Tabelas e imagens | 0.0.7 | tabela e imagem inline, no `.docx` e na visão |
+| M5 Cabeçalho e rodapé | 0.0.8 | edição no lugar, número de página |
+| M6 Estilos e faixa final | 0.0.9 | galeria, abas Inserir, Layout e Exibir |
+| M7 Impressão e PDF | 0.0.10 | imprimir, pré-visualizar, exportar PDF |
 | M8 Polimento | 0.1.0 | recuperação automática, preferências, acessibilidade, documentação final |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle

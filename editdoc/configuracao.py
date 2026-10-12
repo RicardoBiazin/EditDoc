@@ -29,6 +29,8 @@ def padrao() -> dict:
     return {
         "janela_largura": 1200,
         "janela_altura": 800,
+        "fonte_padrao": "Calibri",
+        "tamanho_padrao": 11,
     }
 
 

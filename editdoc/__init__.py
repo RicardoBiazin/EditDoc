@@ -5,5 +5,5 @@ VERSAO e' a unica fonte do numero mostrado ao usuario. Ela precisa bater com
 """
 
 APP = "EditDoc"
-VERSAO = "0.0.3"
+VERSAO = "0.0.4"
 AUTOR = "Ricardo Biazin"

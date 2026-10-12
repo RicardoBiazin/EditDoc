@@ -123,6 +123,27 @@ def pular(motivo: str) -> int:
     return 0
 
 
+def usar_fonte_windows(pontos: float = 9) -> bool:
+    """Carrega o Segoe UI e o usa como fonte do aplicativo, como no Windows real.
+
+    O offscreen nao tem fontes e cai num fallback cerca de duas vezes mais
+    largo. Medir layout com ele daria numeros que nao valem para o usuario.
+    Devolve False se a fonte nao existir, e quem chama decide o que fazer.
+    """
+    from PySide6.QtGui import QFont, QFontDatabase
+    from PySide6.QtWidgets import QApplication
+
+    caminho = pathlib.Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "segoeui.ttf"
+    if not caminho.is_file():
+        return False
+    ident = QFontDatabase.addApplicationFont(str(caminho))
+    familias = QFontDatabase.applicationFontFamilies(ident) if ident >= 0 else []
+    if not familias:
+        return False
+    QApplication.instance().setFont(QFont(familias[0], pontos))
+    return True
+
+
 def drenar_eventos(rodadas: int = 4) -> None:
     """Processa eventos ate' e inclusive os DeferredDelete, e coleta o lixo.
 
