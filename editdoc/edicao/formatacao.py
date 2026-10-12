@@ -1,4 +1,4 @@
-"""Comandos de formatacao sobre um QTextEdit.
+"""Comandos de formatacao sobre o editor (PainelDocumento, com a API do QTextEdit).
 
 Cada funcao recebe o editor. Com selecao, o comando altera o texto selecionado,
 e o comando inteiro e' UM passo de desfazer, mesmo quando mexe em varios

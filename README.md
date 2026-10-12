@@ -4,10 +4,11 @@ Editor de documentos no formato `.docx`, com a aparência de um processador de
 texto de escritório: páginas A4, faixa de opções, estilos, tabelas, imagens,
 cabeçalho e rodapé.
 
-> **Versão 0.0.5: abre e salva `.docx`.** Edita, formata, localiza e substitui,
-> e abre e salva arquivos `.docx` de texto, com avisos para o que ainda não é
-> editado (tabelas, imagens, cabeçalho e rodapé). A primeira versão completa é a 0.1.0. O plano está em [docs/ARQUITETURA.md](docs/ARQUITETURA.md),
-> e os resultados dos spikes em [docs/SPIKES.md](docs/SPIKES.md).
+> **Versão 0.0.6: visão em páginas.** Folhas A4, Carta e Ofício com margens, régua,
+> quebras de página, zoom e "Página X de Y". Abre e salva `.docx` de texto, com papel e
+> margens gravados no arquivo. Tabelas e imagens ainda não são editadas (M4 e M5). A
+> primeira versão completa é a 0.1.0. O plano está em [docs/ARQUITETURA.md](docs/ARQUITETURA.md),
+> e os resultados dos spikes e do gate em [docs/SPIKES.md](docs/SPIKES.md).
 
 O EditDoc não é afiliado à Microsoft. Word é marca registrada da Microsoft.
 
@@ -15,7 +16,6 @@ O EditDoc não é afiliado à Microsoft. Word é marca registrada da Microsoft.
 
 - Abrir e salvar `.docx` com fidelidade ao texto, à formatação, às listas, às
   tabelas e às imagens.
-- Visão em páginas A4 com margens, régua e quebras de página.
 - Cabeçalho, rodapé e número de página.
 - Estilos (Normal, Título 1 a 3...) e faixa de opções.
 - Exportar PDF, imprimir e pré-visualizar.

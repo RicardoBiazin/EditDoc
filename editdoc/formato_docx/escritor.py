@@ -23,7 +23,7 @@ from editdoc.formato_docx import ordem
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.padroes import (ESPACO_DEPOIS_PADRAO_TW, FONTE_PADRAO, LINHA_PADRAO,
-                                         MARGENS_PADRAO, PAPEL_PADRAO, TAMANHO_PADRAO_MEIO_PT)
+                                         TAMANHO_PADRAO_MEIO_PT)
 from editdoc.formato_docx.nomes import (CP, CT_APP, CT_CONFIG, CT_CORE, CT_DOCUMENTO,
                                         CT_ESTILOS, CT_NUMERACAO, CT_RELS, CT_XML, DC,
                                         DCT, EP, PKG_CT, PKG_REL, RT, RT_CORE, W, XML_NS,
@@ -178,6 +178,10 @@ def _paragrafo(body, p: Paragrafo, listas: _Listas, coletor: Coletor) -> None:
     if len(ppr):
         ordem.ordenar_filhos(ppr, ordem.ORDEM_PPR)
         pe.append(ppr)
+    if p.quebra_antes:
+        # Quebra de pagina: o paragrafo comeca no topo da proxima pagina.
+        r_quebra = etree.SubElement(pe, q("r"))
+        etree.SubElement(r_quebra, q("br")).set(q("type"), "page")
     for run in p.runs:
         if run.texto == "":
             continue
@@ -195,12 +199,19 @@ def _document_xml(doc: Documento, listas: _Listas, coletor: Coletor) -> bytes:
         _paragrafo(body, p, listas, coletor)
     if not doc.paragrafos:
         etree.SubElement(body, q("p"))  # o Word exige ao menos um paragrafo
+    pagina = doc.pagina
     sect = etree.SubElement(body, q("sectPr"))
     pg = etree.SubElement(sect, q("pgSz"))
-    pg.set(q("w"), str(PAPEL_PADRAO[0]))
-    pg.set(q("h"), str(PAPEL_PADRAO[1]))
+    pg.set(q("w"), str(pagina.largura_tw))
+    pg.set(q("h"), str(pagina.altura_tw))
+    if pagina.paisagem:
+        pg.set(q("orient"), "landscape")
     mar = etree.SubElement(sect, q("pgMar"))
-    for nome, valor in MARGENS_PADRAO:
+    for nome, valor in (
+            ("top", pagina.margem_sup_tw), ("right", pagina.margem_dir_tw),
+            ("bottom", pagina.margem_inf_tw), ("left", pagina.margem_esq_tw),
+            ("header", pagina.cabecalho_tw), ("footer", pagina.rodape_tw),
+            ("gutter", pagina.medianiz_tw)):
         mar.set(q(nome), str(valor))
     return _xml(raiz)
 

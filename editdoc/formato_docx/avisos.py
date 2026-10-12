@@ -56,7 +56,7 @@ CATALOGO: dict[str, tuple] = {
                   "só como texto. O endereço se perde ao salvar.",
         True),
     "QUEBRA_DE_PAGINA": (
-        lambda n: f"{n} {_plural(n, 'quebra de página ou de coluna não é preservada', 'quebras de página ou de coluna não são preservadas')} "
+        lambda n: f"{n} {_plural(n, 'quebra de coluna não é preservada', 'quebras de coluna não são preservadas')} "
                   "ao salvar.",
         True),
     "CABECALHO_RODAPE": (
@@ -68,8 +68,12 @@ CATALOGO: dict[str, tuple] = {
                   "O arquivo sai com uma única seção.",
         True),
     "PAGINA": (
-        lambda n: "O papel ou as margens da página são diferentes do padrão do EditDoc. "
-                  "O arquivo sai com o tamanho e as margens padrão.",
+        lambda n: "O arquivo tem mais de uma seção. Cada seção tem o seu papel e as suas margens, "
+                  "e o EditDoc mantém só as da última seção. O arquivo sai com uma única seção.",
+        True),
+    "PAPEL_INVALIDO": (
+        lambda n: "O papel ou as margens do arquivo não cabem numa página útil. "
+                  "O arquivo sai com o papel A4 e as margens padrão.",
         True),
     "COMENTARIO": (
         lambda n: f"{n} {_plural(n, 'comentário não é editado', 'comentários não são editados')} "

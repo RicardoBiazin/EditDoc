@@ -1,6 +1,6 @@
 """Janela principal: faixa de opcoes, documento, aviso, localizar e barra de status.
 
-Um documento por janela. O documento vive no painel provisorio (QTextEdit). A
+Um documento por janela. O documento vive no PainelDocumento (visao em paginas). A
 janela guarda o estado do arquivo: caminho, assinatura do disco na ultima leitura
 ou gravacao, e os avisos do leitor. Salvar, salvar como e fechar com alteracoes
 pendentes passam por aqui.
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import os
 import pathlib
+
+from dataclasses import replace
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
@@ -31,10 +33,13 @@ from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
 from editdoc.interface.comandos import Comandos
+from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import Faixa
 from editdoc.interface.painel_documento import PainelDocumento
+from editdoc.interface.regua import Regua
 from editdoc.modelo.documento import Documento
 from editdoc.modelo.estatisticas import contar
+from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
 from editdoc.ponte_qt import de_qt, para_qt
 
 log = log_interno.obter(__name__)
@@ -82,9 +87,14 @@ class JanelaPrincipal(QMainWindow):
                                      "salvar": self.salvar,
                                      "salvar_como": self.salvar_como,
                                      "fechar": self.close,
+                                 }, ao_layout={
+                                     "papel": self._mudar_papel,
+                                     "orientacao": self._mudar_orientacao,
+                                     "margens": self._mudar_margens,
                                  })
         self.botao_arquivo = BotaoArquivo(self.comandos, self._recentes, self._abrir_recente)
         self.faixa = Faixa(self.comandos, self.painel, self.botao_arquivo)
+        self.regua = Regua(self.painel)
         self.barra_aviso = BarraAviso()
         self.barra_busca = BarraBusca()
         self.barra_busca.hide()
@@ -106,19 +116,66 @@ class JanelaPrincipal(QMainWindow):
         vertical.addWidget(self.faixa)
         vertical.addWidget(self.barra_aviso)
         vertical.addWidget(self.barra_busca)
+        vertical.addWidget(self.regua)
         vertical.addWidget(self.painel, 1)
         self.setCentralWidget(centro)
 
+        self._rotulo_pagina = QLabel()
+        self.statusBar().addWidget(self._rotulo_pagina)
         self._rotulo_palavras = QLabel()
+        self.controle_zoom = ControleZoom(self.comandos, self.painel)
         self.statusBar().addPermanentWidget(self._rotulo_palavras)
+        self.statusBar().addPermanentWidget(self.controle_zoom)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(ATRASO_ESTATISTICAS_MS)
         self._timer.timeout.connect(self.atualizar_estatisticas)
         self.painel.textChanged.connect(self._timer.start)
         self.painel.document().modificationChanged.connect(lambda _=False: self._atualizar_titulo())
+        self.painel.cursorPositionChanged.connect(self._atualizar_rotulo_pagina)
+        self.painel.paginaAlterada.connect(self._pagina_mudou)
+        self._pagina_mudou()
         self.atualizar_estatisticas()
         self._atualizar_titulo()
+
+    # -- pagina ------------------------------------------------------------
+
+    def _pagina_mudou(self) -> None:
+        """Papel, orientacao ou margens mudaram (por comando ou ao abrir): marca e rotulo."""
+        self.comandos.atualizar_pagina(self.painel.configuracao_pagina())
+        self._atualizar_rotulo_pagina()
+
+    def _atualizar_rotulo_pagina(self) -> None:
+        atual = self.painel.pagina_atual() + 1
+        total = self.painel.total_de_paginas()
+        self._rotulo_pagina.setText(f"Página {atual} de {total}")
+
+    def _alterar_pagina(self, nova: Pagina) -> None:
+        """Mudanca feita pelo usuario: e' alteracao do documento, entao deixa o arquivo sujo."""
+        if nova == self.painel.configuracao_pagina():
+            self.comandos.atualizar_pagina(nova)
+            return
+        self.painel.definir_configuracao_pagina(nova)
+        self.painel.document().setModified(True)
+
+    def _mudar_papel(self, nome: str) -> None:
+        self._alterar_pagina(self.painel.configuracao_pagina().com_papel(nome))
+
+    def _mudar_orientacao(self, paisagem: bool) -> None:
+        self._alterar_pagina(self.painel.configuracao_pagina().com_orientacao(paisagem))
+
+    def _mudar_margens(self, nome: str) -> None:
+        atual = self.painel.configuracao_pagina()
+        if nome == "Personalizadas":
+            nova = dialogos_modais.pedir_margens(self, atual)
+            if nova is None:
+                self.comandos.atualizar_pagina(atual)
+                return
+        else:
+            predefinida = next(m for m in MARGENS_PREDEFINIDAS if m[0] == nome)
+            _, sup, inf, esq, dir_ = predefinida
+            nova = atual.com_margens(sup, inf, esq, dir_)
+        self._alterar_pagina(nova)
 
     # -- estatisticas e busca ----------------------------------------------
 
@@ -172,6 +229,7 @@ class JanelaPrincipal(QMainWindow):
     def carregar(self, modelo: Documento, avisos: list[Aviso], caminho: pathlib.Path) -> None:
         """Poe o documento lido na janela. Nao deixa o documento sujo."""
         para_qt.preencher(self.painel.document(), modelo)
+        self.painel.definir_configuracao_pagina(modelo.pagina)
         self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
         self.caminho = caminho
         self._assinatura = assinatura(caminho)
@@ -195,6 +253,7 @@ class JanelaPrincipal(QMainWindow):
 
     def _modelo_atual(self) -> Documento:
         modelo = de_qt.extrair(self.painel.document())
+        modelo.pagina = replace(self.painel.configuracao_pagina())
         modelo.titulo = self._titulo
         modelo.autor = self._autor
         modelo.criado_em = self._criado_em

@@ -33,6 +33,10 @@ def conferir(dados: bytes, esperado: Documento) -> None:
     for i, (a, b) in enumerate(zip(esperado.paragrafos, lido.paragrafos)):
         if texto_do_paragrafo(a) != texto_do_paragrafo(b):
             raise FalhaDeConferencia(f"texto diferente no paragrafo {i + 1}")
+        if a.quebra_antes != b.quebra_antes:
+            raise FalhaDeConferencia(f"quebra de pagina diferente no paragrafo {i + 1}")
+    if esperado.pagina != lido.pagina:
+        raise FalhaDeConferencia("papel ou margens diferentes do documento")
 
 
 def conferidor(esperado: Documento):

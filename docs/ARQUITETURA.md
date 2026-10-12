@@ -28,23 +28,36 @@ pesada roda fora da thread da interface.
 
 ## Visão em páginas
 
-O `QTextEdit` não pagina: ao mostrar, força a largura e não deixa um vão entre
-folhas. Por isso a visão é própria:
+Implementada no M3 (0.0.6). Ficou assim:
 
-- um `QAbstractScrollArea` pinta as folhas;
-- o `QTextDocument` tem `pageSize` igual ao **corpo** da página, com
-  `documentMargin` zero, então o Qt quebra linhas pela altura do corpo;
-- o caret, a seleção e o teclado são controlados por código próprio sobre o
-  `QTextCursor`, porque `QWidgetTextControl` não existe no PySide6;
-- o layout roda num dispositivo de referência a **1440 dpi**. Uma unidade de
-  layout vira um twip, que é a unidade do `.docx`. Medido: a 96 dpi a contagem
-  de páginas diverge do layout em alta resolução em cerca de 3%;
-- tela, impressão, pré-visualização e PDF usam **uma** função de pintura de
-  folha. O zoom é só uma escala.
+- `editdoc/interface/vista_paginas.py` é um `QAbstractScrollArea` que pinta as folhas. Uma
+  única função, `desenhar_folha`, pinta a página para a tela e para qualquer outro destino.
+- `editdoc/interface/layout_paginado.py` guarda o `QTextDocument` com `pageSize` igual ao corpo
+  da página e `documentMargin` zero. O layout roda num dispositivo de 1440 dpi: uma unidade vira
+  um twip, a unidade do `.docx`.
+- `editdoc/modelo/folhas.py` faz o mapeamento entre documento (twips) e tela (pixels lógicos) sem
+  Qt: é testável sem janela.
+- `editdoc/interface/painel_documento.py` é o editor. Mantém a API do `QTextEdit` (nomes e sinais)
+  para que comandos, formatação, busca e janela não mudem. Caret, teclado, mouse, seleção, clipboard
+  e desfazer são dele.
 
-Limites aceitos: o Qt não tem viúva e órfã, nem manter com o próximo; uma tabela
-se divide entre páginas por linha, sem repetir a borda no corte; `\f` não quebra
-página (usa-se a política de quebra do bloco).
+Decisão de teclado: um `QTextEdit` oculto sobre o mesmo documento não serve. Ele força
+`pageSize = (largura, -1)` ao ser criado e apaga a paginação (medido: 20 páginas viram 1). A
+alternativa escolhida é o controle próprio, com a API do `QTextEdit`.
+
+Zoom: troca a escala e não refaz o layout. Tem teto pela escala da tela (zoom × DPR ≤ 3): 300% em
+DPR 1, 200% em DPR 1,5 e 150% em DPR 2. Acima disso o Qt pinta texto de fonte grande por caminho, e a
+digitação passa de 16 ms. Medido no Gate do M3, em docs/SPIKES.md.
+
+Cache de páginas: a folha é cortada em tiles de 256 px lógicos, no DPR da tela. Edição só invalida a
+faixa alterada, ou tudo abaixo quando a altura do documento muda. O cache tem teto de 64 MB.
+
+Quebra de página: um atributo do parágrafo (`quebra_antes`). No `.docx` é `w:br w:type="page"` no
+começo do parágrafo. Quebra no meio do texto, ao ler, vira dois parágrafos: é a única perda de
+estrutura, e a aparência não muda.
+
+Limites aceitos: o Qt não tem viúva e órfã (fora do M3); uma tabela se divide entre páginas por
+linha; `` não quebra página (usa-se a política de quebra do bloco).
 
 ## Estilos e formatação
 
@@ -77,7 +90,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M0 Esqueleto | 0.0.1 (renomeado em 0.0.2) | repositório, build, testes e fumaça do `.exe` |
 | M1 Editor básico | 0.0.4 (feito) | visão provisória, faixa com colapso, formatação, desfazer, localizar |
 | M2 `.docx` de texto | 0.0.5 (feito) | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
-| M3 Visão em páginas | 0.0.6 | A4, margens, régua, quebras, zoom |
+| M3 Visão em páginas | 0.0.6 (feito) | A4, Carta, Ofício, margens, régua, quebras, zoom, Página X de Y |
 | M4 Tabelas e imagens | 0.0.7 | tabela e imagem inline, no `.docx` e na visão |
 | M5 Cabeçalho e rodapé | 0.0.8 | edição no lugar, número de página |
 | M6 Estilos e faixa final | 0.0.9 | galeria, abas Inserir, Layout e Exibir |

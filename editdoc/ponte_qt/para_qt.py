@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QTextBlockFormat, QTextCharFormat,
-                           QTextCursor, QTextDocument, QTextListFormat)
+                           QTextCursor, QTextDocument, QTextFormat, QTextListFormat)
 
 from editdoc.modelo.documento import Documento
 from editdoc.modelo.unidades import px_de_twips
@@ -42,6 +42,8 @@ def _formato_de_paragrafo(p) -> QTextBlockFormat:
         bf.setBottomMargin(px_de_twips(p.espaco_depois_tw))
     if p.espacamento_linha_pct is not None:
         bf.setLineHeight(float(p.espacamento_linha_pct), _PROPORCIONAL)
+    if p.quebra_antes:
+        bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     return bf
 
 

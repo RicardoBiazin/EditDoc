@@ -81,3 +81,12 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | `QLocalServer.listen` | Medido no Windows com Qt 6.11: um segundo `listen()` com o mesmo nome devolve True enquanto o primeiro vive. Por isso a instância única usa um mutex nomeado. |
 | `QTextDocument.setPlainText` | Não marca o documento como sujo. Um teste que espera o aviso de "alterado" precisa de `setModified(True)`. |
 | `QTextCursor.createList` | Cria a lista só no bloco atual. Os blocos seguintes entram com `QTextList.add`, senão cada um vira uma lista nova. |
+| `QTextEdit` sobre o mesmo documento | Um QTextEdit, mesmo oculto, ligado ao QTextDocument da visao em paginas forca `pageSize = (largura, -1)` e apaga a paginacao (medido: 20 paginas viram 1). A visao em paginas nao pode ter QTextEdit ligado ao documento. |
+| `QTextDocument` novo | Ajustar fonte ou margem marca `isModified()`. `LayoutPaginado` zera isso no fim da construcao. Sem isso a janela nasce suja, e um teste que fecha com alteracao pendente trava no dialogo modal. |
+| `contentsChange` | No sinal o layout ainda nao foi refeito: `blockBoundingRect` devolve a altura antiga. A invalidacao do cache de tiles roda na pintura seguinte (`_aplicar_pendencias`). Medido: a quebra de linha deixava tiles velhos. |
+| `QPainter.setClipRect` | Retangulo vazio nao recorta nada: o Qt pinta a pagina inteira para descartar (45 ms por tile). `desenhar_folha` sai antes quando o recorte esta fora do corpo. |
+| `QWidget.grab()` | Pixel fora da imagem le' como 0 (preto): uma folha que passa da altura da captura conta como tinta na margem. O teste de folhas precisa caber a folha inteira na captura. |
+| `QTextCursor.mergeCharFormat` | Sem selecao, muda o formato do proximo caractere digitado, nao a palavra sob o caret. O `mergeCurrentCharFormat` do QTextEdit faz o mesmo; o `PainelDocumento` usa o cursor. |
+| `PageBreak_AlwaysBefore` | A quebra e' uma propriedade do bloco. O Enter precisa zerar o bloco novo para `PageBreak_Auto`, senao a quebra se copia para o paragrafo seguinte. |
+| escala da tela | Quando o corpo da fonte passa de 56 a 64 px no dispositivo (tamanho x 4/3 x zoom x DPR), o Qt pinta o texto por caminho e a digitacao passa de 16 ms. Medido: 14 pt a 300% (56 px) passa; 16 pt a 300% (64 px) nao. Por isso o zoom tem teto (`ESCALA_DISPOSITIVO_MAXIMA`, em `editdoc/modelo/folhas.py`). |
+| `docx` `w:br type="page"` | Um `` e' a sentinela do leitor para a quebra de pagina. XML 1.0 nao aceita `` em `w:t`, entao so' vem dali. A quebra no meio do texto parte o paragrafo. |

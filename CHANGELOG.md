@@ -1,3 +1,32 @@
+## 0.0.6 - 2026-10-12
+
+Visão em páginas (M3). O documento aparece em folhas com margens, régua, quebras de página,
+zoom e "Página X de Y" na barra de status. A visão deixou de ser um QTextEdit; a API de edição
+continua a mesma para os comandos.
+
+- Folhas sobre fundo cinza, com vão e sombra. O texto ocupa só o corpo, e o número de páginas é o
+  mesmo entre carregar um arquivo e redigitá-lo.
+- Layout (aba nova): papel A4, Carta e Ofício; retrato e paisagem; margens Normal, Estreita,
+  Moderada, Larga e Personalizadas, em centímetros. Papel, orientação e margens são gravados no
+  `sectPr` e lidos de volta ao abrir.
+- O aviso PAGINA só aparece quando o arquivo tem mais de uma seção. Papel ou margem que não cabem
+  numa página útil geram o aviso PAPEL_INVALIDO, e o arquivo sai com A4 e margens padrão.
+- Régua: mostra as margens e os recuos do parágrafo do cursor. Arrastar um marcador muda o recuo, e
+  o arrasto inteiro é um passo de desfazer.
+- Quebra de página (Ctrl+Enter, aba Layout): vai e volta pelo `.docx` como `w:br w:type="page"`, sem
+  aviso, e aparece na tela como linha tracejada.
+- Zoom: Ctrl+roda, controle na barra de status e botões de menos e mais. O zoom máximo depende da
+  escala da tela: 300% com DPR 1, 200% com DPR 1,5 e 150% com DPR 2. Acima disso o Qt pinta o texto
+  devagar demais (medido no Gate do M3, em docs/SPIKES.md).
+- Barra de status: "Página X de Y", da página onde está o cursor.
+- Cache de páginas para a pintura, com invalidação por região. Trocar o zoom ou o papel refaz o
+  cache; editar só refaz a parte afetada.
+
+Limites deste marco: viúva e órfã, colunas, páginas pares e ímpares e seções com tamanhos
+diferentes ficam para depois. Uma quebra no meio de um parágrafo, ao salvar, vira dois parágrafos
+(a aparência não muda). Tabelas e imagens são dos M4 e M5. Com fonte de 16 pt ou mais, em 300%, a
+digitação passa de 16 ms. A aparência real no Windows ainda depende de conferência manual.
+
 ## 0.0.5 - 2026-10-11
 
 Abre e salva arquivos `.docx` de texto (M2). Tabelas, imagens, campos, cabeçalho e

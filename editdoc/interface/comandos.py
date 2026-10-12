@@ -15,6 +15,7 @@ from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QTextListFormat
 from PySide6.QtWidgets import QTextEdit
 
 from editdoc.edicao import formatacao
+from editdoc.modelo.folhas import passo_de_zoom
 from editdoc.modelo.unidades import RECUO_PADRAO_PX
 
 
@@ -64,7 +65,29 @@ DEFINICOES = (
     Definicao("espaco_115", "1,15", (), True, "Espaçamento 1,15"),
     Definicao("espaco_15", "1,5", ("Ctrl+5",), True, "Espaçamento 1,5"),
     Definicao("espaco_2", "2,0", ("Ctrl+2",), True, "Espaçamento 2,0"),
+    Definicao("quebra_pagina", "Quebra de página", ("Ctrl+Return", "Ctrl+Enter"),
+              dica="Quebra de página"),
+    Definicao("ampliar", "Ampliar", (), dica="Ampliar o zoom"),
+    Definicao("reduzir", "Reduzir", (), dica="Reduzir o zoom"),
+    Definicao("papel_a4", "A4", (), True, "Papel A4"),
+    Definicao("papel_carta", "Carta", (), True, "Papel Carta"),
+    Definicao("papel_oficio", "Ofício", (), True, "Papel Ofício"),
+    Definicao("retrato", "Retrato", (), True, "Orientação retrato"),
+    Definicao("paisagem", "Paisagem", (), True, "Orientação paisagem"),
+    Definicao("margens_normal", "Normal", (), True, "Margens normais (2,54 cm)"),
+    Definicao("margens_estreita", "Estreita", (), True, "Margens estreitas (1,27 cm)"),
+    Definicao("margens_moderada", "Moderada", (), True, "Margens moderadas"),
+    Definicao("margens_larga", "Larga", (), True, "Margens largas"),
+    Definicao("margens_personalizadas", "Personalizadas...", (), True,
+              "Margens personalizadas"),
 )
+
+#: Papel: id da acao -> nome do papel em editdoc/modelo/pagina.py (PAPEIS).
+PAPEL_DAS_ACOES = {"papel_a4": "A4", "papel_carta": "Carta", "papel_oficio": "Ofício"}
+#: Margens: id da acao -> predefinicao. "personalizadas" abre o dialogo.
+MARGENS_DAS_ACOES = {"margens_normal": "Normal", "margens_estreita": "Estreita",
+                     "margens_moderada": "Moderada", "margens_larga": "Larga",
+                     "margens_personalizadas": "Personalizadas"}
 
 ALINHAMENTOS = {
     "alinhar_esquerda": Qt.AlignmentFlag.AlignLeft,
@@ -84,10 +107,32 @@ def _nada() -> None:
     return None
 
 
+def _chamar(ganchos: dict[str, Callable], chave: str, *args) -> None:
+    """Chama o gancho da janela, se houver. Sem janela (testes), nao faz nada."""
+    gancho = ganchos.get(chave)
+    if gancho is not None:
+        gancho(*args)
+
+
 def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
                 ao_substituir: Callable[[], None],
-                ao_arquivo: dict[str, Callable[[], None]]) -> dict[str, Callable[[], None]]:
+                ao_arquivo: dict[str, Callable[[], None]],
+                ao_layout: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
     fmt = formatacao
+    layout = ao_layout or {}
+    executores_layout: dict[str, Callable[[], None]] = {
+        "quebra_pagina": editor.inserir_quebra_de_pagina,
+        "ampliar": lambda: editor.definir_zoom(
+            passo_de_zoom(editor.zoom(), True, editor.dpr())),
+        "reduzir": lambda: editor.definir_zoom(
+            passo_de_zoom(editor.zoom(), False, editor.dpr())),
+        "retrato": lambda: _chamar(layout, "orientacao", False),
+        "paisagem": lambda: _chamar(layout, "orientacao", True),
+    }
+    for id_, nome in PAPEL_DAS_ACOES.items():
+        executores_layout[id_] = lambda n=nome: _chamar(layout, "papel", n)
+    for id_, nome in MARGENS_DAS_ACOES.items():
+        executores_layout[id_] = lambda n=nome: _chamar(layout, "margens", n)
     executores: dict[str, Callable[[], None]] = {
         "desfazer": editor.undo,
         "refazer": editor.redo,
@@ -117,6 +162,7 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         executores[id_] = lambda p=percentual: fmt.definir_espacamento(editor, p)
     for id_ in ARQUIVO:
         executores[id_] = ao_arquivo.get(id_, _nada)
+    executores.update(executores_layout)
     return executores
 
 
@@ -126,10 +172,12 @@ class Comandos(QObject):
     def __init__(self, pai: QObject, editor: QTextEdit,
                  ao_localizar: Callable[[], None],
                  ao_substituir: Callable[[], None],
-                 ao_arquivo: dict[str, Callable[[], None]] | None = None) -> None:
+                 ao_arquivo: dict[str, Callable[[], None]] | None = None,
+                 ao_layout: dict[str, Callable] | None = None) -> None:
         super().__init__(pai)
         self._acoes: dict[str, QAction] = {}
-        self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {})
+        self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {},
+                                       ao_layout)
         self._grupo_alinhamento = QActionGroup(self)
         self._grupo_alinhamento.setExclusive(True)
         self._grupo_espacamento = QActionGroup(self)
@@ -160,3 +208,18 @@ class Comandos(QObject):
 
     def todas(self) -> list[QAction]:
         return list(self._acoes.values())
+
+    def atualizar_pagina(self, pagina) -> None:
+        """Marca papel, orientacao e margens que valem para a pagina dada.
+
+        Os grupos nao sao exclusivos: cada acao recebe o seu estado, para que um
+        papel fora da lista (tamanho livre) nao deixe o anterior marcado.
+        """
+        nome_papel = pagina.nome_do_papel()
+        for id_, nome in PAPEL_DAS_ACOES.items():
+            self._acoes[id_].setChecked(nome == nome_papel)
+        self._acoes["paisagem"].setChecked(pagina.paisagem)
+        self._acoes["retrato"].setChecked(not pagina.paisagem)
+        predefinicao = pagina.nome_das_margens()
+        for id_, nome in MARGENS_DAS_ACOES.items():
+            self._acoes[id_].setChecked(nome == predefinicao)

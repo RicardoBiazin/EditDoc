@@ -42,6 +42,12 @@ OBRIGATORIOS = (
     "editdoc.ponte_qt.de_qt",
     "editdoc.interface.janela_principal",
     "editdoc.interface.gerente",
+    "editdoc.interface.vista_paginas",
+    "editdoc.interface.painel_documento",
+    "editdoc.interface.regua",
+    "editdoc.interface.controle_zoom",
+    "editdoc.modelo.pagina",
+    "editdoc.modelo.folhas",
 )
 
 AUMID = "RicardoBiazin.EditDoc"

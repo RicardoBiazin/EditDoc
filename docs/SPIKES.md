@@ -105,10 +105,143 @@ reproduz é outra coisa: texto inserido sem formato herda o sublinhado do vizinh
 A ponte usa `setUnderlineStyle(NoUnderline)` de forma explícita, o que vale nos
 dois casos. Ver `tests/teste_docx_qt.py`.
 
+## Gate do M3: cache de página e teto de zoom
+
+Feito em 12/10/2026, na mesma máquina dos spikes (Windows 11, Python 3.13.14, PySide6 6.11.2,
+`QT_QPA_PLATFORM=offscreen`, fonte Segoe UI, sem cabeçalho). Documento de 582 parágrafos, 95 páginas
+A4 com margens Normal. O quadro é `viewport().grab()` do `PainelDocumento` de produção, um processo por
+caso, DPR definido por `QT_SCALE_FACTOR`. Gate: p95 ≤ 16 ms em todos os cenários com cache.
+
+**Veredito: PASSA, com o teto de zoom.** Com cache e teto, todos os cenários medidos ficam com p95 ≤ 16 ms
+(pior caso: 12,2 ms, DPR 2 a 150%, troca de zoom, fonte de 14 pt). O que faz o gate passar é o teto; o
+cache reduz o quadro quente de 3 a 13 ms para 0,2 a 5 ms e dá margem em DPR 2.
+
+### O que foi medido e a decisão
+
+1. **Sem teto, 400% não fecha.** Protótipo, pintura direta sem cache, sem teto: DPR 1,5 a 400% tem quadro
+   quente p95 de 29,6 ms, rolagem de 54,3 ms e troca de zoom de 36,6 ms; DPR 2 a 400% tem quadro quente de
+   69,7 ms. A causa: acima de uma certa escala de dispositivo, o Qt pinta o texto por caminho, e isso é
+   muito mais caro que pelo cache de glifos. Com 11 pt, 400% em DPR 1 ainda passa (p95 de 2,6 a 6,7 ms, com cache e sem, medido antes do ajuste do teto).
+2. **Teto de zoom = 300% de escala de dispositivo** (zoom × DPR ≤ 3). Em DPR 1, o zoom vai a 300%; em
+   DPR 1,5, a 200%; em DPR 2, a 150%. Fonte de até 14 pt passa em todos os cenários. Fonte de 16 pt já
+   não passa: digitação em 300% chega a 24 ms (p95), e 18 pt piora (81 ms). **Redução de escopo:** o
+   pedido era 25% a 400%. O teto é o que o gate permite; a alternativa (400% com fonte de 14 pt) mede
+   23 a 25 ms de digitação, e o plano pede explicitamente que o escopo seja reduzido e não o número
+   maquiado.
+3. **Cache de tiles: adotado.** Tiles de 256 px lógicos na coordenada da própria página, no DPR da tela,
+   teto de 64 MB, LRU. Na edição, só sai do cache a faixa da linha alterada; se a altura total do
+   documento mudou (Enter, quebra de linha, paginação), sai tudo de baixo. A invalidação roda na próxima
+   pintura, com o layout já refeito (ver achado 5).
+4. **Com teto, o cache não é o que decide o gate, mas melhora tudo que é quadro quente.** Em DPR 1 a 300%,
+   o quadro quente cai de 5,6 para 0,7 ms. A digitação com cache fica igual ou um pouco pior em alguns
+   casos (300%, 11 pt: 5,5 contra 4,7 ms), porque o tile da linha editada é refeito inteiro.
+
+### Tabela (p95 em ms, 80 quadros por cenário; troca de zoom: 20 amostras)
+
+| Tela | Zoom | Fonte | Cenário | Sem cache (p95, ms) | Com cache (p95, ms) |
+|---|---|---|---|---|---|
+| DPR 1 | 25% | 11 pt | quadro quente | 3.0 | 0.3 |
+| DPR 1 | 25% | 11 pt | rolagem, 120 px por quadro | 3.9 | 1.2 |
+| DPR 1 | 25% | 11 pt | digitar, uma letra por quadro | 2.9 | 1.9 |
+| DPR 1 | 25% | 11 pt | digitar, Enter a cada 10 letras | 3.2 | 2.7 |
+| DPR 1 | 25% | 11 pt | quadro frio, logo apos trocar o zoom | 2.9 | 2.8 |
+| DPR 1 | 100% | 11 pt | quadro quente | 4.3 | 0.5 |
+| DPR 1 | 100% | 11 pt | rolagem, 120 px por quadro | 4.0 | 0.5 |
+| DPR 1 | 100% | 11 pt | digitar, uma letra por quadro | 4.2 | 0.8 |
+| DPR 1 | 100% | 11 pt | digitar, Enter a cada 10 letras | 4.7 | 0.7 |
+| DPR 1 | 100% | 11 pt | quadro frio, logo apos trocar o zoom | 3.6 | 3.9 |
+| DPR 1 | 300% | 11 pt | quadro quente | 5.6 | 0.7 |
+| DPR 1 | 300% | 11 pt | rolagem, 120 px por quadro | 5.6 | 2.2 |
+| DPR 1 | 300% | 11 pt | digitar, uma letra por quadro | 4.7 | 5.5 |
+| DPR 1 | 300% | 11 pt | digitar, Enter a cada 10 letras | 3.5 | 3.3 |
+| DPR 1 | 300% | 11 pt | quadro frio, logo apos trocar o zoom | 3.2 | 3.2 |
+| DPR 1 | 25% | 14 pt | quadro quente | 3.0 | 0.2 |
+| DPR 1 | 25% | 14 pt | rolagem, 120 px por quadro | 3.2 | 1.1 |
+| DPR 1 | 25% | 14 pt | digitar, uma letra por quadro | 2.6 | 1.9 |
+| DPR 1 | 25% | 14 pt | digitar, Enter a cada 10 letras | 2.5 | 2.1 |
+| DPR 1 | 25% | 14 pt | quadro frio, logo apos trocar o zoom | 2.9 | 2.4 |
+| DPR 1 | 100% | 14 pt | quadro quente | 3.4 | 0.5 |
+| DPR 1 | 100% | 14 pt | rolagem, 120 px por quadro | 3.8 | 0.5 |
+| DPR 1 | 100% | 14 pt | digitar, uma letra por quadro | 4.0 | 0.8 |
+| DPR 1 | 100% | 14 pt | digitar, Enter a cada 10 letras | 4.5 | 0.8 |
+| DPR 1 | 100% | 14 pt | quadro frio, logo apos trocar o zoom | 3.7 | 4.0 |
+| DPR 1 | 300% | 14 pt | quadro quente | 3.5 | 0.8 |
+| DPR 1 | 300% | 14 pt | rolagem, 120 px por quadro | 3.7 | 1.9 |
+| DPR 1 | 300% | 14 pt | digitar, uma letra por quadro | 4.5 | 6.4 |
+| DPR 1 | 300% | 14 pt | digitar, Enter a cada 10 letras | 3.6 | 3.3 |
+| DPR 1 | 300% | 14 pt | quadro frio, logo apos trocar o zoom | 3.1 | 3.1 |
+| DPR 1,5 | 25% | 14 pt | quadro quente | 2.9 | 0.5 |
+| DPR 1,5 | 25% | 14 pt | rolagem, 120 px por quadro | 3.5 | 1.5 |
+| DPR 1,5 | 25% | 14 pt | digitar, uma letra por quadro | 3.3 | 1.8 |
+| DPR 1,5 | 25% | 14 pt | digitar, Enter a cada 10 letras | 3.1 | 2.6 |
+| DPR 1,5 | 25% | 14 pt | quadro frio, logo apos trocar o zoom | 3.2 | 3.1 |
+| DPR 1,5 | 100% | 14 pt | quadro quente | 7.5 | 1.0 |
+| DPR 1,5 | 100% | 14 pt | rolagem, 120 px por quadro | 7.3 | 1.2 |
+| DPR 1,5 | 100% | 14 pt | digitar, uma letra por quadro | 7.9 | 1.7 |
+| DPR 1,5 | 100% | 14 pt | digitar, Enter a cada 10 letras | 8.0 | 1.7 |
+| DPR 1,5 | 100% | 14 pt | quadro frio, logo apos trocar o zoom | 7.1 | 7.2 |
+| DPR 1,5 | 200% | 14 pt | quadro quente | 9.0 | 1.4 |
+| DPR 1,5 | 200% | 14 pt | rolagem, 120 px por quadro | 7.8 | 3.2 |
+| DPR 1,5 | 200% | 14 pt | digitar, uma letra por quadro | 9.5 | 7.2 |
+| DPR 1,5 | 200% | 14 pt | digitar, Enter a cada 10 letras | 8.9 | 6.1 |
+| DPR 1,5 | 200% | 14 pt | quadro frio, logo apos trocar o zoom | 7.0 | 6.9 |
+| DPR 2 | 25% | 14 pt | quadro quente | 6.4 | 3.6 |
+| DPR 2 | 25% | 14 pt | rolagem, 120 px por quadro | 6.8 | 5.0 |
+| DPR 2 | 25% | 14 pt | digitar, uma letra por quadro | 6.4 | 4.5 |
+| DPR 2 | 25% | 14 pt | digitar, Enter a cada 10 letras | 6.3 | 5.6 |
+| DPR 2 | 25% | 14 pt | quadro frio, logo apos trocar o zoom | 7.0 | 6.8 |
+| DPR 2 | 100% | 14 pt | quadro quente | 13.2 | 5.0 |
+| DPR 2 | 100% | 14 pt | rolagem, 120 px por quadro | 12.3 | 4.6 |
+| DPR 2 | 100% | 14 pt | digitar, uma letra por quadro | 12.2 | 4.8 |
+| DPR 2 | 100% | 14 pt | digitar, Enter a cada 10 letras | 12.2 | 4.7 |
+| DPR 2 | 100% | 14 pt | quadro frio, logo apos trocar o zoom | 11.8 | 12.0 |
+| DPR 2 | 150% | 14 pt | quadro quente | 12.4 | 5.5 |
+| DPR 2 | 150% | 14 pt | rolagem, 120 px por quadro | 14.9 | 7.5 |
+| DPR 2 | 150% | 14 pt | digitar, uma letra por quadro | 14.3 | 11.7 |
+| DPR 2 | 150% | 14 pt | digitar, Enter a cada 10 letras | 12.6 | 11.9 |
+| DPR 2 | 150% | 14 pt | quadro frio, logo apos trocar o zoom | 11.5 | 12.2 |
+
+Cenários: quadro quente (nada muda), rolagem com um passo de roda por quadro (120 px de tela, fixo),
+digitar uma letra por quadro, digitar com Enter a cada 10 letras (muda a altura), e quadro frio logo após
+trocar o zoom. A rolagem por passo fixo de 120 px é a da roda do Windows (3 linhas de 40 px, sem escala).
+
+### Achados que mudaram o desenho
+
+1. **Pintura de tile fora do corpo.** Um tile que cai só na margem tinha recorte vazio. `setClipRect` com
+   retângulo vazio não recorta nada, e o Qt pintava a página inteira para descartar: 45 ms por tile, 140 ms
+   por quadro frio em 100%. Corrigido: `desenhar_folha` sai sem pintar quando o recorte é vazio.
+2. **Invalidação lia a altura antes do layout.** O sinal `contentsChange` dispara antes de o
+   `QTextDocumentLayout` refazer o layout. Lida ali, a altura era a antiga, e a quebra de linha deixava tiles
+   velhos na tela (medido: 15 mil pixels diferentes). Corrigido: a mudança é anotada e a invalidação roda na
+   pintura seguinte. Teste: `tests/teste_folhas.py`, com contraprova.
+3. **O protótipo do gate tinha esse erro**, então a primeira rodada do gate (feita no protótipo do spike)
+   subestimou o custo do Enter. Por isso esta tabela é a refeita sobre o produto, e os números do protótipo
+   não entram nela, salvo o item 1 (pintura direta sem cache, que não usa tiles).
+4. **Teclado: o QTextEdit oculto não serve (opção a rejeitada).** Compartilhando o `QTextDocument`, o
+   QTextEdit oculto troca o `pageSize` de (9072 × 14004) para (624 × -1) ao ser criado: o documento de 20
+   páginas vira 1 página. A opção de teclado é a (b): controle próprio, com a API do QTextEdit (nomes e
+   sinais), o que mantém as suítes M1 e M2 sem reescrever os comandos. Latência de tecla não foi o problema:
+   300 teclas num QTextEdit oculto custam 0,21 ms cada.
+5. **Quadro quente sem cache é barato em 11 pt** (3 a 6 ms com teto). O cache foi decidido pelo quadro
+   quente e pela margem em DPR 2: a 100%, a digitação cai de 12,2 para 4,8 ms (p95).
+
+### Limites registrados
+
+- Fonte de 16 pt ou mais: em 300% a digitação passa de 16 ms (p95). O teto cobre fonte de até 14 pt. Um
+  documento com 16 pt ou mais digita mais devagar em escalas altas: é o limite do Qt, não um defeito do
+  cache.
+- Medidas em offscreen, com a fonte Segoe UI. O custo de pintura no monitor real (com o DWM e a
+  composição) não foi medido; a aparência final é pendência manual.
+- A 400% com 11 pt, em DPR 1, o pior p95 é 6,7 ms (digitação): o teto não é necessário para esse caso. Se o orquestrador
+  quiser 400% de volta para DPR 1 com 11 pt, a mudança é só `ESCALA_DISPOSITIVO_MAXIMA` em
+  `editdoc/modelo/folhas.py`, com o aviso de fonte de 14 pt ou mais.
+
+Dados brutos (JSON e log): pasta de rascunho do scratchpad, fora do repositório.
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - Abrir uma amostra `.docx` gerada pelo spike no Word, sem reparo. As amostras estão
   em `%TEMP%\claude\...\scratchpad\spike-docx`, fora do repositório.
-- Cache de página para a pintura, a validar antes do M3.
+- Cache de página: medido no Gate do M3 (acima). Adotado com teto de zoom.
 - Fonte embutida para os testes de renderização visual.

@@ -76,6 +76,7 @@ def _paragrafo(bloco) -> Paragrafo:
         p.espaco_depois_tw = twips_de_px(bf.bottomMargin())
     if (bf.hasProperty(P.LineHeight) and bf.lineHeightType() == _PROPORCIONAL):
         p.espacamento_linha_pct = round(bf.lineHeight())
+    p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     lista = bloco.textList()
     if lista is not None:
         p.numeracao = ("marcadores" if lista.format().style() in _MARCAS

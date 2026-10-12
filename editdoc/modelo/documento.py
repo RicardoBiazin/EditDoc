@@ -17,6 +17,8 @@ import copy
 from dataclasses import dataclass, field, fields
 from typing import Literal
 
+from editdoc.modelo.pagina import Pagina
+
 Alinhamento = Literal["esquerda", "centro", "direita", "justificado"]
 Numeracao = Literal["marcadores", "numeracao"]
 
@@ -48,11 +50,15 @@ class Paragrafo:
     # Porcentagem (100 = simples). Ausente no plano original; entrou no M2 porque
     # o editor ja aplica o espacamento e salvar sem ele perderia a formatacao.
     espacamento_linha_pct: int | None = None
+    # Quebra de pagina antes deste paragrafo (Ctrl+Enter). No .docx ela e' um
+    # w:br type="page" no inicio do paragrafo. Ausente = sem quebra.
+    quebra_antes: bool = False
 
 
 @dataclass
 class Documento:
     paragrafos: list[Paragrafo] = field(default_factory=list)
+    pagina: Pagina = field(default_factory=Pagina)
     titulo: str = ""
     autor: str = ""
     criado_em: str | None = None  # ISO 8601 UTC, ex. "2026-10-11T12:00:00Z"

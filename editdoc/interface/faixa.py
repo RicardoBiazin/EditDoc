@@ -10,7 +10,7 @@ no menu e na dica (tooltip). Botao nao usa setDefaultAction, porque o Qt copia
 o texto da acao para o botao e nao deixa encurtar: cada botao sincroniza com a
 acao por sinal.
 
-Limites do M1: uma aba (Pagina Inicial) e dois estados por grupo. O estado
+Abas: Pagina Inicial e Layout (M3). Dois estados por grupo. O estado
 intermediario, com botoes menores em tres linhas, e as abas contextuais entram
 no M6.
 """
@@ -20,10 +20,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QDoubleValidator
 from PySide6.QtWidgets import (QComboBox, QFontComboBox, QFrame, QHBoxLayout, QLabel,
-                               QMenu, QTabBar, QToolButton, QVBoxLayout, QWidget)
+                               QMenu, QStackedWidget, QTabBar, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from editdoc.edicao import formatacao
-from editdoc.interface.comandos import Comandos
+from editdoc.interface.comandos import MARGENS_DAS_ACOES, PAPEL_DAS_ACOES, Comandos
 from editdoc.interface.planejamento import recolher_grupos
 
 TAMANHOS = (8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72)
@@ -41,7 +42,7 @@ ROTULOS = {
     "alinhar_esquerda": "Esquerda", "centralizar": "Centro",
     "alinhar_direita": "Direita", "justificar": "Justificar",
     "localizar": "Localizar", "substituir": "Substituir",
-    "selecionar_tudo": "Selecionar",
+    "selecionar_tudo": "Selecionar", "quebra_pagina": "Quebra",
 }
 
 
@@ -202,16 +203,28 @@ class Faixa(QFrame):
         # O primeiro da lista e' o primeiro a recolher.
         self._prioridade = [edicao, clipboard, paragrafo, fonte]
 
+        # Aba Layout: papel, orientacao, margens e quebra. Fica em outra aba, e nao no
+        # grupo da Pagina Inicial, porque 298 px de grupo novo empurravam o recolhimento
+        # da faixa (medido: a Fonte passava a recolher em 820 px).
+        layout_linha = _linha([
+            _menu("Tamanho", [c.acao(i) for i in PAPEL_DAS_ACOES]),
+            _menu("Orientação", [c.acao("retrato"), c.acao("paisagem")]),
+            _menu("Margens", [c.acao(i) for i in MARGENS_DAS_ACOES]),
+            _botao(c, "quebra_pagina"),
+        ])
+        layout_linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
+
         topo = QHBoxLayout()
         topo.setContentsMargins(0, 0, 0, 0)
         if botao_arquivo is not None:
             topo.addWidget(botao_arquivo)
         topo.addWidget(_botao(c, "desfazer"))
         topo.addWidget(_botao(c, "refazer"))
-        abas = QTabBar()
-        abas.addTab("Página Inicial")
-        abas.setExpanding(False)
-        topo.addWidget(abas, 1)
+        self._abas = QTabBar()
+        self._abas.addTab("Página Inicial")
+        self._abas.addTab("Layout")
+        self._abas.setExpanding(False)
+        topo.addWidget(self._abas, 1)
 
         grupos = QHBoxLayout()
         grupos.setContentsMargins(0, 0, 0, 0)
@@ -219,12 +232,19 @@ class Faixa(QFrame):
         for grupo in self._grupos:
             grupos.addWidget(grupo)
         grupos.addStretch(1)
+        pagina_inicial = QWidget()
+        pagina_inicial.setLayout(grupos)
+
+        self._conteudo = QStackedWidget()
+        self._conteudo.addWidget(pagina_inicial)
+        self._conteudo.addWidget(layout_linha)
+        self._abas.currentChanged.connect(self._conteudo.setCurrentIndex)
 
         vertical = QVBoxLayout(self)
         vertical.setContentsMargins(MARGEM_FAIXA, 4, MARGEM_FAIXA, 4)
         vertical.setSpacing(2)
         vertical.addLayout(topo)
-        vertical.addLayout(grupos)
+        vertical.addWidget(self._conteudo)
 
         # A largura minima e' a de tudo recolhido: abaixo disso nada cabe.
         minimo = sum(g.largura(True) for g in self._grupos) + 2 * MARGEM_FAIXA

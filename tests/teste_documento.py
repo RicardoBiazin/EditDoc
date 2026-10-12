@@ -60,12 +60,16 @@ def documento_simples() -> Documento:
 
 
 def docx_com_tabela_e_quebra() -> bytes:
-    """Amostra com recursos que o M2 avisa e nao edita: tabela e quebra de pagina."""
+    """Amostra com recursos que o M2 avisa e nao edita: tabela e quebra de coluna.
+
+    Quebra de pagina deixou de ser aviso no M3 (vira quebra_antes): a checagem de
+    aviso usa a quebra de coluna, que continua sem suporte.
+    """
     base = fx.bytes_de(documento_simples())
     xml = fx.partes_de(base)["word/document.xml"]
     tabela = (b'<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>'
               b'<w:tr><w:tc><w:p><w:r><w:t>celula</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
-              b'<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
+              b'<w:p><w:r><w:br w:type="column"/></w:r></w:p>')
     novo = xml.replace(b"<w:sectPr", tabela + b"<w:sectPr", 1)
     return fx.com_parte(base, "word/document.xml", novo)
 
@@ -235,7 +239,7 @@ def testar_barra_de_aviso(tmp: pathlib.Path) -> None:
     with dialogos(mostrar_detalhes=lambda _p, _t, texto: detalhes.append(texto)):
         janela.barra_aviso._mostrar_detalhes()
     checa(len(detalhes) == 1 and "quebra" in detalhes[0].lower(),
-          "Detalhes mostra a lista completa, com a quebra de pagina")
+          "Detalhes mostra a lista completa, com a quebra de coluna")
     limpa = gerente.novo()
     checa(limpa.barra_aviso.isHidden(), "contraprova: documento sem aviso nao mostra a barra")
     janela_limpa(gerente)

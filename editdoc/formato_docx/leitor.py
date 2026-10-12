@@ -22,12 +22,13 @@ from lxml import etree
 
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
-from editdoc.formato_docx.padroes import (FONTE_PADRAO, LINHA_PADRAO, MARGENS_PADRAO,
-                                         PAPEL_PADRAO, TAMANHO_PADRAO_MEIO_PT)
+from editdoc.formato_docx.padroes import (FONTE_PADRAO, LINHA_PADRAO,
+                                         TAMANHO_PADRAO_MEIO_PT)
 from editdoc.formato_docx.nomes import (CP, CT_DOCUMENTO_MACRO, DC, DCT, MC_NS, PKG_CT,
                                         RT_STRICT, W, W_STRICT, q)
 from editdoc.formato_docx.ordem import caminho_dos_rels
 from editdoc.modelo.documento import Documento, Paragrafo, Run, normalizar
+from editdoc.modelo.pagina import Pagina
 
 LIMITES_PADRAO = {
     "entradas": 5000,
@@ -119,12 +120,14 @@ def _parse(dados: bytes, nome: str, profundidade: int):
 
 
 class _Contexto:
-    def __init__(self, coletor: Coletor, numeracao: dict[str, str | None],
-                 pagina_avisada: list[bool]) -> None:
+    def __init__(self, coletor: Coletor, numeracao: dict[str, str | None]) -> None:
         self.coletor = coletor
         #: numId -> formato do nivel 0 ("bullet", "decimal", outro ou None)
         self.numeracao = numeracao
-        self.pagina_avisada = pagina_avisada
+        #: sectPr contados: os de dentro de paragrafo mais o do fim do corpo
+        self.secoes = 0
+        #: pagina do sectPr final, ja validada; None se nao for representavel
+        self.pagina_final: Pagina | None = None
 
 
 # -- classificacao ------------------------------------------------------------
@@ -236,9 +239,10 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
                 c.somar("ESTILO")
         elif loc == "sectPr":
             c.somar("SECAO")
+            ctx.secoes += 1
             _checar_secao(f, ctx)
         elif loc == "pageBreakBefore":
-            c.somar("QUEBRA_DE_PAGINA")
+            out["quebra_antes"] = _onoff(f)
         elif loc in _PPR_NEUTRAS:
             continue
         else:
@@ -313,6 +317,10 @@ def _ler_item_run(f, run: Run, partes: list[str], ctx: _Contexto) -> None:
         tipo = _atr(f, "type")
         if tipo in (None, "textWrapping"):
             partes.append("\n")
+        elif tipo == "page":
+            # Sentinela: _paragrafos transforma cada \f em quebra de pagina.
+            # XML 1.0 nao aceita \f em w:t, entao ele so' vem daqui.
+            partes.append("\f")
         else:
             c.somar("QUEBRA_DE_PAGINA")
     elif loc == "cr":
@@ -377,7 +385,15 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             c.somar("ELEMENTO_DESCONHECIDO")
 
 
-def _paragrafo(p, ctx: _Contexto) -> Paragrafo:
+def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
+    """Um w:p vira um ou mais paragrafos do modelo.
+
+    Quebra de pagina (w:br type="page") no inicio do paragrafo, ou paragrafo que
+    contem so' a quebra, vira `quebra_antes` no proprio paragrafo. Quebra no meio
+    do texto parte o paragrafo: a parte depois dela vira paragrafo novo, com as
+    mesmas propriedades e `quebra_antes` ligado. O modelo nao diz "no meio": e'
+    a unica mudanca de estrutura, e a aparencia nao muda.
+    """
     props: dict = {}
     for f in p:
         ns, loc = _local(f)
@@ -385,7 +401,21 @@ def _paragrafo(p, ctx: _Contexto) -> Paragrafo:
             props = _ler_ppr(f, ctx)
     runs: list[Run] = []
     _runs_em(p, ctx, runs)
-    return Paragrafo(runs=runs, **props)
+    saida = [Paragrafo(runs=[], **props)]
+    for run in runs:
+        for i, pedaco in enumerate(run.texto.split("\f")):
+            if i > 0:
+                atual = saida[-1]
+                if atual.runs or atual.quebra_antes:
+                    nova = Paragrafo(runs=[], **{k: v for k, v in props.items()
+                                                 if k != "quebra_antes"})
+                    nova.quebra_antes = True
+                    saida.append(nova)
+                else:
+                    atual.quebra_antes = True
+            if pedaco:
+                saida[-1].runs.append(Run(**{**run.__dict__, "texto": pedaco}))
+    return saida
 
 
 def _blocos(elemento, paras: list[Paragrafo], ctx: _Contexto) -> None:
@@ -402,7 +432,7 @@ def _blocos(elemento, paras: list[Paragrafo], ctx: _Contexto) -> None:
         if ns != W:
             continue
         if loc == "p":
-            paras.append(_paragrafo(f, ctx))
+            paras.extend(_paragrafos(f, ctx))
         elif loc == "tbl":
             c.somar("TABELA")
             _blocos(f, paras, ctx)
@@ -422,24 +452,35 @@ def _blocos(elemento, paras: list[Paragrafo], ctx: _Contexto) -> None:
 
 
 def _checar_secao(sect, ctx: _Contexto) -> None:
-    """Cabecalho, rodape e tamanho de pagina de uma secao (sectPr)."""
-    c = ctx.coletor
+    """Cabecalho e rodape de uma secao (sectPr). Papel e margens: ver _pagina_de."""
     if any(_local(x)[1] in ("headerReference", "footerReference") for x in sect):
-        c.somar("CABECALHO_RODAPE")
+        ctx.coletor.somar("CABECALHO_RODAPE")
+
+
+#: Atributos do w:pgMar e o campo de Pagina que cada um preenche.
+_MARGENS_XML = (("top", "margem_sup_tw"), ("bottom", "margem_inf_tw"),
+                ("left", "margem_esq_tw"), ("right", "margem_dir_tw"),
+                ("header", "cabecalho_tw"), ("footer", "rodape_tw"),
+                ("gutter", "medianiz_tw"))
+
+
+def _pagina_de(sect) -> Pagina | None:
+    """Papel, orientacao e margens do sectPr. None se nao houver pagina util."""
+    pagina = Pagina()
     pg = sect.find(q("pgSz"))
-    mar = sect.find(q("pgMar"))
-    diferente = False
     if pg is not None:
-        medida = (_inteiro(_atr(pg, "w")), _inteiro(_atr(pg, "h")))
-        diferente |= medida != PAPEL_PADRAO
+        largura, altura = _inteiro(_atr(pg, "w")), _inteiro(_atr(pg, "h"))
+        if largura is None or altura is None:
+            return None
+        pagina.largura_tw, pagina.altura_tw = largura, altura
+        pagina.paisagem = _atr(pg, "orient") == "landscape"
+    mar = sect.find(q("pgMar"))
     if mar is not None:
-        for nome, padrao in MARGENS_PADRAO:
-            valor = _inteiro(_atr(mar, nome))
-            if valor is not None and valor != padrao:
-                diferente = True
-    if diferente and not ctx.pagina_avisada[0]:
-        ctx.pagina_avisada[0] = True
-        c.somar("PAGINA")
+        for nome_xml, campo in _MARGENS_XML:
+            valor = _inteiro(_atr(mar, nome_xml))
+            if valor is not None:
+                setattr(pagina, campo, valor)
+    return pagina if pagina.valida() else None
 
 
 def _numeracao(raiz_num) -> dict[str, str | None]:
@@ -616,7 +657,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                     _validar_nome(alvo)
                     estilos = _parse(ler_parte(alvo), alvo, profundidade)
 
-        ctx = _Contexto(coletor, numeracao, [False])
+        ctx = _Contexto(coletor, numeracao)
         if estilos is not None:
             _padrao_do_documento(estilos, coletor)
 
@@ -625,13 +666,23 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         sect_final = corpo.find(q("sectPr"))
         if sect_final is not None:
             _checar_secao(sect_final, ctx)
+            ctx.pagina_final = _pagina_de(sect_final)
+            if ctx.pagina_final is None:
+                # Papel ou margem que nao cabe numa pagina util: o EditDoc
+                # grava A4 com as margens padrao, e o aviso diz isso.
+                coletor.somar("PAPEL_INVALIDO")
+        total_secoes = ctx.secoes + (1 if sect_final is not None else 0)
+        if total_secoes > 1:
+            # Cada secao tem o seu papel e as suas margens; o EditDoc tem um so'.
+            coletor.somar("PAGINA")
 
         meta = {"titulo": "", "autor": "", "criado_em": None, "modificado_em": None}
         if alvo_core and alvo_core in nomes:
             _validar_nome(alvo_core)
             meta = _core(ler_parte(alvo_core), profundidade)
 
-    doc = normalizar(Documento(paragrafos=paras, **meta))
+    pagina = ctx.pagina_final if ctx.pagina_final is not None else Pagina()
+    doc = normalizar(Documento(paragrafos=paras, pagina=pagina, **meta))
     return doc, coletor.avisos()
 
 

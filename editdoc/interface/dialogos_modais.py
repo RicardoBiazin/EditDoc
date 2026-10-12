@@ -7,9 +7,11 @@ QMessageBox nem QFileDialog diretamente. O nome de cada funcao diz a pergunta.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+                               QMessageBox, QWidget)
 
 from editdoc import APP
+from editdoc.modelo.pagina import CORPO_MINIMO_TW, TWIPS_POR_CM, Pagina
 
 FILTRO_DOCX = "Documento Word (*.docx)"
 EXTENSAO = ".docx"
@@ -104,3 +106,41 @@ def pedir_descartar(pai: QWidget | None, nome: str) -> str:
     if clicado is descartar:
         return "descartar"
     return "cancelar"
+
+
+def pedir_margens(pai: QWidget | None, atual: Pagina) -> Pagina | None:
+    """Margens em centimetros, para a pagina `atual`. None se cancelar ou se nao couber texto."""
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"Margens personalizadas - {APP}")
+    grade = QFormLayout(dialogo)
+    campos: dict[str, QDoubleSpinBox] = {}
+    valores = (("Superior", atual.margem_sup_tw), ("Inferior", atual.margem_inf_tw),
+               ("Esquerda", atual.margem_esq_tw), ("Direita", atual.margem_dir_tw))
+    for rotulo, twips in valores:
+        spin = QDoubleSpinBox()
+        spin.setRange(0.0, 10.0)
+        spin.setDecimals(2)
+        spin.setSingleStep(0.1)
+        spin.setSuffix(" cm")
+        spin.setValue(round(twips / TWIPS_POR_CM, 2))
+        grade.addRow(f"{rotulo}:", spin)
+        campos[rotulo] = spin
+    botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+    botoes.accepted.connect(dialogo.accept)
+    botoes.rejected.connect(dialogo.reject)
+    grade.addRow(botoes)
+    if dialogo.exec() != QDialog.DialogCode.Accepted:
+        return None
+
+    def twips(rotulo: str) -> int:
+        return round(campos[rotulo].value() * TWIPS_POR_CM)
+
+    novo = atual.com_margens(twips("Superior"), twips("Inferior"),
+                             twips("Esquerda"), twips("Direita"))
+    if not novo.valida():
+        avisar(pai, "Margens", "As margens deixam pouco espaço para o texto. "
+               f"O corpo precisa ter pelo menos {CORPO_MINIMO_TW / TWIPS_POR_CM:.0f} cm "
+               "de largura e de altura.")
+        return None
+    return novo

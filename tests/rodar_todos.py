@@ -62,6 +62,18 @@ SUITES = [
      "arquivos hostis viram ErroDocx com codigo, em menos de 2 s"),
     ("teste_documento.py",
      "janelas: abrir, editar, salvar, perda, falha de gravacao, recentes"),
+    ("teste_paginas.py",
+     "pagina, zoom e mapa folha-tela sem Qt; layout com Segoe UI: fronteiras, paginas estaveis, hit-test"),
+    ("teste_folhas.py",
+     "folhas em pixels: retangulo, margem sem tinta, cache igual ao quadro novo"),
+    ("teste_regua.py",
+     "regua: margens e recuos; arrastar um marcador e' um passo de desfazer"),
+    ("teste_zoom.py",
+     "zoom sem relayout, Ctrl+roda, barra de status e selecao por mouse em varias paginas"),
+    ("teste_quebras.py",
+     "Ctrl+Enter: quebra no .docx e na tela; sem aviso quando a quebra e' representada"),
+    ("teste_layout.py",
+     "papel, orientacao e margens no sectPr e na janela; PAGINA so' com mais de uma secao"),
 ]
 
 
