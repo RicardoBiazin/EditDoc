@@ -16,6 +16,12 @@ Cabecalho e rodape (M5): os da ultima secao, com a heranca do Word (a secao sem
 referencia herda a da anterior). Cada parte passa pelos mesmos limites do pacote e
 mais um, de tamanho (`cabecalho_bytes`). Campo aninhado fundo demais
 (`campo_profundidade`) nao e' interpretado: o texto fica, com aviso.
+
+Estilos (M6): o styles.xml vira o catalogo (`formato_docx/estilos.py`), guardado no
+Documento com o XML original. w:pStyle e w:rStyle viram `Paragrafo.estilo` e
+`Run.estilo`; a formatacao lida no paragrafo e no run continua sendo so' a direta. A
+lista que vem do estilo (numPr dentro do estilo) passa para o paragrafo. Referencia a
+estilo que nao existe vira o aviso ESTILO.
 """
 
 from __future__ import annotations
@@ -29,10 +35,9 @@ from dataclasses import replace
 
 from lxml import etree
 
+from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
-from editdoc.formato_docx.padroes import (FONTE_PADRAO, LINHA_PADRAO,
-                                         TAMANHO_PADRAO_MEIO_PT)
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, MATH_NS, MC_NS,
                                         PIC_NS, PKG_CT, R_NS, RT_STRICT, URI_IMAGEM, W,
                                         W_STRICT, WP_NS, q)
@@ -43,6 +48,7 @@ from editdoc.modelo.campos import (FORMATOS_NUMERO, INSTRUCAO_MAXIMA, NUMERO_INI
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Celula,
                                       Documento, Imagem, Linha, Paragrafo, Run, Tabela,
                                       colunas_da_linha, normalizar, run_de_imagem)
+from editdoc.modelo.estilos import Estilos, catalogo_padrao
 from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
 from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
@@ -96,7 +102,7 @@ _JC = {"left": "esquerda", "start": "esquerda", "center": "centro",
 #: Propriedades de paragrafo sem efeito visivel que o modelo nao usa: sao ignoradas.
 _PPR_NEUTRAS = {"widowControl", "keepNext", "keepLines", "suppressAutoHyphens", "kinsoku",
                 "wordWrap", "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN",
-                "adjustRightInd", "snapToGrid", "textAlignment", "outlineLvl", "divId",
+                "adjustRightInd", "snapToGrid", "textAlignment", "divId",
                 "cnfStyle", "contextualSpacing", "textboxTightWrap", "rPr", "pPrChange",
                 "suppressLineNumbers"}
 #: Propriedades de run sem efeito visivel que o modelo nao usa.
@@ -195,6 +201,8 @@ class _Contexto:
         self.estilo_tabela_padrao: str | None = None
         #: profundidade de tabela atual (0 = corpo)
         self.nivel_tabela = 0
+        #: catalogo de estilos (M6)
+        self.estilos: Estilos = catalogo_padrao()
         #: campos complexos abertos (w:fldChar begin sem end), do de fora para o de dentro
         self.campos: list[dict] = []
         #: cabecalho e rodape herdados das secoes anteriores: (onde, tipo) -> rId
@@ -253,7 +261,7 @@ def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
         elif loc == "sz":
             run.tamanho_meio_pt = _inteiro(_atr(f, "val"))
         elif loc == "rFonts":
-            fonte = _atr(f, "ascii") or _atr(f, "hAnsi")
+            fonte = fx_estilos.fonte_de_rfonts(f, ctx.estilos.fontes_tema)
             if fonte:
                 run.fonte = fonte
         elif loc == "color":
@@ -264,7 +272,12 @@ def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
                 else:
                     c.somar("FORMATACAO")
         elif loc == "rStyle":
-            c.somar("ESTILO")
+            sid = _atr(f, "val")
+            estilo = ctx.estilos.obter(sid)
+            if estilo is not None and estilo.tipo == "caractere":
+                run.estilo = sid
+            elif sid not in (None, "DefaultParagraphFont"):
+                c.somar("ESTILO")
         elif loc in _RPR_NEUTRAS:
             continue
         else:
@@ -293,8 +306,9 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
             elif _atr(f, "hanging") is not None:
                 h = _inteiro(_atr(f, "hanging"))
                 out["recuo_primeira_linha_tw"] = None if h is None else -h
-            if _atr(f, "right") is not None or _atr(f, "end") is not None:
-                c.somar("FORMATACAO")
+            direito = _atr(f, "right") or _atr(f, "end")
+            if direito is not None:
+                out["recuo_direito_tw"] = _inteiro(direito)
         elif loc == "spacing":
             if _atr(f, "before") is not None:
                 out["espaco_antes_tw"] = _inteiro(_atr(f, "before"))
@@ -310,8 +324,17 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
         elif loc == "numPr":
             _ler_numpr(f, out, ctx)
         elif loc == "pStyle":
-            if _atr(f, "val") not in (None, "Normal"):
+            sid = _atr(f, "val")
+            estilo = ctx.estilos.obter(sid)
+            if estilo is not None and estilo.tipo == "paragrafo":
+                # O estilo padrao fica None: e' o que vale sem w:pStyle.
+                out["estilo"] = None if sid == ctx.estilos.id_padrao() else sid
+            elif sid is not None:
                 c.somar("ESTILO")
+        elif loc == "outlineLvl":
+            nivel = _inteiro(_atr(f, "val"))
+            if nivel is not None and 0 <= nivel <= 9:
+                out["nivel"] = nivel
         elif loc == "sectPr":
             c.somar("SECAO")
             ctx.secoes += 1
@@ -341,6 +364,8 @@ def _ler_numpr(numpr, out: dict, ctx: _Contexto) -> None:
     ilvl_el = numpr.find(q("ilvl"))
     ilvl = _inteiro(ilvl_el.get(q("val"))) if ilvl_el is not None else 0
     if nid in (None, "0"):
+        if nid == "0":
+            out["_sem_lista"] = True  # numId 0 desliga a lista que viria do estilo
         return
     if ilvl and ilvl > 0:
         c.somar("LISTA_NIVEL")
@@ -636,6 +661,13 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
         ns, loc = _local(f)
         if ns == W and loc == "pPr":
             props = _ler_ppr(f, ctx)
+    sem_lista = props.pop("_sem_lista", False)
+    if "numeracao" not in props and not sem_lista:
+        # Lista ligada pelo estilo (List Bullet...): vira lista do paragrafo, porque o
+        # numbering.xml de origem nao volta ao arquivo.
+        lista = ctx.estilos.numeracao_de(props.get("estilo") or ctx.estilos.id_padrao())
+        if lista is not None:
+            props["numeracao"] = lista
     runs: list[Run] = []
     _runs_em(p, ctx, runs)
     if ctx.nivel_tabela > 0:
@@ -1130,30 +1162,13 @@ def _numeracao(raiz_num) -> dict[str, str | None]:
     return saida
 
 
-def _padrao_do_documento(raiz_estilos, coletor: Coletor) -> None:
-    """Fonte e espacamento padrao diferentes do padrao do EditDoc: aviso."""
-    dd = raiz_estilos.find(q("docDefaults"))
-    if dd is None:
-        return
-    rpr = dd.find(q("rPrDefault") + "/" + q("rPr"))
-    ppr = dd.find(q("pPrDefault") + "/" + q("pPr"))
-    diferente = False
-    if rpr is not None:
-        sz = rpr.find(q("sz"))
-        rf = rpr.find(q("rFonts"))
-        if sz is not None and _atr(sz, "val") != str(TAMANHO_PADRAO_MEIO_PT):
-            diferente = True
-        if rf is not None and _atr(rf, "ascii") not in (None, FONTE_PADRAO):
-            diferente = True
-    if ppr is not None:
-        sp = ppr.find(q("spacing"))
-        if sp is not None:
-            if _atr(sp, "after") is not None and _inteiro(_atr(sp, "after")) != 160:
-                diferente = True
-            if _atr(sp, "line") is not None and _inteiro(_atr(sp, "line")) != LINHA_PADRAO:
-                diferente = True
-    if diferente:
-        coletor.somar("PADRAO_DO_DOCUMENTO")
+def _tema_preservavel(raiz) -> bool:
+    """O tema volta ao arquivo so' se nao aponta para nada (imagem de preenchimento...).
+
+    Um r:id no tema exigiria as relacoes dele, que o EditDoc nao regrava.
+    """
+    return not any(chave.startswith("{%s}" % R_NS) for el in raiz.iter()
+                   for chave in el.attrib)
 
 
 def _core(dados: bytes, profundidade: int) -> dict:
@@ -1292,9 +1307,12 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         def tamanho_de(parte: str) -> int:
             return z.getinfo(parte).file_size
 
-        # Partes ligadas ao documento principal: numeracao, estilos e configuracoes.
+        # Partes ligadas ao documento principal: numeracao, estilos, tema e configuracoes.
         numeracao: dict[str, str | None] = {}
         estilos = None
+        dados_estilos = b""
+        fontes_tema: dict = {}
+        tema: bytes | None = None
         pares_impares = False
         relacoes = relacoes_de(alvo_doc)
         for tipo, alvo, externo in relacoes.values():
@@ -1305,7 +1323,17 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                 numeracao = _numeracao(_parse(ler_parte(alvo), alvo, profundidade))
             elif tipo.endswith("/styles"):
                 _validar_nome(alvo)
-                estilos = _parse(ler_parte(alvo), alvo, profundidade)
+                dados_estilos = ler_parte(alvo)
+                estilos = _parse(dados_estilos, alvo, profundidade)
+                if _profundidade(estilos) > profundidade:
+                    raise ErroDocx("XML_PROFUNDIDADE_EXCEDIDA", alvo)
+            elif tipo.endswith("/theme"):
+                _validar_nome(alvo)
+                dados_tema = ler_parte(alvo)
+                raiz_tema = _parse(dados_tema, alvo, profundidade)
+                fontes_tema = fx_estilos.fontes_do_tema(raiz_tema)
+                if caminho_dos_rels(alvo) not in nomes and _tema_preservavel(raiz_tema):
+                    tema = dados_tema
             elif tipo.endswith("/settings"):
                 _validar_nome(alvo)
                 config = _parse(ler_parte(alvo), alvo, profundidade)
@@ -1317,7 +1345,10 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         ctx.ler_parte = ler_parte
         ctx.nomes = nomes
         if estilos is not None:
-            _padrao_do_documento(estilos, coletor)
+            ctx.estilos, removidos = fx_estilos.ler_estilos(estilos, dados_estilos, fontes_tema,
+                                                            numeracao, tema)
+            if removidos:
+                coletor.somar("FORMATACAO", removidos)
             for estilo in estilos.findall(q("style")):
                 if _atr(estilo, "type") == "table" and _atr(estilo, "styleId"):
                     ctx.estilos_tabela[_atr(estilo, "styleId")] = estilo
@@ -1357,7 +1388,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             meta = _core(ler_parte(alvo_core), profundidade)
 
     doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
-                               rodapes=rodapes, **meta))
+                               rodapes=rodapes, estilos=ctx.estilos, **meta))
     return doc, coletor.avisos()
 
 

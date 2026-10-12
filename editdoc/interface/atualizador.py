@@ -23,13 +23,15 @@ from editdoc.interface.comandos import (ALINHAMENTOS, EDICAO_DE_FAIXA, ESPACAMEN
 
 class AtualizadorDeEstado(QObject):
     def __init__(self, editor: QTextEdit, comandos: Comandos,
-                 familia: QFontComboBox, tamanho: QComboBox) -> None:
+                 familia: QFontComboBox, tamanho: QComboBox, ao_atualizar=None) -> None:
         super().__init__(editor)
         self._editor = editor
         self._comandos = comandos
         self._familia = familia
         self._tamanho = tamanho
         self._agendado = False
+        #: Chamado no fim de cada atualizacao (M6: galeria, paineis, aba Layout).
+        self._ao_atualizar = ao_atualizar
 
         editor.cursorPositionChanged.connect(self._agendar)
         editor.currentCharFormatChanged.connect(self._agendar)
@@ -91,6 +93,8 @@ class AtualizadorDeEstado(QObject):
             texto = f"{estado.tamanho:g}"
             if self._tamanho.currentText() != texto:
                 self._tamanho.setCurrentText(texto)
+        if self._ao_atualizar is not None:
+            self._ao_atualizar()
 
 
 def _alinhamento_de(nome: str) -> Qt.AlignmentFlag:

@@ -33,6 +33,7 @@ from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument
 from editdoc.interface.cabecalhos import ConjuntoDeFaixas
 from editdoc.modelo.pagina import Pagina, pagina_efetiva
 from editdoc.ponte_qt import campos
+from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt.imagens import DocumentoQt
 
 DPI_LAYOUT = 1440
@@ -85,12 +86,23 @@ class LayoutPaginado:
         self.pagina_arquivo = pagina
         self.pagina = pagina
         self.faixas = ConjuntoDeFaixas(padrao, pagina.corpo_largura_tw())
+        self.faixas.doc_estilos = self.doc
+        pq_estilos.definir_catalogo_base(self.doc, None)
         self.contexto_campos = campos.ContextoDeCampos()
         self._manipulador_campos = campos.registrar(self.doc, self.contexto_campos)
         self._chave_campos: tuple | None = None
         self._aplicar()
         # Ajustar fonte e margem marca o documento como alterado. Um documento novo nasce limpo.
         self.doc.setModified(False)
+
+    def definir_fonte_padrao(self, familia: str, pontos: float) -> None:
+        """Fonte do texto sem formatacao (o docDefaults do arquivo). Nao suja o documento."""
+        fonte = QFont(familia)
+        fonte.setPointSizeF(float(pontos))
+        modificado = self.doc.isModified()
+        self.doc.setDefaultFont(fonte)
+        self.doc.setModified(modificado)
+        self.faixas.definir_fonte(fonte)
 
     def _aplicar(self) -> None:
         self.doc.setPageSize(QSizeF(self.pagina.corpo_largura_tw(),

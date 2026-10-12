@@ -348,3 +348,71 @@ def documento_com_cabecalhos(paginas_de_texto: int = 110) -> Documento:
                                        Run("4", campo="NUMPAGES")], alinhamento="centro")],
             "par": [Paragrafo(runs=[Run("1", campo="PAGE", negrito=True)], alinhamento="esquerda")],
         })
+
+
+# -- estilos (M6) -------------------------------------------------------------------
+
+_NS_EXTRA = ('xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+             'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+             'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+             'mc:Ignorable="w14 w15"')
+
+#: styles.xml no formato que o Word grava: docDefaults com fonte de tema e w14, latentStyles,
+#: estilos internos com id em portugues, estilo de caractere ligado, estilo de tabela,
+#: estilo com lista (numPr), estilo que o editor nao usa e um filho que o validador recusa.
+ESTILOS_DO_WORD = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{_NS_W}" xmlns:r="{_NS_R}" {_NS_EXTRA}>
+<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:kern w:val="2"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR" w:eastAsia="en-US" w:bidi="ar-SA"/><w14:ligatures w14:val="standardContextual"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="278" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:latentStyles w:defLockedState="0" w:defUIPriority="99" w:defSemiHidden="0" w:defUnhideWhenUsed="0" w:defQFormat="0" w:count="376"><w:lsdException w:name="Normal" w:uiPriority="0" w:qFormat="1"/><w:lsdException w:name="heading 1" w:uiPriority="9" w:qFormat="1"/><w:lsdException w:name="heading 2" w:semiHidden="1" w:uiPriority="9" w:unhideWhenUsed="1" w:qFormat="1"/><w:lsdException w:name="Title" w:uiPriority="10" w:qFormat="1"/></w:latentStyles>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+<w:style w:type="paragraph" w:styleId="Ttulo1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:link w:val="Ttulo1Char"/><w:uiPriority w:val="9"/><w:qFormat/><w:rsid w:val="00A1B2C3"/><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="360" w:after="80"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:rFonts w:asciiTheme="majorHAnsi" w:eastAsiaTheme="majorEastAsia" w:hAnsiTheme="majorHAnsi" w:cstheme="majorBidi"/><w:color w:val="0F4761" w:themeColor="accent1" w:themeShade="BF"/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Ttulo2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:color w:val="0F4761"/><w:sz w:val="32"/></w:rPr></w:style>
+<w:style w:type="character" w:default="1" w:styleId="Fontepargpadro"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style>
+<w:style w:type="table" w:default="1" w:styleId="Tabelanormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
+<w:style w:type="numbering" w:default="1" w:styleId="Semlista"><w:name w:val="No List"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/></w:style>
+<w:style w:type="character" w:customStyle="1" w:styleId="Ttulo1Char"><w:name w:val="Título 1 Char"/><w:basedOn w:val="Fontepargpadro"/><w:link w:val="Ttulo1"/><w:uiPriority w:val="9"/><w:rPr><w:rFonts w:asciiTheme="majorHAnsi" w:hAnsiTheme="majorHAnsi"/><w:color w:val="0F4761" w:themeColor="accent1" w:themeShade="BF"/><w:sz w:val="40"/></w:rPr></w:style>
+<w:style w:type="character" w:customStyle="1" w:styleId="Destaque"><w:name w:val="Destaque"/><w:basedOn w:val="Fontepargpadro"/><w:uiPriority w:val="1"/><w:qFormat/><w:rPr><w:b/><w:color w:val="C00000"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:customStyle="1" w:styleId="MeuEstiloRaro"><w:name w:val="Meu Estilo Raro"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="E7E6E6"/><w:spacing w:after="0"/></w:pPr><w:rPr><w:caps/><w:spacing w:val="20"/><w14:shadow w14:blurRad="38100" w14:dist="19050" w14:dir="2700000" w14:sx="100000" w14:sy="100000" w14:kx="0" w14:ky="0" w14:algn="tl"><w14:srgbClr w14:val="000000"/></w14:shadow></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Commarcadores"><w:name w:val="List Bullet"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:numPr><w:numId w:val="7"/></w:numPr><w:contextualSpacing/></w:pPr></w:style>
+<w:style w:type="paragraph" w:customStyle="1" w:styleId="ComRevisao"><w:name w:val="Com Revisao"/><w:basedOn w:val="Normal"/><w:rPr><w:i/><w:rPrChange w:id="1" w:author="Fulano" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style>
+<w:style w:type="table" w:styleId="TabeladeGrade1Clara"><w:name w:val="Grid Table 1 Light"/><w:basedOn w:val="Tabelanormal"/><w:uiPriority w:val="46"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="999999"/></w:tblBorders></w:tblPr><w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>
+</w:styles>"""
+
+#: Tema com fontes que o EditDoc nao usa por padrao: prova que a fonte de tema e' resolvida.
+TEMA_DO_WORD = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office">'
+                '<a:themeElements><a:fontScheme name="Office">'
+                '<a:majorFont><a:latin typeface="Cambria"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>'
+                '<a:minorFont><a:latin typeface="Garamond"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>'
+                '</a:fontScheme></a:themeElements></a:theme>')
+
+NUMERACAO_DO_WORD = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                     f'<w:numbering xmlns:w="{_NS_W}"><w:abstractNum w:abstractNumId="3">'
+                     f'<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
+                     f'<w:lvlText w:val="•"/></w:lvl></w:abstractNum>'
+                     f'<w:num w:numId="7"><w:abstractNumId w:val="3"/></w:num></w:numbering>')
+
+CORPO_COM_ESTILOS = (
+    '<w:p><w:pPr><w:pStyle w:val="Ttulo1"/></w:pPr><w:r><w:t>Introdução</w:t></w:r></w:p>'
+    '<w:p><w:r><w:t xml:space="preserve">Texto com </w:t></w:r>'
+    '<w:r><w:rPr><w:rStyle w:val="Destaque"/></w:rPr><w:t>destaque</w:t></w:r>'
+    '<w:r><w:t xml:space="preserve"> no meio.</w:t></w:r></w:p>'
+    '<w:p><w:pPr><w:pStyle w:val="Ttulo2"/></w:pPr><w:r><w:t xml:space="preserve">Detalhe </w:t></w:r>'
+    '<w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>vermelho</w:t></w:r></w:p>'
+    '<w:p><w:pPr><w:pStyle w:val="Commarcadores"/></w:pPr><w:r><w:t>item da lista</w:t></w:r></w:p>'
+    '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Anexo</w:t></w:r></w:p>'
+    '<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>fim</w:t></w:r></w:p>')
+
+RT_TEMA = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
+CT_TEMA = "application/vnd.openxmlformats-officedocument.theme+xml"
+
+
+def docx_com_estilos_do_word(corpo_xml: str = CORPO_COM_ESTILOS,
+                             estilos_xml: str = ESTILOS_DO_WORD) -> bytes:
+    """Um .docx com o styles.xml, o tema e a numeracao no formato do Word."""
+    return docx_com_xml(corpo_xml, partes_extra={
+        "word/styles.xml": estilos_xml.encode("utf-8"),
+        "word/numbering.xml": NUMERACAO_DO_WORD.encode("utf-8"),
+        "word/theme/theme1.xml": TEMA_DO_WORD.encode("utf-8"),
+    }, relacoes_extra=[("rId90", RT_TEMA, "theme/theme1.xml")],
+        tipos_extra=[("/word/theme/theme1.xml", CT_TEMA)])

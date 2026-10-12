@@ -4,11 +4,12 @@ Editor de documentos no formato `.docx`, com a aparência de um processador de
 texto de escritório: páginas A4, faixa de opções, estilos, tabelas, imagens,
 cabeçalho e rodapé.
 
-> **Versão 0.0.8: cabeçalho, rodapé e número de página.** Visão em páginas (A4, Carta e
-> Ofício, régua, quebras, zoom) com tabelas, imagens na linha do texto e, agora, cabeçalho e
-> rodapé editados no lugar (duplo clique na margem), com primeira página diferente, páginas
-> pares e ímpares diferentes e os campos de número de página e total de páginas ("Página X
-> de Y"), tudo aberto e salvo em `.docx`. Estilos e a faixa final chegam no M6. A primeira
+> **Versão 0.0.9: estilos e faixa final.** Visão em páginas (A4, Carta e Ofício, régua,
+> quebras, zoom) com tabelas, imagens, cabeçalho, rodapé e número de página e, agora,
+> estilos: galeria na Página Inicial (Normal, Título, Título 1 a 3, Citação, Ênfase, Forte e
+> outros), painel de estilos, Modificar e Criar estilo, Ctrl+Alt+1/2/3, e o `styles.xml` do
+> Word aberto e salvo sem perder estilo. Abas Inserir, Layout e Exibir (zoom por página,
+> várias páginas, marcas de formatação, painel de navegação pelos títulos). A primeira
 > versão completa é a 0.1.0. O plano está em
 > [docs/ARQUITETURA.md](docs/ARQUITETURA.md), e os resultados dos spikes e do gate em
 > [docs/SPIKES.md](docs/SPIKES.md).
@@ -20,7 +21,6 @@ O EditDoc não é afiliado à Microsoft. Word é marca registrada da Microsoft.
 - Abrir e salvar `.docx` com fidelidade ao texto, à formatação, às listas, às
   tabelas e às imagens.
 - Cabeçalho, rodapé e número de página.
-- Estilos (Normal, Título 1 a 3...) e faixa de opções.
 - Exportar PDF, imprimir e pré-visualizar.
 
 Fica fora da 0.1.0: revisão com controle de alterações, comentários, notas de

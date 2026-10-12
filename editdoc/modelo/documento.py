@@ -76,6 +76,9 @@ class Run:
     # Campo (M5): instrucao normalizada ("PAGE", "NUMPAGES \* roman"...). O texto e' o
     # ultimo resultado guardado. Campo nunca funde com o vizinho.
     campo: str | None = None
+    # Estilo de caractere (M6, w:rStyle): o id no catalogo. None = sem estilo de caractere.
+    # Os campos acima sao a formatacao DIRETA: o que o texto tem alem do estilo.
+    estilo: str | None = None
 
 
 def run_de_imagem(imagem: Imagem) -> Run:
@@ -98,6 +101,12 @@ class Paragrafo:
     # Quebra de pagina antes deste paragrafo (Ctrl+Enter). No .docx ela e' um
     # w:br type="page" no inicio do paragrafo. Ausente = sem quebra.
     quebra_antes: bool = False
+    # M6: estilo de paragrafo (w:pStyle, o id no catalogo). None = o estilo padrao (Normal).
+    # Os campos de formatacao sao a formatacao DIRETA, o que difere do estilo.
+    estilo: str | None = None
+    recuo_direito_tw: int | None = None
+    # Nivel de estrutura direto (w:outlineLvl): 0 = como Titulo 1; 9 = corpo de texto.
+    nivel: int | None = None
 
 
 @dataclass
@@ -175,6 +184,10 @@ class Documento:
     # Cabecalho e rodape (M5): tipo ("padrao", "primeira", "par") -> blocos.
     cabecalhos: dict[str, list[Bloco]] = field(default_factory=dict)
     rodapes: dict[str, list[Bloco]] = field(default_factory=dict)
+    # Estilos (M6): o catalogo do documento (modelo/estilos.py). None = o conjunto padrao.
+    # Fica fora da comparacao: dois documentos iguais no texto e na formatacao sao iguais,
+    # mesmo que um venha com o styles.xml do Word e o outro com o do EditDoc.
+    estilos: object = field(default=None, compare=False, repr=False)
 
 
 #: Tipos de cabecalho e rodape, na ordem do .docx (default, first, even).

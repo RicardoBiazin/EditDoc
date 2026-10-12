@@ -106,4 +106,13 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | altura do cabecalho | Ler `documentSize()` no `contentsChange` da' a altura de ANTES da tecla (o layout e' refeito depois do sinal). O conjunto de cabecalhos escuta `contentsChanged`, que vem depois do layout; senao o corpo desce uma tecla atrasado. |
 | `PainelDocumento.document()` | Na edicao do cabecalho devolve o documento do cabecalho. Gravar, carregar e "alterado" usam `documento_corpo()`. Um `document()` novo na janela grava o cabecalho como corpo. |
 | teste de campo no corpo | O corpo vem dos tiles: um segundo `grab()` nao chama `drawObject`. Para espiar o valor do campo, `_limpar_cache()` antes. |
+| `QAbstractUndoItem` | O PySide 6.11 nao exporta. Para o catalogo de estilos entrar no desfazer, ele fica em JSON no formato do quadro raiz (`rootFrame().setFrameFormat`), que o Qt desfaz junto com o bloco de edicao aberto. `clear()`/`setPlainText` apagam esse formato: volta o catalogo-base. |
+| desfazer e cursor | `doc.undo(cursor)` move o cursor para o ponto desfeito e tira a selecao. Teste que aplica um comando depois de um desfazer seleciona de novo. |
+| estilo no `.docx` | `w:pStyle`/`w:rStyle` para estilo inexistente: o Word cai no Normal sem avisar. O escritor so' grava id do catalogo e `ordem.validar_estilos` confere. |
+| `styles.xml` do Word | Tem `w14:ligatures` dentro do `rPr` do `docDefaults` e `w:rsid` nos estilos. O validador de ordem aceita filho de outro namespace so' no `styles.xml`; filho `w:` desconhecido (`rPrChange`) e' tirado com aviso FORMATACAO. |
+| cor de estilo | `w:color` com `themeColor`: o Word usa o tema, nao o `val`. Ao trocar a cor, apagar o elemento inteiro. |
+| `numPr` em estilo | Aponta para o `numbering.xml` de origem, que o EditDoc regrava: tirar do estilo e passar a lista ao paragrafo na leitura. |
+| `QFontComboBox` no offscreen | Sem a fonte instalada, `setCurrentFont` mostra outra. O dialogo de estilo so' troca a fonte se o usuario mexer no combo. |
+| `isHidden()` antes do `show()` | Um filho de janela que ainda nao apareceu responde `isHidden() == True`. Estado de "mostrar regua" fica num atributo, nao no widget. |
+| faixa e larguras | `teste_faixa` exige: tudo expandido em 1920, so' Edicao recolhida em 1400, Fonte expandida em 820. A galeria tem preferencia sobre Edicao e encolhe antes dos outros grupos (`recolher_com_galeria`); mudar largura de grupo pede medir de novo com Segoe UI 9. |
 | campo no `.docx` | `instrText` com espaco precisa de `xml:space="preserve"` (o validador confere, como o `w:t`), e begin/end tem de fechar no mesmo paragrafo: senao o Word engole o texto seguinte como instrucao. |

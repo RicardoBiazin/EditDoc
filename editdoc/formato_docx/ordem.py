@@ -53,6 +53,8 @@ ORDEM_BORDAS = ["top", "left", "start", "bottom", "right", "end", "insideH", "in
                 "tl2br", "tr2bl"]
 _ORDENS = {"pPr": ORDEM_PPR, "rPr": ORDEM_RPR, "tblPr": ORDEM_TBLPR, "tcPr": ORDEM_TCPR,
            "tblBorders": ORDEM_BORDAS, "tcBorders": ORDEM_BORDAS}
+#: Publico para o saneamento do styles.xml (formato_docx/estilos.py).
+ORDENS = _ORDENS
 
 XML_PARTES = ("word/document.xml", "word/styles.xml", "word/numbering.xml",
               "word/settings.xml", "docProps/core.xml", "docProps/app.xml")
@@ -82,14 +84,21 @@ def _nome(el) -> str:
     return etree.QName(el).localname
 
 
-def validar_ordem(raiz) -> list[str]:
-    """Filhos de pPr, rPr, tblPr, tcPr e das bordas fora da ordem do esquema, ou desconhecidos."""
+def validar_ordem(raiz, estrangeiros: bool = False) -> list[str]:
+    """Filhos de pPr, rPr, tblPr, tcPr e das bordas fora da ordem do esquema, ou desconhecidos.
+
+    estrangeiros: aceita filho de outro namespace (w14:ligatures...), que o Word grava no
+    styles.xml e declara em mc:Ignorable. So' vale para o styles.xml, que volta do arquivo
+    de origem; no document.xml o EditDoc nunca grava esses elementos.
+    """
     problemas: list[str] = []
     for elemento in raiz.iter(*(q(nome) for nome in _ORDENS)):
         ordem = _ORDENS[_nome(elemento)]
         pai = _nome(elemento)
         indices = []
         for filho in elemento:
+            if estrangeiros and isinstance(filho.tag, str) and not filho.tag.startswith("{%s}" % W):
+                continue
             if filho.tag != q(_nome(filho)) or _nome(filho) not in ordem:
                 problemas.append(f"{pai}: filho desconhecido '{_nome(filho)}'")
                 continue
@@ -290,7 +299,7 @@ def validar_partes_xml(partes: dict[str, bytes]) -> list[str]:
     for nome in nomes:
         if nome in partes:
             raiz = etree.fromstring(partes[nome])
-            problemas += [f"{nome}: {p}" for p in validar_ordem(raiz)]
+            problemas += [f"{nome}: {p}" for p in validar_ordem(raiz, nome == "word/styles.xml")]
             problemas += [f"{nome}: {p}" for p in validar_xml_space(raiz)]
             if nome == "word/document.xml" or eh_faixa(nome):
                 problemas += [f"{nome}: {p}" for p in validar_estrutura(raiz)]
@@ -324,6 +333,31 @@ def validar_secao(raiz) -> list[str]:
     return problemas
 
 
+def validar_estilos(partes: dict[str, bytes]) -> list[str]:
+    """Todo w:pStyle e w:rStyle (M6) aponta para um estilo do styles.xml, do tipo certo.
+
+    O Word troca a referencia quebrada pelo Normal sem avisar: o paragrafo perde o estilo
+    calado. O escritor so' grava estilo que esta' no catalogo; isto prova.
+    """
+    if "word/styles.xml" not in partes:
+        return []
+    estilos = etree.fromstring(partes["word/styles.xml"])
+    tipos = {s.get(q("styleId")): s.get(q("type")) or "paragraph"
+             for s in estilos.iter(q("style"))}
+    problemas: list[str] = []
+    nomes = ["word/document.xml"] + sorted(n for n in partes if eh_faixa(n))
+    for nome in nomes:
+        if nome not in partes:
+            continue
+        raiz = etree.fromstring(partes[nome])
+        for tag, tipo in (("pStyle", "paragraph"), ("rStyle", "character")):
+            for el in raiz.iter(q(tag)):
+                sid = el.get(q("val"))
+                if tipos.get(sid) != tipo:
+                    problemas.append(f"{nome}: {tag} '{sid}' sem estilo de {tipo} no styles.xml")
+    return problemas
+
+
 def validar(partes: dict[str, bytes]) -> list[str]:
     """Tudo: pacote e partes. Lista vazia quando o arquivo esta' de acordo."""
-    return validar_pacote(partes) + validar_partes_xml(partes)
+    return validar_pacote(partes) + validar_partes_xml(partes) + validar_estilos(partes)

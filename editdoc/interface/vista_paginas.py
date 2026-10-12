@@ -18,6 +18,12 @@ Cabecalho e rodape (M5) nao entram no cache: sao pintados por cima dos tiles, em
 pagina visivel (`desenhar_faixas`), porque o numero da pagina muda de folha para
 folha. Fora da edicao saem esmaecidos (cinza claro), como no Word; na edicao, o
 corpo e' que esmaece, e uma linha tracejada com rotulo marca a area.
+
+Exibir (M6): marcas de formatacao (pilcrow, ponto no espaco, seta na tabulacao) sao
+pintadas por cima do texto, na mesma funcao da folha, e entram no cache; ligar ou
+desligar limpa o cache. Nao mudam o layout: o QTextOption do Qt com as marcas trocaria
+a largura do texto e refaria a paginacao. "Varias paginas" poe as folhas lado a lado
+(`Mapa.colunas`); os outros modos voltam a uma coluna.
 """
 
 from __future__ import annotations
@@ -32,11 +38,12 @@ from PySide6.QtGui import (QAbstractTextDocumentLayout, QColor, QPainter, QPalet
 from PySide6.QtWidgets import QAbstractScrollArea
 
 from editdoc.interface.layout_paginado import LayoutPaginado
+from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
-from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX, Mapa,
-                                   alinhar_ao_dispositivo, limitar_zoom, passo_de_zoom,
-                                   teto_de_zoom)
+from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
+                                   VAO_ENTRE_FOLHAS_PX, Mapa, alinhar_ao_dispositivo,
+                                   limitar_zoom, passo_de_zoom, teto_de_zoom)
 
 TILE_PX = 256
 LIMITE_DO_CACHE_BYTES = 64 * 1024 * 1024
@@ -56,6 +63,93 @@ COR_ROTULO_FAIXA = QColor(0x2B, 0x57, 0x9A)
 #: Lado da alca de imagem desenhada, em px logicos.
 ALCA_TELA_PX = 7.0
 _QUEBRA_ANTES = QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore
+#: Marcas de formatacao: a cor do Word.
+COR_MARCAS = QColor(0x2B, 0x57, 0x9A)
+#: Caracteres que ganham marca: espaco, espaco inseparavel, tabulacao e quebra de linha.
+_MARCA_DO_CARACTERE = {" ": "·", "\u00a0": "°", "\t": "→", "\u2028": "↵"}
+
+
+def desenhar_marcas(painter, doc, recorte: QRectF | None) -> None:
+    """Pilcrow no fim de cada paragrafo, ponto em cada espaco e seta em cada tabulacao.
+
+    Coordenadas do documento (twips), no painter ja' transformado. `recorte`: so' os
+    blocos que cruzam esse retangulo (None = todos).
+    """
+    dl = doc.documentLayout()
+    if recorte is not None:
+        bloco = doc.findBlock(dl.hitTest(QPointF(0, recorte.top()), Qt.FuzzyHit))
+        bloco = bloco.previous() if bloco.previous().isValid() else bloco
+    else:
+        bloco = doc.firstBlock()
+    painter.save()
+    painter.setPen(COR_MARCAS)
+    fontes: dict[int, object] = {}
+    while bloco.isValid():
+        r = dl.blockBoundingRect(bloco)
+        if recorte is not None and r.top() > recorte.bottom():
+            # Dentro de tabela a ordem dos blocos nao e' a vertical: segue ate' o fim da tabela.
+            if QTextCursor(bloco).currentTable() is None:
+                break
+        if recorte is None or r.intersects(recorte) or r.isEmpty():
+            _marcas_do_bloco(painter, bloco, r, fontes)
+        bloco = bloco.next()
+    painter.restore()
+
+
+def _fonte_da_marca(fontes: dict, cf, padrao) -> object:
+    from PySide6.QtGui import QFont
+    pontos = cf.fontPointSize() or padrao.pointSizeF() or 11.0
+    chave = round(pontos * 2)
+    fonte = fontes.get(chave)
+    if fonte is None:
+        fonte = QFont(padrao)
+        # O layout e' em twips (1440 dpi): o corpo da letra em "pixels" e' pontos x 20.
+        fonte.setPixelSize(max(1, round(pontos * 20)))
+        fonte.setBold(False)
+        fonte.setItalic(False)
+        fontes[chave] = fonte
+    return fonte
+
+
+def _marcas_do_bloco(painter, bloco, r: QRectF, fontes: dict) -> None:
+    lay = bloco.layout()
+    if lay is None or lay.lineCount() == 0:
+        return
+    padrao = bloco.document().defaultFont()
+    texto = bloco.text()
+    for i, caractere in enumerate(texto):
+        marca = _MARCA_DO_CARACTERE.get(caractere)
+        if marca is None:
+            continue
+        linha = lay.lineForTextPosition(i)
+        if not linha.isValid():
+            continue
+        x0, _ = linha.cursorToX(i)
+        x1, _ = linha.cursorToX(i + 1)
+        fonte = _fonte_da_marca(fontes, _formato_em(bloco, i), padrao)
+        painter.setFont(fonte)
+        meio = (x0 + x1) / 2.0
+        larg = painter.fontMetrics().horizontalAdvance(marca)
+        base = r.top() + linha.y() + linha.ascent()
+        x = meio - larg / 2.0 if caractere != "\t" else min(x0, x1) + 20
+        painter.drawText(QPointF(x, base), marca)
+    linha = lay.lineAt(lay.lineCount() - 1)
+    x, _ = linha.cursorToX(len(texto))
+    cf = bloco.charFormat() if not texto else _formato_em(bloco, len(texto) - 1)
+    painter.setFont(_fonte_da_marca(fontes, cf, padrao))
+    painter.drawText(QPointF(r.left() + x + 20, r.top() + linha.y() + linha.ascent()), "¶")
+
+
+def _formato_em(bloco, i: int):
+    it = bloco.begin()
+    while not it.atEnd():
+        frag = it.fragment()
+        if frag.isValid():
+            ini = frag.position() - bloco.position()
+            if ini <= i < ini + frag.length():
+                return frag.charFormat()
+        it += 1
+    return bloco.charFormat()
 
 PALETA_TEXTO = QPalette()
 PALETA_TEXTO.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
@@ -64,7 +158,7 @@ PALETA_TEXTO.setColor(QPalette.ColorRole.Highlight, COR_SELECAO)
 
 
 def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
-                   corpo_recorte=None, selecao=None) -> None:
+                   corpo_recorte=None, selecao=None, marcas: bool = False) -> None:
     """Pinta o corpo da pagina n. Funcao unica de pintura de folha.
 
     transf leva twips da folha (origem no canto superior esquerdo da folha) para o
@@ -100,6 +194,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         sel.format = fmt
         ctx.selections = [sel]
     layout.doc.documentLayout().draw(painter, ctx)
+    if marcas:
+        desenhar_marcas(painter, layout.doc, ctx.clip)
     painter.restore()
 
 
@@ -126,7 +222,8 @@ def rotulo_da_faixa(onde: str, indice: int, pagina: Pagina) -> str:
 
 
 def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform, total: int,
-                    opacidade: float = 1.0, editada=None, selecao=None) -> None:
+                    opacidade: float = 1.0, editada=None, selecao=None,
+                    marcas: bool = False) -> None:
     """Pinta o cabecalho e o rodape da pagina n. Mesma funcao para a tela e para o PDF.
 
     transf leva twips da folha para o painter (como em desenhar_folha). `editada` e' a
@@ -154,6 +251,8 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             sel.format = fmt
             ctx.selections = [sel]
         faixa.doc.documentLayout().draw(painter, ctx)
+        if marcas:
+            desenhar_marcas(painter, faixa.doc, None)
         painter.restore()
 
 
@@ -169,6 +268,9 @@ class VistaPaginas(QAbstractScrollArea):
         self._altura_doc_anterior: float | None = None
         self._pendencias: list[tuple[int, int]] = []
         self._caret_ligado = True
+        #: Exibir (M6): marcas de formatacao e folhas lado a lado.
+        self._marcas = False
+        self._colunas = 1
         self._timer_caret = QTimer(self)
         self._timer_caret.timeout.connect(self._alternar_caret)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -211,6 +313,62 @@ class VistaPaginas(QAbstractScrollArea):
     def _paginas(self) -> int:
         return self.layout_pag.numero_paginas()
 
+    # ----- Exibir (M6) ----------------------------------------------------
+    def marcas_visiveis(self) -> bool:
+        return self._marcas
+
+    def definir_marcas(self, ligado: bool) -> None:
+        """Mostra ou esconde as marcas de formatacao. O cache de tiles e' refeito."""
+        if bool(ligado) == self._marcas:
+            return
+        self._marcas = bool(ligado)
+        self._limpar_cache()
+        self.viewport().update()
+
+    def colunas(self) -> int:
+        return self._colunas
+
+    def definir_colunas(self, colunas: int) -> None:
+        colunas = max(1, int(colunas))
+        if colunas == self._colunas:
+            return
+        self._colunas = colunas
+        self._limpar_cache()
+        self._atualizar_geometria()
+        self.viewport().update()
+
+    def _zoom_que_cabe(self, colunas: int, altura: bool) -> float:
+        """Zoom em que `colunas` folhas cabem na largura (e, se `altura`, uma na altura)."""
+        vp = self.viewport()
+        cfg = self.layout_pag.pagina
+        largura_px = cfg.largura_tw / TWIPS_POR_PX
+        altura_px = cfg.altura_tw / TWIPS_POR_PX
+        util = max(1.0, vp.width() - 2 * MARGEM_DO_PAINEL_PX)
+        zoom = util / (colunas * largura_px + (colunas - 1) * VAO_ENTRE_FOLHAS_PX)
+        if altura:
+            zoom = min(zoom, max(1.0, float(vp.height())) / (altura_px + 2 * VAO_ENTRE_FOLHAS_PX))
+        return zoom
+
+    def zoom_modo(self, modo: str) -> None:
+        """Exibir > Zoom: "100", "pagina" (uma pagina inteira), "varias" (duas lado a lado)
+        ou "largura" (largura da pagina)."""
+        pagina = self.pagina_atual() if hasattr(self, "pagina_atual") else 0
+        if modo == "varias":
+            self.definir_colunas(2)
+            self.definir_zoom(self._zoom_que_cabe(2, altura=True))
+        else:
+            self.definir_colunas(1)
+            if modo == "100":
+                self.definir_zoom(1.0)
+            elif modo == "pagina":
+                self.definir_zoom(self._zoom_que_cabe(1, altura=True))
+            else:
+                self.definir_zoom(self._zoom_que_cabe(1, altura=False))
+        self._atualizar_geometria()
+        if modo in ("pagina", "varias"):
+            self.rolar_para_pagina(pagina, folga=0)
+        self.viewport().update()
+
     def mapa(self) -> Mapa:
         """Mapeamento atual entre documento e viewport (ver modelo/folhas.py)."""
         return self._mapa()
@@ -220,12 +378,13 @@ class VistaPaginas(QAbstractScrollArea):
         return Mapa(pagina=self.layout_pag.pagina, zoom=self._zoom,
                     largura_viewport=float(vp.width()), altura_viewport=float(vp.height()),
                     origem_x=float(self.horizontalScrollBar().value()),
-                    origem_y=float(self.verticalScrollBar().value()))
+                    origem_y=float(self.verticalScrollBar().value()),
+                    colunas=self._colunas)
 
     def _atualizar_geometria(self) -> None:
         vp = self.viewport()
         m = self.mapa()
-        largura = max(m.largura_folha + 2 * MARGEM_DO_PAINEL_PX, float(vp.width()))
+        largura = max(m.largura_conteudo + 2 * MARGEM_DO_PAINEL_PX, float(vp.width()))
         altura = m.altura_total(self._paginas())
         hb = self.horizontalScrollBar()
         vb = self.verticalScrollBar()
@@ -317,7 +476,7 @@ class VistaPaginas(QAbstractScrollArea):
         t.scale(e, e)
         desenhar_folha(pintor, self.layout_pag, n, t,
                        corpo_recorte=(i * tw - cfg.margem_esq_tw, j * tw - cfg.margem_sup_tw,
-                                      tw, tw))
+                                      tw, tw), marcas=self._marcas)
         pintor.end()
         dy0 = n * self.layout_pag.hb + (j * tw - cfg.margem_sup_tw)
         nbytes = lado * lado * 4
@@ -405,9 +564,10 @@ class VistaPaginas(QAbstractScrollArea):
             hb.setValue(hb.value() + math.ceil(br[0] - vp.width()) + 16)
         self.viewport().update()
 
-    def rolar_para_pagina(self, n: int) -> None:
+    def rolar_para_pagina(self, n: int, folga: float = 8) -> None:
         m = self.mapa()
-        self.verticalScrollBar().setValue(int(m.vao + n * m.passo_vertical - 8))
+        linha = max(0, int(n)) // max(1, m.colunas)
+        self.verticalScrollBar().setValue(int(m.vao + linha * m.passo_vertical - folga))
 
     # ----- pintura --------------------------------------------------------
     def paintEvent(self, ev) -> None:
@@ -422,8 +582,7 @@ class VistaPaginas(QAbstractScrollArea):
         dpr = vp.devicePixelRatioF()
         m = self.mapa()
         n_total = self._paginas()
-        i0 = max(0, math.floor((m.origem_y - m.vao) / m.passo_vertical))
-        i1 = min(n_total - 1, math.floor((m.origem_y + vp.height() - m.vao) / m.passo_vertical) + 1)
+        i0, i1 = m.paginas_visiveis(n_total)
         selecao = self._selecao_atual()
         com_selecao = selecao is not None and selecao.hasSelection()
         visivel = QRectF(0, 0, vp.width(), vp.height())
@@ -441,7 +600,7 @@ class VistaPaginas(QAbstractScrollArea):
             p.setClipRect(folha)
             if com_selecao:
                 t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
-                desenhar_folha(p, self.layout_pag, n, t, selecao=selecao)
+                desenhar_folha(p, self.layout_pag, n, t, selecao=selecao, marcas=self._marcas)
             else:
                 nx = math.ceil(m.largura_folha / TILE_PX)
                 ny = math.ceil(m.altura_folha / TILE_PX)
@@ -464,14 +623,16 @@ class VistaPaginas(QAbstractScrollArea):
         editada = self._faixa_editada()
         t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
         if editada is None:
-            desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA)
+            desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA,
+                            marcas=self._marcas)
             return
         faixa, cursor = editada
         efetiva = self.layout_pag.pagina
         corpo = QRectF(x0 + efetiva.margem_esq_tw * m.escala, y0 + efetiva.margem_sup_tw * m.escala,
                        efetiva.corpo_largura_tw() * m.escala, efetiva.corpo_altura_tw() * m.escala)
         p.fillRect(corpo, COR_VEU)
-        desenhar_faixas(p, self.layout_pag, n, t, n_total, 1.0, faixa, cursor)
+        desenhar_faixas(p, self.layout_pag, n, t, n_total, 1.0, faixa, cursor,
+                        marcas=self._marcas)
         # Linha tracejada e rotulo no limite de cada area, em todas as paginas.
         p.save()
         fonte = p.font()

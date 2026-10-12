@@ -132,13 +132,40 @@ redor (o HTML do Qt não carrega o objeto).
 
 ## Estilos e formatação
 
-- O estilo nomeado fica numa propriedade de usuário do bloco ou do fragmento.
+Implementados no M6 (0.0.9).
+
+- O estilo nomeado fica numa propriedade de usuário do bloco (`PROP_ESTILO`) ou do
+  fragmento (`PROP_ESTILO_CAR`), em `ponte_qt/estilos.py`. O nível de estrutura efetivo
+  (Título 1 = 0) fica em `PROP_NIVEL`: é o que o painel de navegação lê.
 - A formatação efetiva é gravada nos formatos do Qt. No salvamento, o que
-  difere do estilo vira formatação direta.
+  difere do estilo vira formatação direta (`Paragrafo` e `Run` guardam só a direta).
 - "Atualizar estilo" troca, em um único passo de desfazer, o que ainda era igual
-  ao estilo antigo.
+  ao estilo antigo. Modificar um estilo recompõe os parágrafos que o usam (e os que herdam
+  dele) do mesmo jeito.
 - O Word grava nomes canônicos em inglês (`heading 1`); o mapeamento usa o nome,
   não o id, porque o id em pt-BR vem sem acento.
+- Modelo: `modelo/estilos.py` (catálogo, herança `basedOn`, conjunto padrão), puro Python.
+  `Documento.estilos` leva o catálogo, fora da comparação de documentos.
+- Arquivo: `formato_docx/estilos.py`. O catálogo guarda o `styles.xml` original; ao gravar,
+  o estilo não alterado volta byte a byte, e o alterado só tem reescritos os atributos que
+  mudaram. O `numPr` sai dos estilos (o `numbering.xml` de origem não volta): a lista do
+  estilo passa ao parágrafo na leitura. O tema volta igual, para as fontes de tema.
+- Desfazer: o catálogo vigente fica em JSON no formato do quadro raiz do documento. Trocar
+  esse formato entra no desfazer do Qt, no mesmo passo do bloco de edição aberto (medido no
+  Qt 6.11); o PySide 6.11 não exporta `QAbstractUndoItem`. O XML original fica no
+  catálogo-base, num atributo do objeto do documento. Cabeçalho e rodapé usam o catálogo
+  do corpo.
+- `docDefaults`: a fonte e o tamanho viram a fonte padrão do `QTextDocument`; a resolução
+  dos estilos não inclui o `docDefaults`.
+
+## Faixa e Exibir
+
+Implementadas no M6 (0.0.9). Cada aba é uma `LinhaDeGrupos` com a sua ordem de
+recolhimento; Fonte e Parágrafo ficam em duas linhas. A galeria de estilos tem preferência
+sobre o grupo Edição (`planejamento.recolher_com_galeria`). As marcas de formatação são
+pintadas por `desenhar_marcas`, na função da folha, e entram no cache de tiles: o
+`QTextOption` do Qt com marcas mudaria a largura do texto e a paginação. "Várias páginas"
+põe as folhas lado a lado (`Mapa.colunas`).
 
 ## Política de perda
 
@@ -164,7 +191,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M3 Visão em páginas | 0.0.6 (feito) | A4, Carta, Ofício, margens, régua, quebras, zoom, Página X de Y |
 | M4 Tabelas e imagens | 0.0.7 (feito) | tabela e imagem inline, no `.docx` e na visão |
 | M5 Cabeçalho e rodapé | 0.0.8 (feito) | edição no lugar, número de página |
-| M6 Estilos e faixa final | 0.0.9 | galeria, aba Exibir e abas contextuais de tabela e imagem |
+| M6 Estilos e faixa final | 0.0.9 (feito) | galeria, abas Inserir, Layout e Exibir (abas contextuais de tabela e imagem ficaram para depois) |
 | M7 Impressão e PDF | 0.0.10 | imprimir, pré-visualizar, exportar PDF |
 | M8 Polimento | 0.1.0 | recuperação automática, preferências, acessibilidade, documentação final |
 

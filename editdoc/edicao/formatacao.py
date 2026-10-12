@@ -110,24 +110,19 @@ def alterar_tamanho(editor: QTextEdit, delta: float) -> None:
 
 
 def limpar_formatacao(editor: QTextEdit) -> None:
-    padrao = editor.document().defaultFont()
-    formato = QTextCharFormat()
-    formato.setFontFamilies([padrao.family()])
-    formato.setFontPointSize(padrao.pointSizeF())
-    formato.setFontWeight(QFont.Weight.Normal)
-    formato.setFontItalic(False)
-    formato.setFontStrikeOut(False)
-    formato.setUnderlineStyle(QTextCharFormat.UnderlineStyle.NoUnderline)
-    formato.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignNormal)
-    cursor = editor.textCursor()
-    if cursor.hasSelection():
-        # setCharFormat substitui o formato inteiro, e nao so' mescla: e' o que
-        # limpar significa.
-        cursor.beginEditBlock()
-        cursor.setCharFormat(formato)
-        cursor.endEditBlock()
-    else:
-        editor.setCurrentCharFormat(formato)
+    """Limpar toda a formatacao (M6): o paragrafo volta ao Normal e o texto ao estilo dele.
+
+    Antes do M6 gravava a fonte padrao como formatacao explicita; agora tira a formatacao
+    direta, que e' o que o Word faz (ver edicao/estilos.py).
+    """
+    from editdoc.edicao import estilos
+    estilos.limpar_formatacao(editor)
+
+
+def limpar_caractere(editor: QTextEdit) -> None:
+    """Ctrl+Espaco: so' a formatacao de caractere volta ao estilo do paragrafo."""
+    from editdoc.edicao import estilos
+    estilos.limpar_caractere(editor)
 
 
 # -- paragrafo ----------------------------------------------------------------
@@ -149,6 +144,32 @@ def alterar_recuo(editor: QTextEdit, delta_px: float) -> None:
         formato.setLeftMargin(max(0.0, formato.leftMargin() + delta_px))
         QTextCursor(bloco).setBlockFormat(formato)
     cursor.endEditBlock()
+
+
+def definir_paragrafo(editor: QTextEdit, *, antes_tw: int | None = None,
+                      depois_tw: int | None = None, esquerdo_tw: int | None = None,
+                      direito_tw: int | None = None, primeira_tw: int | None = None) -> None:
+    """Espacamento antes e depois e recuos dos paragrafos da selecao (aba Layout, M6).
+
+    So' muda o que vier. Um passo de desfazer. Valores em twips.
+    """
+    formato = QTextBlockFormat()
+    if antes_tw is not None:
+        formato.setTopMargin(max(0, antes_tw) / 15.0)
+    if depois_tw is not None:
+        formato.setBottomMargin(max(0, depois_tw) / 15.0)
+    if esquerdo_tw is not None:
+        formato.setLeftMargin(esquerdo_tw / 15.0)
+    if direito_tw is not None:
+        formato.setRightMargin(direito_tw / 15.0)
+    if primeira_tw is not None:
+        formato.setTextIndent(primeira_tw / 15.0)
+    cursor = editor.textCursor()
+    cursor.beginEditBlock()
+    cursor.mergeBlockFormat(formato)
+    cursor.endEditBlock()
+    if hasattr(editor, "_depois_de_formato"):
+        editor._depois_de_formato()
 
 
 def definir_espacamento(editor: QTextEdit, percentual: int) -> None:

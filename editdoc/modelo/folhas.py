@@ -7,6 +7,10 @@ ja descontada.
 
 Escala: zoom 1,0 = 100%, e' 1 px logico por 15 twips (96 dpi).
 
+Colunas (M6, "Varias paginas"): com `colunas` > 1 as folhas ficam lado a lado, em
+linhas; a pagina n fica na linha n // colunas e na coluna n % colunas. O documento
+continua o mesmo: so' muda onde cada folha aparece na tela.
+
 O teto de zoom depende da tela (ver `teto_de_zoom`): o Qt pinta texto por
 caminho, e muito mais devagar, quando a escala total passa do limite de
 ESCALA_DISPOSITIVO_MAXIMA. Medido no Gate do M3 (docs/SPIKES.md).
@@ -84,6 +88,7 @@ class Mapa:
     altura_viewport: float
     origem_x: float = 0.0
     origem_y: float = 0.0
+    colunas: int = 1
 
     @property
     def escala(self) -> float:
@@ -112,10 +117,41 @@ class Mapa:
         return self.pagina.altura_tw * self.escala
 
     @property
+    def passo_horizontal(self) -> float:
+        """Distancia entre a esquerda de uma coluna de folhas e a da seguinte."""
+        return self.largura_folha + self.vao
+
+    @property
+    def largura_conteudo(self) -> float:
+        """Largura das folhas de uma linha, com os vaos entre elas."""
+        n = max(1, int(self.colunas))
+        return n * self.largura_folha + (n - 1) * self.vao
+
+    @property
     def esquerda_folha(self) -> float:
-        """X da folha no conteudo, sem rolagem. Centralizada quando cabe no viewport."""
-        largura = max(self.largura_folha + 2 * MARGEM_DO_PAINEL_PX, self.largura_viewport)
-        return (largura - self.largura_folha) / 2.0
+        """X da primeira folha da linha, sem rolagem. Centralizada quando cabe no viewport."""
+        largura = max(self.largura_conteudo + 2 * MARGEM_DO_PAINEL_PX, self.largura_viewport)
+        return (largura - self.largura_conteudo) / 2.0
+
+    def _linha_coluna(self, n: int) -> tuple[int, int]:
+        return divmod(max(int(n), 0), max(1, int(self.colunas)))
+
+    def pagina_no_ponto(self, x_tela: float, y_tela: float, paginas: int) -> int:
+        """Pagina cuja faixa (linha e coluna) contem o ponto da tela, limitada ao documento."""
+        cy = y_tela + self.origem_y
+        linha = max(0, int(math.floor((cy - self.vao) / self.passo_vertical)))
+        colunas = max(1, int(self.colunas))
+        cx = x_tela + self.origem_x - self.esquerda_folha
+        coluna = int(math.floor((cx + self.vao / 2.0) / self.passo_horizontal)) if colunas > 1 else 0
+        coluna = min(max(coluna, 0), colunas - 1)
+        return min(max(linha * colunas + coluna, 0), max(paginas - 1, 0))
+
+    def paginas_visiveis(self, paginas: int) -> tuple[int, int]:
+        """(primeira, ultima) pagina que pode aparecer no viewport."""
+        colunas = max(1, int(self.colunas))
+        l0 = max(0, math.floor((self.origem_y - self.vao) / self.passo_vertical))
+        l1 = math.floor((self.origem_y + self.altura_viewport - self.vao) / self.passo_vertical) + 1
+        return l0 * colunas, min(paginas - 1, (l1 + 1) * colunas - 1)
 
     def pagina_de_y(self, y_doc: float, paginas: int) -> int:
         """Pagina do ponto de documento, limitada a [0, paginas - 1]."""
@@ -124,8 +160,9 @@ class Mapa:
 
     def folha_na_tela(self, n: int) -> tuple[float, float, float, float]:
         """(x, y, largura, altura) da folha n em px logicos do viewport."""
-        return (self.esquerda_folha - self.origem_x,
-                self.vao + n * self.passo_vertical - self.origem_y,
+        linha, coluna = self._linha_coluna(n)
+        return (self.esquerda_folha + coluna * self.passo_horizontal - self.origem_x,
+                self.vao + linha * self.passo_vertical - self.origem_y,
                 self.largura_folha, self.altura_folha)
 
     def doc_para_tela(self, x_doc: float, y_doc: float, paginas: int) -> tuple[float, float]:
@@ -133,21 +170,18 @@ class Mapa:
         cfg = self.pagina
         tx = x_doc + cfg.margem_esq_tw
         ty = y_doc - n * self.hb + cfg.margem_sup_tw
-        x = self.esquerda_folha + tx * self.escala - self.origem_x
-        y = self.vao + n * self.passo_vertical + ty * self.escala - self.origem_y
-        return x, y
+        x0, y0, _l, _a = self.folha_na_tela(n)
+        return x0 + tx * self.escala, y0 + ty * self.escala
 
     def tela_para_doc(self, x_tela: float, y_tela: float, paginas: int) -> tuple[float, float]:
         """Inversa de `doc_para_tela` para um ponto dentro da faixa da pagina."""
         cfg = self.pagina
-        cx = x_tela + self.origem_x - self.esquerda_folha
-        cy = y_tela + self.origem_y
-        n = int(math.floor((cy - self.vao) / self.passo_vertical))
-        n = min(max(n, 0), max(paginas - 1, 0))
-        sy = cy - (self.vao + n * self.passo_vertical)
-        tx = cx / self.escala
-        ty = sy / self.escala
+        n = self.pagina_no_ponto(x_tela, y_tela, paginas)
+        x0, y0, _l, _a = self.folha_na_tela(n)
+        tx = (x_tela - x0) / self.escala
+        ty = (y_tela - y0) / self.escala
         return tx - cfg.margem_esq_tw, ty - cfg.margem_sup_tw + n * self.hb
 
     def altura_total(self, paginas: int) -> float:
-        return self.vao + paginas * self.passo_vertical
+        linhas = math.ceil(max(paginas, 0) / max(1, int(self.colunas)))
+        return self.vao + linhas * self.passo_vertical

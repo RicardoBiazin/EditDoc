@@ -82,6 +82,12 @@ SUITES = [
      "campos PAGE e NUMPAGES: formato, leitura, gravacao, oraculo, Qt e numero por pagina"),
     ("teste_cabecalho_rodape.py",
      "cabecalho e rodape: .docx, oraculo, limites, tela, edicao no lugar, desfazer e faixa"),
+    ("teste_estilos.py",
+     "estilos: heranca, styles.xml do Word ida e volta, Qt, aplicar, modificar, next, atalhos"),
+    ("teste_galeria.py",
+     "galeria e painel de estilos acompanham o cursor; faixa final sem corte em todas as abas"),
+    ("teste_exibir.py",
+     "Exibir: zoom por modo, folhas lado a lado, regua, marcas, navegacao; Layout do paragrafo"),
 ]
 
 

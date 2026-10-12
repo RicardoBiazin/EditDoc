@@ -20,6 +20,10 @@ bytes ficam no registro de `imagens.py`.
 
 Campos (M5): o run de campo vira o caractere de objeto com o formato de campo de
 `campos.py`, que o manipulador do layout pinta com o numero da pagina.
+
+Estilos (M6): o formato do Qt recebe o efetivo, estilo resolvido (cadeia basedOn) mais a
+formatacao direta do modelo, e o id do estilo numa propriedade de usuario
+(`ponte_qt/estilos.py`). O catalogo vai para o documento (`definir_catalogo_base`).
 """
 
 from __future__ import annotations
@@ -34,8 +38,10 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QTextBlockFormat, QTextCharFor
 
 from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula, Documento,
                                       Paragrafo, Tabela, bordas_padrao)
+from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
 from editdoc.ponte_qt import campos, imagens
+from editdoc.ponte_qt import estilos as pq_estilos
 
 LINHA_SEPARADORA = chr(0x2028)
 
@@ -69,25 +75,6 @@ _ESTILO_BORDA = {
     "nenhuma": QTextFrameFormat.BorderStyle.BorderStyle_None,
 }
 _PROPORCIONAL = QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
-
-
-def _formato_de_paragrafo(p) -> QTextBlockFormat:
-    bf = QTextBlockFormat()
-    if p.alinhamento is not None:
-        bf.setAlignment(_ALINHAMENTO[p.alinhamento])
-    if p.recuo_esquerdo_tw is not None:
-        bf.setLeftMargin(px_de_twips(p.recuo_esquerdo_tw))
-    if p.recuo_primeira_linha_tw is not None:
-        bf.setTextIndent(px_de_twips(p.recuo_primeira_linha_tw))
-    if p.espaco_antes_tw is not None:
-        bf.setTopMargin(px_de_twips(p.espaco_antes_tw))
-    if p.espaco_depois_tw is not None:
-        bf.setBottomMargin(px_de_twips(p.espaco_depois_tw))
-    if p.espacamento_linha_pct is not None:
-        bf.setLineHeight(float(p.espacamento_linha_pct), _PROPORCIONAL)
-    if p.quebra_antes:
-        bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
-    return bf
 
 
 def _formato_de_run(r) -> QTextCharFormat:
@@ -314,19 +301,52 @@ class _Listas:
             self.lista.add(cursor.block())
 
 
-def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas) -> None:
-    cursor.setBlockFormat(_formato_de_paragrafo(p))
+def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor) -> QTextBlockFormat:
+    """Estilo resolvido + formatacao direta do paragrafo, e o id do estilo."""
+    base, _car = res.paragrafo(p.estilo)
+    proprio = {k: getattr(p, k) for k in CAMPOS_PARAGRAFO if getattr(p, k) is not None}
+    efetivo = {**base, **proprio}
+    if p.nivel is not None:
+        if p.nivel >= NIVEL_CORPO:
+            efetivo.pop("nivel", None)  # corpo de texto, mesmo num estilo de titulo
+        else:
+            efetivo["nivel"] = p.nivel
+    bf = QTextBlockFormat()
+    pq_estilos.aplicar_bloco(bf, efetivo)
+    if p.quebra_antes:
+        bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+    pq_estilos.marcar_estilo(bf, p.estilo, res.estilos)
+    return bf
+
+
+def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QTextCharFormat:
+    base = res.caractere(sid_par, r.estilo)
+    if not base and not r.estilo:
+        return _formato_de_run(r)
+    proprio = {k: getattr(r, k) for k in CAMPOS_CARACTERE if getattr(r, k) is not None}
+    return pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
+
+
+def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas,
+                        res: pq_estilos.Resolvedor) -> None:
+    cursor.setBlockFormat(_formato_do_bloco(p, res))
+    base = res.caractere(p.estilo, None)
+    if base:
+        # Bloco vazio: a altura da linha e o texto digitado nele seguem o estilo.
+        cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
     for r in p.runs:
         if r.imagem is not None:
             inserir_imagem(cursor, r.imagem)
         elif r.campo is not None:
-            campos.inserir_campo(cursor, r.campo, r.texto, _formato_de_run(r))
+            campos.inserir_campo(cursor, r.campo, r.texto, _formato_do_run(r, p.estilo, res))
         elif r.texto:
-            cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA), _formato_de_run(r))
+            cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA),
+                              _formato_do_run(r, p.estilo, res))
     listas.aplicar(cursor, p.numeracao)
 
 
-def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas) -> None:
+def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas,
+                    res: pq_estilos.Resolvedor) -> None:
     """Escreve os blocos a partir do cursor, que esta' num bloco vazio, o primeiro do conteiner.
 
     O Qt poe a tabela depois do bloco do cursor, e cria um bloco vazio depois dela. O
@@ -339,7 +359,7 @@ def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas) -> None:
             if primeiro or depois_de_tabela:
                 cursor.setBlockFormat(formato_estrutural())
             listas.encerrar()
-            tabela = inserir_tabela_modelo(cursor, bloco)
+            tabela = inserir_tabela_modelo(cursor, bloco, res)
             cursor.setPosition(tabela.lastPosition() + 1)
             cursor.setBlockFormat(QTextBlockFormat())
             cursor.setCharFormat(QTextCharFormat())
@@ -347,7 +367,7 @@ def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas) -> None:
         else:
             if not primeiro and not depois_de_tabela:
                 cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
-            _escrever_paragrafo(cursor, bloco, listas)
+            _escrever_paragrafo(cursor, bloco, listas, res)
             depois_de_tabela = False
         primeiro = False
     if depois_de_tabela:
@@ -355,8 +375,11 @@ def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas) -> None:
         cursor.setBlockFormat(formato_estrutural())
 
 
-def inserir_tabela_modelo(cursor: QTextCursor, tabela: Tabela) -> QTextTable:
+def inserir_tabela_modelo(cursor: QTextCursor, tabela: Tabela,
+                          res: pq_estilos.Resolvedor | None = None) -> QTextTable:
     """Insere a Tabela do modelo depois do bloco do cursor (o Qt parte o bloco no cursor)."""
+    if res is None:
+        res = pq_estilos.Resolvedor(pq_estilos.catalogo(cursor.document()))
     linhas = len(tabela.linhas)
     colunas = max(1, len(tabela.colunas_tw))
     if len(tabela.colunas_tw) != colunas:
@@ -398,24 +421,34 @@ def inserir_tabela_modelo(cursor: QTextCursor, tabela: Tabela) -> QTextTable:
         cel_qt.setFormat(formato_da_celula(celula, tabela.linhas[r]))
         cur = cel_qt.firstCursorPosition()
         listas.encerrar()
-        _inserir_blocos(cur, celula.blocos, listas)
+        _inserir_blocos(cur, celula.blocos, listas, res)
     aplicar_formatos_das_celulas(qt)
     return qt
 
 
-def preencher_blocos(documento_qt: QTextDocument, blocos: list) -> None:
-    """Substitui o conteudo pelos blocos (cabecalho ou rodape). Limpa o desfazer."""
+def preencher_blocos(documento_qt: QTextDocument, blocos: list, estilos=None) -> None:
+    """Substitui o conteudo pelos blocos (cabecalho ou rodape). Limpa o desfazer.
+
+    Sem `estilos`, usa o catalogo do documento (o do corpo, no cabecalho).
+    """
     documento_qt.clear()
+    if estilos is None:
+        estilos = pq_estilos.catalogo(documento_qt)
     cursor = QTextCursor(documento_qt)
-    _inserir_blocos(cursor, blocos, _Listas())
+    _inserir_blocos(cursor, blocos, _Listas(), pq_estilos.Resolvedor(estilos))
     documento_qt.clearUndoRedoStacks()
     documento_qt.setModified(False)
 
 
 def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
-    """Substitui o conteudo de `documento_qt` pelo do modelo. Limpa o desfazer."""
+    """Substitui o conteudo de `documento_qt` pelo do modelo. Limpa o desfazer.
+
+    O catalogo de estilos do modelo (ou o padrao) passa a ser o do documento.
+    """
     documento_qt.clear()
+    pq_estilos.definir_catalogo_base(documento_qt, modelo.estilos)
+    res = pq_estilos.Resolvedor(pq_estilos.catalogo(documento_qt))
     cursor = QTextCursor(documento_qt)
-    _inserir_blocos(cursor, modelo.paragrafos, _Listas())
+    _inserir_blocos(cursor, modelo.paragrafos, _Listas(), res)
     documento_qt.clearUndoRedoStacks()
     documento_qt.setModified(False)

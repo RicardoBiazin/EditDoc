@@ -25,6 +25,11 @@ conteudo proprio e, se tiver imagem, relacoes proprias. `w:titlePg` no sectPr e
 
 Campos (M5): PAGE e NUMPAGES saem como campo complexo (fldChar begin, instrText,
 separate, o ultimo resultado, end), que e' como o Word grava. O Word recalcula.
+
+Estilos (M6): o styles.xml sai de ormato_docx/estilos.py: o original do arquivo, com
+os estilos alterados e novos reescritos. Paragrafo e run levam w:pStyle e w:rStyle so'
+para estilo que esta' no catalogo (o validador confere). O tema do arquivo de origem
+(theme1.xml) volta, para as fontes de tema dos estilos continuarem as mesmas.
 """
 
 from __future__ import annotations
@@ -38,11 +43,10 @@ import zipfile
 
 from lxml import etree
 
+from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import ordem
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
-from editdoc.formato_docx.padroes import (ESPACO_DEPOIS_PADRAO_TW, FONTE_PADRAO, LINHA_PADRAO,
-                                         TAMANHO_PADRAO_MEIO_PT)
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFIG, CT_CORE,
                                         CT_DOCUMENTO, CT_ESTILOS, CT_NUMERACAO, CT_RELS,
                                         CT_RODAPE, CT_XML, DC, DCT, EP, PIC_NS, PKG_CT, PKG_REL,
@@ -52,6 +56,7 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Celula, Documento, Imagem,
                                       Paragrafo, Run, Tabela, bordas_padrao)
+from editdoc.modelo.estilos import catalogo_padrao
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
 _JC_TABELA = {"esquerda": "left", "centro": "center", "direita": "right"}
@@ -59,7 +64,10 @@ _VALIGN = {"topo": "top", "centro": "center", "base": "bottom"}
 _ESTILO_BORDA = {"simples": "single", "dupla": "double", "pontilhada": "dotted",
                  "tracejada": "dashed", "nenhuma": "nil"}
 #: Estilo de tabela que toda tabela usa (o "Table Grid" do Word).
-ESTILO_TABELA = "TableGrid"
+ESTILO_TABELA = fx_estilos.ESTILO_TABELA
+#: Tema do arquivo de origem (M6).
+CT_TEMA = "application/vnd.openxmlformats-officedocument.theme+xml"
+PARTE_TEMA = "word/theme/theme1.xml"
 #: Controles invalidos em XML 1.0, surrogates soltos, noncharacters e o caractere de
 #: objeto (U+FFFC), que so' tem sentido num run de imagem.
 _CONTROLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffc\ufffe\uffff\ud800-\udfff]")
@@ -133,8 +141,10 @@ def _conteudo_run(r, texto: str, coletor: Coletor) -> None:
             t.text = parte
 
 
-def _rpr(run: Run) -> etree._Element | None:
+def _rpr(run: Run, estilo: str | None = None) -> etree._Element | None:
     rpr = etree.Element(q("rPr"))
+    if estilo:
+        etree.SubElement(rpr, q("rStyle")).set(q("val"), estilo)
     if run.fonte:
         rf = etree.SubElement(rpr, q("rFonts"))
         for atr in ("ascii", "hAnsi", "eastAsia", "cs"):
@@ -223,12 +233,25 @@ class _Midias:
 
 
 class _Ctx:
-    def __init__(self, coletor: Coletor) -> None:
+    def __init__(self, coletor: Coletor, estilos=None) -> None:
         self.coletor = coletor
         self.listas = _Listas()
         self.midias = _Midias()
         #: relacoes da parte que esta' sendo escrita (troca no cabecalho e no rodape)
         self.relacoes = _Relacoes(_Midias.PRIMEIRO_RID)
+        #: catalogo de estilos (M6): id -> tipo, e o id do estilo de paragrafo padrao
+        self.estilos = estilos if estilos is not None else catalogo_padrao()
+        self.tipos = {sid: e.tipo for sid, e in self.estilos.itens.items()}
+        self.padrao = self.estilos.id_padrao()
+
+    def estilo_de_paragrafo(self, sid: str | None) -> str | None:
+        """O id para o w:pStyle, ou None (estilo padrao ou fora do catalogo)."""
+        if not sid or sid == self.padrao or self.tipos.get(sid) != "paragrafo":
+            return None
+        return sid
+
+    def estilo_de_caractere(self, sid: str | None) -> str | None:
+        return sid if sid and self.tipos.get(sid) == "caractere" else None
 
 
 def _desenho(r, imagem: Imagem, ctx: _Ctx) -> None:
@@ -275,6 +298,11 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
     listas, coletor = ctx.listas, ctx.coletor
     pe = etree.SubElement(body, q("p"))
     ppr = etree.Element(q("pPr"))
+    estilo = ctx.estilo_de_paragrafo(p.estilo)
+    if estilo is not None:
+        etree.SubElement(ppr, q("pStyle")).set(q("val"), estilo)
+    if p.nivel is not None:
+        etree.SubElement(ppr, q("outlineLvl")).set(q("val"), str(min(max(int(p.nivel), 0), 9)))
     if p.numeracao is not None:
         num = etree.SubElement(ppr, q("numPr"))
         etree.SubElement(num, q("ilvl")).set(q("val"), "0")
@@ -283,10 +311,13 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
         listas.encerrar()
     if p.alinhamento is not None:
         etree.SubElement(ppr, q("jc")).set(q("val"), _JC[p.alinhamento])
-    if p.recuo_esquerdo_tw is not None or p.recuo_primeira_linha_tw is not None:
+    if (p.recuo_esquerdo_tw is not None or p.recuo_primeira_linha_tw is not None
+            or p.recuo_direito_tw is not None):
         ind = etree.SubElement(ppr, q("ind"))
         if p.recuo_esquerdo_tw is not None:
             ind.set(q("left"), str(int(p.recuo_esquerdo_tw)))
+        if p.recuo_direito_tw is not None:
+            ind.set(q("right"), str(int(p.recuo_direito_tw)))
         if p.recuo_primeira_linha_tw is not None:
             v = int(p.recuo_primeira_linha_tw)
             if v >= 0:
@@ -316,18 +347,18 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
             _desenho(r, run.imagem, ctx)
             continue
         if run.campo is not None:
-            _campo(pe, run, coletor)
+            _campo(pe, run, coletor, ctx.estilo_de_caractere(run.estilo))
             continue
         if run.texto == "":
             continue
         r = etree.SubElement(pe, q("r"))
-        rpr = _rpr(run)
+        rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo))
         if rpr is not None:
             r.append(rpr)
         _conteudo_run(r, run.texto, coletor)
 
 
-def _campo(pe, run: Run, coletor: Coletor) -> None:
+def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None) -> None:
     """Campo complexo, como o Word grava: begin, instrucao, separate, resultado, end.
 
     Cada pedaco e' um w:r com a formatacao do campo, para que o numero recalculado pelo
@@ -336,7 +367,7 @@ def _campo(pe, run: Run, coletor: Coletor) -> None:
     instrucao, _n = texto_gravavel(run.campo or "")
     if tipo_do_campo(instrucao) is None:
         raise ValueError(f"campo nao suportado: {run.campo!r}")
-    rpr = _rpr(run)
+    rpr = _rpr(run, estilo)
 
     def novo_run():
         r = etree.SubElement(pe, q("r"))
@@ -549,71 +580,6 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
     return _xml(raiz), faixas
 
 
-def _styles_xml() -> bytes:
-    raiz = etree.Element(q("styles"), nsmap={"w": W})
-    dd = etree.SubElement(raiz, q("docDefaults"))
-    rpd = etree.SubElement(dd, q("rPrDefault"))
-    rpr = etree.SubElement(rpd, q("rPr"))
-    rf = etree.SubElement(rpr, q("rFonts"))
-    for atr in ("ascii", "hAnsi", "eastAsia", "cs"):
-        rf.set(q(atr), FONTE_PADRAO)
-    etree.SubElement(rpr, q("sz")).set(q("val"), str(TAMANHO_PADRAO_MEIO_PT))
-    etree.SubElement(rpr, q("szCs")).set(q("val"), str(TAMANHO_PADRAO_MEIO_PT))
-    lang = etree.SubElement(rpr, q("lang"))
-    lang.set(q("val"), "pt-BR")
-    lang.set(q("eastAsia"), "pt-BR")
-    lang.set(q("bidi"), "ar-SA")
-    ppd = etree.SubElement(dd, q("pPrDefault"))
-    sp = etree.SubElement(etree.SubElement(ppd, q("pPr")), q("spacing"))
-    sp.set(q("after"), str(ESPACO_DEPOIS_PADRAO_TW))
-    sp.set(q("line"), str(LINHA_PADRAO))
-    sp.set(q("lineRule"), "auto")
-
-    def estilo(tipo, sid, nome, extra=(), padrao=True):
-        s = etree.SubElement(raiz, q("style"))
-        s.set(q("type"), tipo)
-        if padrao:
-            s.set(q("default"), "1")
-        s.set(q("styleId"), sid)
-        etree.SubElement(s, q("name")).set(q("val"), nome)
-        for tag, val in extra:
-            el = etree.SubElement(s, q(tag))
-            if val is not None:
-                el.set(q("val"), val)
-        return s
-
-    estilo("paragraph", "Normal", "Normal", extra=[("qFormat", None)])
-    estilo("character", "DefaultParagraphFont", "Default Paragraph Font",
-           extra=[("uiPriority", "1"), ("semiHidden", None), ("unhideWhenUsed", None)])
-    tbl = estilo("table", "TableNormal", "Normal Table",
-                 extra=[("uiPriority", "99"), ("semiHidden", None), ("unhideWhenUsed", None)])
-    tp = etree.SubElement(tbl, q("tblPr"))
-    ti = etree.SubElement(tp, q("tblInd"))
-    ti.set(q("w"), "0")
-    ti.set(q("type"), "dxa")
-    cm = etree.SubElement(tp, q("tblCellMar"))
-    for lado, val in (("top", "0"), ("left", "108"), ("bottom", "0"), ("right", "108")):
-        el = etree.SubElement(cm, q(lado))
-        el.set(q("w"), val)
-        el.set(q("type"), "dxa")
-    estilo("numbering", "NoList", "No List",
-           extra=[("uiPriority", "99"), ("semiHidden", None), ("unhideWhenUsed", None)])
-    # "Table Grid": o estilo que o Word da' a tabela nova. Zera o espacamento dos
-    # paragrafos dentro da celula (o padrao do documento tem 8 pt depois). As bordas
-    # de cada tabela sao gravadas nela mesma; as daqui valem so' de referencia.
-    grade = estilo("table", ESTILO_TABELA, "Table Grid",
-                   extra=[("basedOn", "TableNormal"), ("uiPriority", "39")], padrao=False)
-    gp = etree.SubElement(grade, q("pPr"))
-    gsp = etree.SubElement(gp, q("spacing"))
-    gsp.set(q("after"), "0")
-    gsp.set(q("line"), "240")
-    gsp.set(q("lineRule"), "auto")
-    gt = etree.SubElement(grade, q("tblPr"))
-    gb = etree.SubElement(gt, q("tblBorders"))
-    for nome in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        _borda_xml(gb, nome, Borda())
-    return _xml(raiz)
-
 
 def _numbering_xml(numeracoes: int) -> bytes:
     raiz = etree.Element(q("numbering"), nsmap={"w": W})
@@ -734,13 +700,21 @@ def _zip(partes: list[tuple[str, bytes]]) -> bytes:
 def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     """Devolve (bytes do .docx, avisos da gravacao). Levanta ErroDocx se o validador reprovar."""
     coletor = Coletor()
-    ctx = _Ctx(coletor)
+    ctx = _Ctx(coletor, doc.estilos)
     agora = _agora_iso()
     criado = doc.criado_em or agora
     modificado = doc.modificado_em or agora
     documento_xml, faixas = _document_xml(doc, ctx)
+    tema = ctx.estilos.tema_original
+    extras_tipos = list(faixas.tipos)
+    partes_tema: list[tuple[str, bytes]] = []
+    if tema:
+        # O tema volta para as fontes de tema (asciiTheme) dos estilos continuarem as mesmas.
+        ctx.relacoes.adicionar(RT + "theme", "theme/theme1.xml")
+        partes_tema.append((PARTE_TEMA, tema))
+        extras_tipos.append(("/" + PARTE_TEMA, CT_TEMA))
     partes = [
-        ("[Content_Types].xml", _content_types_xml(ctx.midias.extensoes, faixas.tipos)),
+        ("[Content_Types].xml", _content_types_xml(ctx.midias.extensoes, extras_tipos)),
         ("_rels/.rels", _rels_xml([
             ("rId1", RT + "officeDocument", "word/document.xml"),
             ("rId2", RT_CORE, "docProps/core.xml"),
@@ -754,7 +728,8 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
             *ctx.relacoes.itens,
         ])),
         *faixas.partes,
-        ("word/styles.xml", _styles_xml()),
+        ("word/styles.xml", fx_estilos.escrever_estilos(ctx.estilos)),
+        *partes_tema,
         ("word/numbering.xml", _numbering_xml(ctx.listas.numeracoes)),
         ("word/settings.xml", _settings_xml(doc.pagina.pares_impares)),
         ("docProps/core.xml", _core_xml(doc, criado, modificado)),

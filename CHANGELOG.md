@@ -1,3 +1,64 @@
+## 0.0.9 - 2026-10-12
+
+Estilos e faixa final (M6). Os estilos do `.docx` abrem, aparecem na tela, são aplicados e
+modificados no EditDoc e voltam ao arquivo; a faixa ganha a galeria de estilos e as abas
+Inserir, Layout e Exibir completas.
+
+- Estilos no `.docx`: o `styles.xml` vira o catálogo do documento, com `docDefaults`, estilos
+  de parágrafo e de caractere, `basedOn`, `next`, `link`, `qFormat`, `uiPriority`,
+  `semiHidden` e `unhideWhenUsed`. A herança (`basedOn`) é resolvida para a tela. O estilo
+  que o EditDoc não muda volta byte a byte, com o `latentStyles`, os estilos de tabela, os
+  que o editor não usa e as extensões do Word (`w14`, `w15`); o estilo alterado só tem
+  reescrito o que mudou (a cor nova tira o `themeColor`, que venceria o valor). O tema
+  (`theme1.xml`) volta igual, e a fonte de tema (`asciiTheme`) é resolvida na tela.
+- Documento novo com o conjunto do Word: Normal, Título, Subtítulo, Título 1 a 3, Citação,
+  Parágrafo da Lista e Sem Espaçamento (parágrafo), Ênfase e Forte (caractere), com os ids
+  em inglês (`Heading1`) e os nomes em português. Estilo interno que falta num arquivo do
+  Word (Título 2, por exemplo) é criado quando é usado, como o Word faz.
+- Formatação direta = efetivo menos estilo: o parágrafo e o run guardam só o que difere do
+  estilo. O `w:pStyle` e o `w:rStyle` são gravados só para estilo do catálogo; o validador
+  do pacote recusa referência quebrada.
+- Comandos: aplicar estilo de parágrafo e de caractere; Limpar toda a formatação (volta ao
+  Normal) e Limpar formatação de caractere (Ctrl+Espaço, antes era o Limpar); Enter no fim
+  de um Título usa o estilo seguinte (`next`); Atualizar estilo para corresponder à seleção;
+  Modificar estilo (fonte, tamanho, negrito, itálico, sublinhado, cor, alinhamento,
+  espaçamento antes e depois, entre linhas, recuos, baseado em e próximo estilo); Criar um
+  estilo a partir da seleção. Mudar um estilo atualiza todos os parágrafos que o usam,
+  inclusive no cabeçalho e no rodapé, mantendo a formatação direta, e um desfazer devolve o
+  estilo e os parágrafos.
+- Atalhos: Ctrl+Alt+1, 2 e 3 (Título 1 a 3), Ctrl+Shift+N (Normal), Ctrl+Alt+Shift+S
+  (painel de estilos) e Ctrl+Shift+8 (marcas de formatação).
+- Galeria de estilos na Página Inicial: miniaturas com a aparência do estilo, o estilo do
+  cursor marcado, setas para rolar, botão para ver todos, menu de contexto (Atualizar,
+  Modificar). Painel de estilos (lista completa, com visualização opcional) num painel
+  lateral.
+- Faixa: Fonte e Parágrafo em duas linhas; abas Inserir (Páginas, Tabelas, Ilustrações,
+  Cabeçalho e Rodapé), Layout (Configurar Página; recuo esquerdo e direito e espaçamento
+  antes e depois do parágrafo) e Exibir (Régua, Painel de Navegação, marcas de formatação,
+  painel de estilos; zoom 100%, Uma Página, Várias Páginas e Largura da Página). Cada aba
+  recolhe sozinha; a galeria tem preferência sobre o grupo Edição e vira o botão Estilos
+  na janela estreita.
+- Exibir: marcas de formatação (¶, · nos espaços, → nas tabulações) pintadas por cima do
+  texto, sem mudar o layout; Várias Páginas põe as folhas lado a lado; painel de navegação
+  com os títulos (estilos de Título e `outlineLvl` direto), em árvore, e o clique leva ao
+  título.
+- Listas convivem com estilos: a lista ligada por um estilo do Word (List Bullet) passa ao
+  parágrafo; aplicar um Título num item de lista mantém a lista.
+- Recuo à direita e nível de estrutura (`outlineLvl`) do parágrafo entram no modelo: antes
+  eram perdidos (o recuo direito com aviso; o nível, sem aviso).
+- A fonte e o tamanho padrão do arquivo (`docDefaults`) passam a ser os da tela, e o aviso
+  PADRAO_DO_DOCUMENTO deixou de ser emitido: o `docDefaults` volta ao arquivo como veio.
+- A conferência do arquivo gravado compara também o estilo de cada parágrafo e os estilos
+  de caractere dele.
+
+Limites deste marco: numeração completa (níveis, formatos, listas definidas por estilo com
+o seu próprio `numbering.xml`) continua fora: a lista do estilo vira lista simples do
+parágrafo. Desfazer uma mudança de estilo feita durante a edição do cabeçalho fica no
+desfazer do corpo. As abas contextuais de tabela e de imagem ficam para depois. Espaçamento
+do `docDefaults` (8 pt depois, 1,08 entre linhas) continua sem aparecer na tela. A abertura
+no Word ainda depende de conferência manual (amostra em
+`tests/saida/amostra_m6_estilos.docx`, gerada pela suíte).
+
 ## 0.0.8 - 2026-10-12
 
 Cabeçalho, rodapé e número de página (M5). O cabeçalho e o rodapé abrem do `.docx`, aparecem

@@ -30,6 +30,7 @@ from PySide6.QtGui import (QAction, QImage, QKeyEvent, QKeySequence, QTextBlockF
                            QTextCursor, QTextDocument, QTextDocumentFragment, QTextFormat)
 from PySide6.QtWidgets import QApplication, QMenu
 
+from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao import tabelas as ed_tabelas
 from editdoc.interface.cabecalhos import FaixaQt
@@ -378,8 +379,7 @@ class PainelDocumento(VistaPaginas):
         """
         m = self._mapa()
         n_total = self._paginas()
-        cy = p.y() + m.origem_y
-        n = min(max(math.floor((cy - m.vao) / m.passo_vertical), 0), n_total - 1)
+        n = m.pagina_no_ponto(p.x(), p.y(), n_total)
         x, y, largura, altura = m.folha_na_tela(n)
         tx, ty = (p.x() - x) / m.escala, (p.y() - y) / m.escala
         efetiva = self.layout_pag.pagina
@@ -405,6 +405,21 @@ class PainelDocumento(VistaPaginas):
         elif r.bottom() > vp.height():
             vb.setValue(vb.value() + math.ceil(r.bottom() - vp.height()) + 16)
         self.viewport().update()
+
+    def ir_para_posicao(self, pos: int) -> None:
+        """Leva o caret a `pos` do corpo e rola ate' la' (painel de navegacao, M6)."""
+        self.sair_da_faixa()
+        doc = self.layout_pag.doc
+        self._cursor = QTextCursor(doc)
+        self._cursor.setPosition(min(max(int(pos), 0), doc.characterCount() - 1))
+        r = self.layout_pag.retangulo_cursor(self._cursor.position())
+        m = self._mapa()
+        _x, y = m.doc_para_tela(r.x(), r.y(), self._paginas())
+        # O titulo vai para perto do alto da tela, como no Word.
+        vb = self.verticalScrollBar()
+        vb.setValue(vb.value() + math.floor(y) - 24)
+        self._depois_de_mover()
+        self.setFocus()
 
     def recuos_do_paragrafo(self) -> tuple[int, int]:
         """(recuo esquerdo, recuo da primeira linha) do paragrafo do caret, em twips."""
@@ -498,9 +513,17 @@ class PainelDocumento(VistaPaginas):
         if self._cursor.hasSelection():
             self._cursor.removeSelectedText()
         self._limpar_estrutural()
+        # Enter no fim de um Titulo: o paragrafo novo usa o estilo seguinte (`next`) (M6).
+        no_fim = self._cursor.atBlockEnd() and self._cursor.currentTable() is None
         bf = QTextBlockFormat(self._cursor.blockFormat())
         bf.setPageBreakPolicy(_QUEBRA if quebra else _SEM_QUEBRA)
+        proximo = ed_estilos.formatos_do_proximo(self.document(), bf) if no_fim else None
         self._cursor.insertBlock(bf)
+        if proximo is not None:
+            bloco_fmt, car_fmt = proximo
+            self._cursor.setBlockFormat(bloco_fmt)
+            self._cursor.setBlockCharFormat(car_fmt)
+            self._cursor.setCharFormat(car_fmt)
         self._cursor.endEditBlock()
         self._depois_de_mover()
 

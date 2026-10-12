@@ -15,6 +15,7 @@ from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QTextListFormat
 from PySide6.QtWidgets import QTextEdit
 
 from editdoc.edicao import cabecalhos as ed_cabecalhos
+from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import formatacao, tabelas
 from editdoc.modelo.folhas import passo_de_zoom
 from editdoc.modelo.unidades import RECUO_PADRAO_PX
@@ -51,8 +52,10 @@ DEFINICOES = (
     Definicao("sobrescrito", "X²", ("Ctrl+Shift+=",), True, "Sobrescrito"),
     Definicao("aumentar_fonte", "A▲", ("Ctrl+]",), dica="Aumentar fonte"),
     Definicao("diminuir_fonte", "A▼", ("Ctrl+[",), dica="Diminuir fonte"),
-    Definicao("limpar_formatacao", "Limpar formatação", ("Ctrl+Space",),
-              dica="Limpar formatação"),
+    Definicao("limpar_formatacao", "Limpar toda a formatação", (),
+              dica="Limpar toda a formatação: o parágrafo volta ao estilo Normal"),
+    Definicao("limpar_caractere", "Limpar formatação de caractere", ("Ctrl+Space",),
+              dica="O texto volta ao estilo do parágrafo"),
     Definicao("marcadores", "Marcadores", ("Ctrl+Shift+L",), True, "Marcadores"),
     Definicao("numeracao", "Numeração", (), True, "Numeração"),
     Definicao("diminuir_recuo", "Diminuir recuo", ("Ctrl+Shift+M",),
@@ -136,7 +139,37 @@ DEFINICOES = (
     Definicao("ir_rodape", "Ir para o rodapé", (), dica="Ir para o rodapé"),
     Definicao("fechar_cabecalho", "Fechar cabeçalho e rodapé", (),
               dica="Voltar ao corpo do documento (Esc)"),
+    # Estilos (M6).
+    Definicao("estilo_normal", "Normal", ("Ctrl+Shift+N",), dica="Aplicar o estilo Normal"),
+    Definicao("estilo_titulo1", "Título 1", ("Ctrl+Alt+1",), dica="Aplicar o estilo Título 1"),
+    Definicao("estilo_titulo2", "Título 2", ("Ctrl+Alt+2",), dica="Aplicar o estilo Título 2"),
+    Definicao("estilo_titulo3", "Título 3", ("Ctrl+Alt+3",), dica="Aplicar o estilo Título 3"),
+    Definicao("criar_estilo", "Criar um estilo...", (),
+              dica="Criar um estilo com a formatação da seleção"),
+    Definicao("modificar_estilo", "Modificar estilo...", (),
+              dica="Modificar o estilo do parágrafo atual"),
+    Definicao("atualizar_estilo", "Atualizar estilo para corresponder à seleção", (),
+              dica="O estilo do parágrafo passa a ter a formatação da seleção"),
+    Definicao("painel_estilos", "Painel de estilos", ("Ctrl+Alt+Shift+S",), True,
+              "Mostrar a lista completa de estilos"),
+    # Exibir (M6).
+    Definicao("mostrar_regua", "Régua", (), True, "Mostrar a régua"),
+    Definicao("painel_navegacao", "Painel de Navegação", (), True,
+              "Mostrar os títulos do documento"),
+    Definicao("marcas_formatacao", "¶", ("Ctrl+Shift+8", "Ctrl+*", "Ctrl+Shift+*"), True,
+              "Mostrar marcas de formatação (¶, espaços e tabulações)"),
+    Definicao("zoom_100", "100%", (), dica="Zoom em 100%"),
+    Definicao("zoom_pagina", "Uma Página", (), dica="A página inteira na janela"),
+    Definicao("zoom_varias", "Várias Páginas", (), dica="Duas páginas lado a lado"),
+    Definicao("zoom_largura", "Largura da Página", (), dica="A largura da página na janela"),
 )
+
+#: Estilos que os atalhos aplicam: id da acao -> nome canonico do Word.
+ESTILO_DAS_ACOES = {"estilo_normal": "normal", "estilo_titulo1": "heading 1",
+                    "estilo_titulo2": "heading 2", "estilo_titulo3": "heading 3"}
+#: Zoom do Exibir: id da acao -> modo de VistaPaginas.zoom_modo.
+ZOOM_DAS_ACOES = {"zoom_100": "100", "zoom_pagina": "pagina", "zoom_varias": "varias",
+                  "zoom_largura": "largura"}
 
 #: Numero de pagina: id da acao -> (onde, alinhamento, "Pagina X de Y").
 NUMERO_DAS_ACOES = {
@@ -196,10 +229,12 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
                 ao_substituir: Callable[[], None],
                 ao_arquivo: dict[str, Callable[[], None]],
                 ao_layout: dict[str, Callable] | None = None,
-                ao_inserir: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
+                ao_inserir: dict[str, Callable] | None = None,
+                ao_exibir: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
     fmt = formatacao
     layout = ao_layout or {}
     inserir = ao_inserir or {}
+    exibir = ao_exibir or {}
     executores_inserir: dict[str, Callable[[], None]] = {
         # Os dialogos (tamanho da tabela, arquivo de imagem, tamanho da imagem) sao da janela.
         "inserir_tabela": lambda: _chamar(inserir, "tabela"),
@@ -264,6 +299,15 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         "aumentar_fonte": lambda: fmt.alterar_tamanho(editor, 1),
         "diminuir_fonte": lambda: fmt.alterar_tamanho(editor, -1),
         "limpar_formatacao": lambda: fmt.limpar_formatacao(editor),
+        "limpar_caractere": lambda: fmt.limpar_caractere(editor),
+        # Estilos e Exibir (M6): dialogos, paineis e regua sao da janela.
+        "criar_estilo": lambda: _chamar(exibir, "criar_estilo"),
+        "modificar_estilo": lambda: _chamar(exibir, "modificar_estilo"),
+        "atualizar_estilo": lambda: ed_estilos.atualizar_pela_selecao(editor),
+        "painel_estilos": lambda: _chamar(exibir, "painel_estilos"),
+        "mostrar_regua": lambda: _chamar(exibir, "regua"),
+        "painel_navegacao": lambda: _chamar(exibir, "navegacao"),
+        "marcas_formatacao": lambda: editor.definir_marcas(not editor.marcas_visiveis()),
         "marcadores": lambda: fmt.alternar_lista(editor, QTextListFormat.Style.ListDisc),
         "numeracao": lambda: fmt.alternar_lista(editor, QTextListFormat.Style.ListDecimal),
         "diminuir_recuo": lambda: fmt.alterar_recuo(editor, -RECUO_PADRAO_PX),
@@ -275,6 +319,10 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         executores[id_] = lambda p=percentual: fmt.definir_espacamento(editor, p)
     for id_ in ARQUIVO:
         executores[id_] = ao_arquivo.get(id_, _nada)
+    for id_, nome in ESTILO_DAS_ACOES.items():
+        executores[id_] = lambda n=nome: ed_estilos.aplicar_estilo(editor, n)
+    for id_, modo in ZOOM_DAS_ACOES.items():
+        executores[id_] = lambda m=modo: editor.zoom_modo(m)
     executores.update(executores_layout)
     executores.update(executores_inserir)
     return executores
@@ -288,11 +336,12 @@ class Comandos(QObject):
                  ao_substituir: Callable[[], None],
                  ao_arquivo: dict[str, Callable[[], None]] | None = None,
                  ao_layout: dict[str, Callable] | None = None,
-                 ao_inserir: dict[str, Callable] | None = None) -> None:
+                 ao_inserir: dict[str, Callable] | None = None,
+                 ao_exibir: dict[str, Callable] | None = None) -> None:
         super().__init__(pai)
         self._acoes: dict[str, QAction] = {}
         self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {},
-                                       ao_layout, ao_inserir)
+                                       ao_layout, ao_inserir, ao_exibir)
         self._grupo_alinhamento = QActionGroup(self)
         self._grupo_alinhamento.setExclusive(True)
         self._grupo_espacamento = QActionGroup(self)

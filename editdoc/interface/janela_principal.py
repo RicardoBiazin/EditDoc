@@ -7,6 +7,11 @@ pendentes passam por aqui.
 
 Sem gerente (testes), a janela funciona sozinha; novo, abrir e recentes ficam sem
 efeito, porque quem abre outras janelas e' o gerente.
+
+Estilos e Exibir (M6): a galeria fica na faixa; o painel de estilos e o painel de
+navegacao sao QDockWidget opcionais (direita e esquerda), escondidos ao abrir. A janela
+mantem a galeria, o painel de estilos, os campos da aba Layout e os botoes de mostrar em
+sintonia com o cursor (`_sintonizar`, chamado pelo AtualizadorDeEstado).
 """
 
 from __future__ import annotations
@@ -16,33 +21,38 @@ import pathlib
 
 from dataclasses import replace
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QDockWidget, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from editdoc import APP, VERSAO, configuracao, log_interno, recursos
 from editdoc.armazenamento import gravacao
 from editdoc.edicao import busca, tabelas
+from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao.busca import Opcoes
 from editdoc.formato_docx import conferencia
 from editdoc.formato_docx.avisos import Aviso
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import escrever_com_avisos
-from editdoc.interface import dialogos_modais
+from editdoc.interface import dialogo_estilo, dialogos_modais
 from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
 from editdoc.interface.comandos import TABELA, Comandos
 from editdoc.interface.controle_zoom import ControleZoom
-from editdoc.interface.faixa import Faixa
+from editdoc.interface.faixa import BotaoAcao, Faixa
+from editdoc.interface.navegacao import PainelNavegacao
 from editdoc.interface.painel_documento import PainelDocumento
+from editdoc.interface.painel_estilos import PainelEstilos
 from editdoc.interface.regua import Regua
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.documento import Documento
 from editdoc.modelo.estatisticas import contar
 from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
 from editdoc.ponte_qt import de_qt, para_qt
+from editdoc.ponte_qt import estilos as pq_estilos
 
 log = log_interno.obter(__name__)
 
@@ -78,6 +88,7 @@ class JanelaPrincipal(QMainWindow):
         self._autor = ""
         self._criado_em: str | None = None
         self._ja_confirmou_fechamento = False
+        self._fonte_cfg = (cfg["fonte_padrao"], float(cfg["tamanho_padrao"]))
         self.setWindowIcon(recursos.icone_do_aplicativo())
         self.resize(cfg["janela_largura"], cfg["janela_altura"])
 
@@ -101,6 +112,12 @@ class JanelaPrincipal(QMainWindow):
                                      "tabela": self._inserir_tabela,
                                      "imagem": self._inserir_imagem,
                                      "tamanho_imagem": self._tamanho_imagem,
+                                 }, ao_exibir={
+                                     "criar_estilo": self.criar_estilo,
+                                     "modificar_estilo": self.modificar_estilo,
+                                     "painel_estilos": self._alternar_painel_estilos,
+                                     "navegacao": self._alternar_navegacao,
+                                     "regua": self._alternar_regua,
                                  })
         self.botao_arquivo = BotaoArquivo(self.comandos, self._recentes, self._abrir_recente)
         self.faixa = Faixa(self.comandos, self.painel, self.botao_arquivo)
@@ -112,8 +129,36 @@ class JanelaPrincipal(QMainWindow):
         self.barra_busca.substituir_um.connect(self._substituir_um)
         self.barra_busca.substituir_tudo.connect(self._substituir_tudo)
 
+        # Estilos e Exibir (M6): galeria, paineis laterais e regua.
+        galeria = self.faixa.galeria
+        galeria.escolhido.connect(self._estilo_escolhido)
+        galeria.pedido_atualizar.connect(
+            lambda sid: ed_estilos.atualizar_pela_selecao(self.painel, sid))
+        galeria.pedido_modificar.connect(self.modificar_estilo)
+        self.painel_estilos = PainelEstilos([BotaoAcao(self.comandos.acao(i), rotulo) for i, rotulo in (
+            ("criar_estilo", "Novo estilo..."), ("modificar_estilo", "Modificar..."),
+            ("limpar_formatacao", "Limpar tudo"))])
+        self.painel_estilos.escolhido.connect(self._estilo_escolhido)
+        self.dock_estilos = QDockWidget("Estilos", self)
+        self.dock_estilos.setObjectName("dock_estilos")
+        self.dock_estilos.setWidget(self.painel_estilos)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_estilos)
+        self.dock_estilos.hide()
+        self.navegacao = PainelNavegacao(self.painel)
+        self.navegacao.escolhido.connect(self.painel.ir_para_posicao)
+        self.dock_navegacao = QDockWidget("Navegação", self)
+        self.dock_navegacao.setObjectName("dock_navegacao")
+        self.dock_navegacao.setWidget(self.navegacao)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_navegacao)
+        self.dock_navegacao.hide()
+        self.dock_estilos.visibilityChanged.connect(lambda _v: self._sintonizar())
+        self.dock_navegacao.visibilityChanged.connect(lambda _v: self._sintonizar())
+        self._regua_visivel = True
+        self.comandos.acao("mostrar_regua").setChecked(True)
+
         self.atualizador = AtualizadorDeEstado(self.painel, self.comandos,
-                                               self.faixa.familia, self.faixa.tamanho)
+                                               self.faixa.familia, self.faixa.tamanho,
+                                               ao_atualizar=self._sintonizar)
         self.painel.registrar_atalhos(self.comandos.todas())
         self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
             *TABELA, "tamanho_imagem")])
@@ -150,6 +195,94 @@ class JanelaPrincipal(QMainWindow):
         self._pagina_mudou()
         self.atualizar_estatisticas()
         self._atualizar_titulo()
+
+    # -- estilos e exibir (M6) ------------------------------------------------
+
+    def _fonte_padrao(self) -> QFont:
+        return QFont(self.painel.documento_corpo().defaultFont())
+
+    def _sintonizar(self) -> None:
+        """Galeria, painel de estilos, aba Layout e botoes de mostrar com o estado atual.
+
+        Chamado pelo AtualizadorDeEstado a cada mudanca de cursor: tem de ser barato. As
+        miniaturas so' sao refeitas quando o catalogo muda (a assinatura muda).
+        """
+        doc = self.painel.document()
+        assinatura = (pq_estilos.assinatura(doc), self.painel.documento_corpo().defaultFont().key())
+        estilos = None
+        if assinatura != getattr(self, "_assinatura_estilos", None):
+            self._assinatura_estilos = assinatura
+            estilos = pq_estilos.catalogo(doc)
+            fonte = self._fonte_padrao()
+            self.faixa.galeria.definir_estilos(estilos, fonte, assinatura)
+            self.painel_estilos.definir_estilos(estilos, fonte, assinatura)
+            self.faixa.ajustar()
+        sid_par, sid_car = ed_estilos.estilo_no_cursor(self.painel)
+        atual = sid_car or sid_par
+        self.faixa.galeria.marcar(atual)
+        if self.dock_estilos.isVisible():
+            self.painel_estilos.marcar(atual)
+        bf = self.painel.textCursor().block().blockFormat()
+        self.faixa.mostrar_paragrafo(round(bf.leftMargin() * 15), round(bf.rightMargin() * 15),
+                                     round(bf.topMargin() * 15), round(bf.bottomMargin() * 15))
+        c = self.comandos
+        c.acao("marcas_formatacao").setChecked(self.painel.marcas_visiveis())
+        # A regua guarda o proprio estado: antes de a janela aparecer, isHidden() da' True.
+        c.acao("mostrar_regua").setChecked(self._regua_visivel)
+        c.acao("painel_estilos").setChecked(not self.dock_estilos.isHidden())
+        c.acao("painel_navegacao").setChecked(not self.dock_navegacao.isHidden())
+
+    def _estilo_escolhido(self, sid: str) -> None:
+        ed_estilos.aplicar_estilo(self.painel, sid)
+        self.painel.setFocus()
+
+    def modificar_estilo(self, sid: str | None = None) -> bool:
+        """Dialogo "Modificar estilo" do estilo `sid` (padrao: o do paragrafo do cursor)."""
+        estilos = pq_estilos.catalogo(self.painel.document())
+        sid = sid or ed_estilos.estilo_no_cursor(self.painel)[0]
+        estilo = estilos.obter(sid)
+        if estilo is None:
+            return False
+        novo = dialogo_estilo.pedir_estilo(self, estilo, estilos, self._fonte_padrao())
+        if novo is not None:
+            ed_estilos.redefinir_estilo(self.painel, novo)
+        self.painel.setFocus()
+        return novo is not None
+
+    def criar_estilo(self) -> str | None:
+        """Dialogo "Criar um estilo", com a formatacao da selecao como ponto de partida."""
+        estilos = pq_estilos.catalogo(self.painel.document())
+        n = 1
+        while estilos.por_nome(f"Estilo{n}") is not None:
+            n += 1
+        modelo = ed_estilos.modelo_da_selecao(self.painel, f"Estilo{n}")
+        if modelo is None:
+            return None
+        escolhido = dialogo_estilo.pedir_estilo(self, modelo, estilos, self._fonte_padrao(),
+                                                novo=True)
+        sid = None
+        if escolhido is not None:
+            escolhido.id = estilos.novo_id(escolhido.nome)
+            if escolhido.proximo == modelo.id:
+                escolhido.proximo = escolhido.id
+            sid = ed_estilos.adicionar_estilo(self.painel, escolhido)
+        self.painel.setFocus()
+        return sid
+
+    def _alternar_painel_estilos(self) -> None:
+        self.dock_estilos.setVisible(self.dock_estilos.isHidden())
+        self._sintonizar()
+
+    def _alternar_navegacao(self) -> None:
+        self.dock_navegacao.setVisible(self.dock_navegacao.isHidden())
+        if not self.dock_navegacao.isHidden():
+            self.navegacao.atualizar()
+        self._sintonizar()
+
+    def _alternar_regua(self) -> None:
+        self._regua_visivel = not self._regua_visivel
+        self.regua.setVisible(self._regua_visivel)
+        self._sintonizar()
 
     # -- pagina ------------------------------------------------------------
 
@@ -306,6 +439,12 @@ class JanelaPrincipal(QMainWindow):
         """Poe o documento lido na janela. Nao deixa o documento sujo."""
         self.painel.sair_da_faixa()
         para_qt.preencher(self.painel.documento_corpo(), modelo)
+        # Fonte do texto sem formatacao: a do docDefaults do arquivo (M6), ou a configurada.
+        estilos = pq_estilos.catalogo(self.painel.documento_corpo())
+        familia = estilos.padrao_caractere.get("fonte") or self._fonte_cfg[0]
+        meio_pt = estilos.padrao_caractere.get("tamanho_meio_pt")
+        self.painel.layout_pag.definir_fonte_padrao(familia, meio_pt / 2 if meio_pt
+                                                    else self._fonte_cfg[1])
         self.painel.carregar_faixas(modelo)
         self.painel.definir_configuracao_pagina(modelo.pagina)
         self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
@@ -318,6 +457,9 @@ class JanelaPrincipal(QMainWindow):
         self.barra_aviso.mostrar(self._avisos)
         self.atualizar_estatisticas()
         self._atualizar_titulo()
+        if not self.dock_navegacao.isHidden():
+            self.navegacao.atualizar()
+        self._sintonizar()
 
     def trazer_para_frente(self) -> None:
         if self.isMinimized():

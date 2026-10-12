@@ -116,9 +116,13 @@ class ConjuntoDeFaixas(QObject):
         self._largura = float(largura_tw)
         self._faixas: dict[tuple[str, str], FaixaQt] = {}
         self._carregando = False
+        #: O documento do corpo: cabecalho e rodape usam o catalogo de estilos dele (M6).
+        self.doc_estilos = None
 
     def _nova(self, onde: str, tipo: str, do_arquivo: bool) -> FaixaQt:
         faixa = FaixaQt(onde, tipo, self._fonte, self._largura, do_arquivo)
+        if self.doc_estilos is not None:
+            faixa.doc._doc_estilos = self.doc_estilos
         # contentsChanged, e nao contentsChange: este vem antes do layout ser refeito, e a
         # altura lida nele seria a antiga (o corpo desceria uma tecla atrasado).
         faixa.doc.contentsChanged.connect(self._mudou_conteudo)
@@ -159,6 +163,13 @@ class ConjuntoDeFaixas(QObject):
                        if (f := self._faixas.get((onde, t))) is not None]
             saida.append(max(alturas, default=0.0))
         return saida[0], saida[1]
+
+    def definir_fonte(self, fonte: QFont) -> None:
+        """Fonte padrao do documento (docDefaults): vale para as variantes novas e as que existem."""
+        self._fonte = QFont(fonte)
+        for faixa in self._faixas.values():
+            faixa.doc.setDefaultFont(self._fonte)
+            faixa.doc.setModified(False)
 
     def definir_largura(self, largura_tw: float) -> None:
         self._largura = float(largura_tw)

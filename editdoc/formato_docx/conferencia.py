@@ -4,6 +4,7 @@ A gravacao escreve o temporario, le de volta o que ficou no disco e compara com
 o que o usuario viu: mesma estrutura (paragrafos, tabelas, linhas, celulas e
 mesclas), mesmo texto, mesmas quebras, as mesmas imagens (pelos bytes) e os
 mesmos campos. Cabecalho e rodape (M5) passam pela mesma comparacao, um por tipo.
+Estilos (M6): o estilo de cada paragrafo e os estilos de caractere usados nele.
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -55,7 +56,8 @@ def _itens(blocos, saida: list, onde: str) -> None:
         else:
             n_par += 1
             saida.append((f"{onde}paragrafo {n_par}", "p", texto_do_paragrafo(bloco),
-                          bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco)))
+                          bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
+                          bloco.estilo, tuple(sorted({r.estilo for r in bloco.runs if r.estilo}))))
 
 
 def conferir(dados: bytes, esperado: Documento) -> None:
@@ -92,6 +94,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"quebra de pagina diferente no {lugar}")
             if x[5] != y[5]:
                 raise FalhaDeConferencia(f"campo diferente no {lugar}")
+            if x[6:] != y[6:]:
+                raise FalhaDeConferencia(f"estilo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")
         raise FalhaDeConferencia(f"estrutura de tabela diferente em {lugar}")
     if len(a) != len(b):

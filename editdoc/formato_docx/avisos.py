@@ -123,8 +123,9 @@ CATALOGO: dict[str, tuple] = {
                   "o texto ficou, mas o controle se perde.",
         True),
     "ESTILO": (
-        lambda n: f"{n} {_plural(n, 'estilo de parágrafo ou de caractere não é aplicado', 'estilos de parágrafo ou de caractere não são aplicados')} "
-                  "ao salvar. O texto fica com a formatação direta.",
+        lambda n: f"{n} {_plural(n, 'referência de estilo não pôde ser aplicada', 'referências de estilo não puderam ser aplicadas')} "
+                  "(estilo que não existe no arquivo ou formatação condicional de tabela). "
+                  "O texto fica com o estilo Normal ao salvar.",
         True),
     "FORMATACAO": (
         lambda n: f"{n} {_plural(n, 'formatação não é preservada', 'formatações não são preservadas')} "

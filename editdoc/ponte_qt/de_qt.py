@@ -8,6 +8,9 @@ QTextTable vira `Tabela`. Celula coberta por mescla vertical volta como celula
 "continua", vazia, como o Word grava. Bloco estrutural vazio (ver para_qt) nao
 volta. Largura da coluna vem da restricao fixa; uma tabela colada de HTML, sem
 largura fixa, divide a largura do corpo.
+
+Estilos (M6): o id do estilo sai da propriedade de usuario do bloco e do caractere; a
+formatacao que volta ao modelo e' so' a direta, o efetivo menos o estilo resolvido.
 """
 
 from __future__ import annotations
@@ -21,8 +24,10 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import tipo_do_campo
 from editdoc.modelo.documento import (CARACTERE_OBJETO, Celula, Documento, Imagem, Linha,
                                       Paragrafo, Run, Tabela)
+from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
 from editdoc.ponte_qt import campos, imagens
+from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
                                       ler_json)
@@ -108,20 +113,35 @@ def imagem_do_formato(doc: QTextDocument, cf: QTextCharFormat) -> Imagem | None:
                   descricao=fmt.toolTip() or "")
 
 
-def _paragrafo(bloco) -> Paragrafo:
+def _run_direto(texto: str, cf: QTextCharFormat, sid_par, res) -> Run:
+    """Run com a formatacao direta: o efetivo do Qt menos o estilo resolvido."""
+    run = _run(texto, cf)
+    sid_car = pq_estilos.estilo_do_caractere(cf)
+    if sid_car is not None and res.estilos.obter(sid_car) is not None:
+        run.estilo = sid_car
+    base = res.caractere(sid_par, run.estilo)
+    for k in CAMPOS_CARACTERE:
+        valor = getattr(run, k)
+        if valor is not None and valor == base.get(k):
+            setattr(run, k, None)
+    return run
+
+
+def _paragrafo(bloco, res) -> Paragrafo:
     bf = bloco.blockFormat()
     p = Paragrafo()
-    p.alinhamento = _alinhamento(bf)
-    if bf.hasProperty(P.BlockLeftMargin):
-        p.recuo_esquerdo_tw = twips_de_px(bf.leftMargin())
-    if bf.hasProperty(P.TextIndent):
-        p.recuo_primeira_linha_tw = twips_de_px(bf.textIndent())
-    if bf.hasProperty(P.BlockTopMargin):
-        p.espaco_antes_tw = twips_de_px(bf.topMargin())
-    if bf.hasProperty(P.BlockBottomMargin):
-        p.espaco_depois_tw = twips_de_px(bf.bottomMargin())
-    if (bf.hasProperty(P.LineHeight) and bf.lineHeightType() == _PROPORCIONAL):
-        p.espacamento_linha_pct = round(bf.lineHeight())
+    sid = pq_estilos.estilo_do_bloco(bf)
+    if sid is not None and sid != res.estilos.id_padrao() and res.estilos.obter(sid) is not None:
+        p.estilo = sid
+    base, _car = res.paragrafo(p.estilo)
+    efetivo = pq_estilos.props_de_bloco(bf)
+    for k in CAMPOS_PARAGRAFO:
+        valor = efetivo.get(k)
+        if valor is not None and valor != base.get(k):
+            setattr(p, k, valor)
+    nivel = efetivo.get("nivel")
+    if nivel != base.get("nivel"):
+        p.nivel = NIVEL_CORPO if nivel is None else nivel
     p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     lista = bloco.textList()
     if lista is not None:
@@ -137,7 +157,7 @@ def _paragrafo(bloco) -> Paragrafo:
                 # Campo (M5): um run por caractere de objeto, com o resultado guardado.
                 for caractere in frag.text():
                     if caractere == CARACTERE_OBJETO:
-                        run = _run(campos.resultado_de(cf), cf)
+                        run = _run_direto(campos.resultado_de(cf), cf, p.estilo, res)
                         instrucao = campos.instrucao_de(cf)
                         # Instrucao estranha (formato montado a mao): fica o texto, sem campo.
                         run.campo = instrucao if tipo_do_campo(instrucao) else None
@@ -151,7 +171,7 @@ def _paragrafo(bloco) -> Paragrafo:
                     if imagem is not None:
                         p.runs.append(Run(texto=CARACTERE_OBJETO, imagem=imagem))
             else:
-                p.runs.append(_run(frag.text(), cf))
+                p.runs.append(_run_direto(frag.text(), cf, p.estilo, res))
         it += 1
     return p
 
@@ -160,7 +180,7 @@ def _estrutural_vazio(bloco) -> bool:
     return bloco.text() == "" and bool(bloco.blockFormat().property(PROP_ESTRUTURAL))
 
 
-def _blocos(iterador, largura_corpo_tw: int, em_celula: bool = False) -> list:
+def _blocos(iterador, largura_corpo_tw: int, em_celula: bool = False, res=None) -> list:
     """Blocos de um quadro ou de uma celula, a partir do iterador do Qt.
 
     Dentro de celula a quebra de pagina nao vale (o EditDoc nao quebra pagina na tabela):
@@ -172,14 +192,14 @@ def _blocos(iterador, largura_corpo_tw: int, em_celula: bool = False) -> list:
         quadro = it.currentFrame()
         if quadro is not None:
             if isinstance(quadro, QTextTable):
-                saida.append(_tabela(quadro, largura_corpo_tw))
+                saida.append(_tabela(quadro, largura_corpo_tw, res))
             else:
                 # Quadro generico (HTML colado): o conteudo entra como blocos.
-                saida.extend(_blocos(quadro.begin(), largura_corpo_tw, em_celula))
+                saida.extend(_blocos(quadro.begin(), largura_corpo_tw, em_celula, res))
         else:
             bloco = it.currentBlock()
             if bloco.isValid() and not _estrutural_vazio(bloco):
-                paragrafo = _paragrafo(bloco)
+                paragrafo = _paragrafo(bloco, res)
                 if em_celula:
                     paragrafo.quebra_antes = False
                 saida.append(paragrafo)
@@ -217,7 +237,7 @@ def _celula_de_formato(celula: Celula, fmt) -> dict:
     return dado
 
 
-def _tabela(qt: QTextTable, largura_corpo_tw: int) -> Tabela:
+def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
     tf = qt.format()
     dado = ler_json(tf, PROP_TABELA)
     tabela = Tabela(colunas_tw=larguras_tw(qt, largura_corpo_tw))
@@ -247,7 +267,8 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int) -> Tabela:
                 c += 1
                 continue
             if cel_qt.row() == r:
-                celula = Celula(blocos=_blocos(cel_qt.begin(), largura_corpo_tw, True), colunas=span,
+                celula = Celula(blocos=_blocos(cel_qt.begin(), largura_corpo_tw, True, res),
+                                colunas=span,
                                 mescla_vertical="inicio" if cel_qt.rowSpan() > 1 else None)
                 dado_cel = _celula_de_formato(celula, cel_qt.format())
                 if dado_linha is None:
@@ -268,12 +289,15 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int) -> Tabela:
 
 def extrair_blocos(documento_qt: QTextDocument, largura_corpo_tw: int = _CORPO_PADRAO_TW) -> list:
     """Blocos de um documento de cabecalho ou rodape."""
-    return _blocos(documento_qt.rootFrame().begin(), largura_corpo_tw)
+    res = pq_estilos.Resolvedor(pq_estilos.catalogo(documento_qt))
+    return _blocos(documento_qt.rootFrame().begin(), largura_corpo_tw, res=res)
 
 
 def extrair(documento_qt: QTextDocument) -> Documento:
     largura = documento_qt.pageSize().width()
     # No layout paginado a unidade e' o twip; fora dele (testes), usa o corpo A4.
     largura_corpo = round(largura) if 1000 < largura <= 100000 else _CORPO_PADRAO_TW
-    paragrafos = _blocos(documento_qt.rootFrame().begin(), largura_corpo)
-    return Documento(paragrafos=paragrafos)
+    estilos = pq_estilos.catalogo(documento_qt)
+    paragrafos = _blocos(documento_qt.rootFrame().begin(), largura_corpo,
+                         res=pq_estilos.Resolvedor(estilos))
+    return Documento(paragrafos=paragrafos, estilos=estilos)
