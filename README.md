@@ -4,7 +4,7 @@ Editor de documentos no formato `.docx`, com a aparência de um processador de
 texto de escritório: páginas A4, faixa de opções, estilos, tabelas, imagens,
 cabeçalho e rodapé.
 
-> **Versão 0.0.2: esqueleto.** Ainda não edita nem abre documentos. Esta versão
+> **Versão 0.0.3: esqueleto.** Ainda não edita nem abre documentos. Esta versão
 > existe para provar o pipeline de build, de testes e de empacotamento. A
 > primeira versão utilizável é a 0.1.0. O plano completo está em
 > [docs/ARQUITETURA.md](docs/ARQUITETURA.md).

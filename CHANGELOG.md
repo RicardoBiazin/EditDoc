@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.3 - 2026-10-11
+
+Spikes de viabilidade feitos antes do M1. Nenhuma mudança no programa: o código
+novo fica em `spikes/`, fora do pacote `editdoc/`, do build e dos testes oficiais.
+
+- Spike A, visão em páginas sobre QTextDocument: paginação, fronteiras, hit-test,
+  WYSIWYG, desfazer, cabeçalho e rodapé, tabelas entre páginas, zoom e HiDPI. Passa
+  com ressalvas: a pintura de um quadro fica no limite a 25% de zoom.
+- Spike B, .docx com lxml: leitor e escritor próprios, ida-e-volta, validador de
+  ordem e arquivos hostis. Passa com ressalvas: a abertura no Word não foi verificada.
+- `docs/SPIKES.md`: resultados, decisões e pendências.
+
 ## 0.0.2 - 2026-10-11
 
 Renomeado de EditWord para EditDoc. Nenhuma mudança de comportamento.
