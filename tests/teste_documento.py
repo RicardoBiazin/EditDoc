@@ -60,16 +60,18 @@ def documento_simples() -> Documento:
 
 
 def docx_com_tabela_e_quebra() -> bytes:
-    """Amostra com recursos que o M2 avisa e nao edita: tabela e quebra de coluna.
+    """Amostra com uma tabela (editada desde o M4, sem aviso) e com recursos que o
+    EditDoc avisa e nao edita: equacao e quebra de coluna.
 
-    Quebra de pagina deixou de ser aviso no M3 (vira quebra_antes): a checagem de
-    aviso usa a quebra de coluna, que continua sem suporte.
+    Quebra de pagina deixou de ser aviso no M3 (vira quebra_antes), e tabela deixou de
+    ser aviso no M4: a perda que a checagem usa e' a equacao, que continua sem suporte.
     """
     base = fx.bytes_de(documento_simples())
     xml = fx.partes_de(base)["word/document.xml"]
     tabela = (b'<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>'
               b'<w:tr><w:tc><w:p><w:r><w:t>celula</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
-              b'<w:p><w:r><w:br w:type="column"/></w:r></w:p>')
+              b'<w:p><w:r><w:br w:type="column"/></w:r>'
+              b'<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"/></w:p>')
     novo = xml.replace(b"<w:sectPr", tabela + b"<w:sectPr", 1)
     return fx.com_parte(base, "word/document.xml", novo)
 
@@ -233,8 +235,12 @@ def testar_barra_de_aviso(tmp: pathlib.Path) -> None:
         janela = gerente.abrir(str(arquivo))
     checa(janela is not None, "o arquivo com tabela abre")
     checa(not janela.barra_aviso.isHidden(), "a barra de aviso aparece")
-    checa("tabela" in janela.barra_aviso.texto_completo().lower(), "o aviso fala da tabela")
-    checa("celula" in janela.painel.toPlainText(), "o texto da tabela foi preservado como paragrafo")
+    checa("equação" in janela.barra_aviso.texto_completo().lower(), "o aviso fala da equação")
+    checa("tabela" not in janela.barra_aviso.texto_completo().lower(),
+          "a tabela nao gera aviso: desde o M4 ela e' editada como tabela")
+    checa("celula" in janela.painel.toPlainText(), "o texto da tabela foi preservado")
+    checa(janela.painel.document().rootFrame().childFrames() != [],
+          "a tabela abre como tabela (QTextTable), nao como paragrafos")
     detalhes: list[str] = []
     with dialogos(mostrar_detalhes=lambda _p, _t, texto: detalhes.append(texto)):
         janela.barra_aviso._mostrar_detalhes()
@@ -263,8 +269,10 @@ def testar_perda_confirmada(tmp: pathlib.Path) -> None:
     with dialogos(pedir_perda=cancelar):
         checa(janela.salvar() is False, "cancelar a perda nao salva")
     checa(arquivo.read_bytes() == original, "o arquivo continua igual depois do cancelamento")
-    checa(len(perguntas) == 1 and any("tabela" in linha for linha in perguntas[0]),
-          "a pergunta lista a perda da tabela")
+    checa(len(perguntas) == 1 and any("equação" in linha for linha in perguntas[0]),
+          "a pergunta lista a perda da equação")
+    checa(len(perguntas) == 1 and not any("tabela" in linha for linha in perguntas[0]),
+          "contraprova: a tabela nao aparece como perda (M4)")
 
     copia = tmp / "copia.docx"
     with dialogos(pedir_perda=lambda *_a: "copia",

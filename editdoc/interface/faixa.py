@@ -10,9 +10,10 @@ no menu e na dica (tooltip). Botao nao usa setDefaultAction, porque o Qt copia
 o texto da acao para o botao e nao deixa encurtar: cada botao sincroniza com a
 acao por sinal.
 
-Abas: Pagina Inicial e Layout (M3). Dois estados por grupo. O estado
-intermediario, com botoes menores em tres linhas, e as abas contextuais entram
-no M6.
+Abas: Pagina Inicial, Inserir (M4: tabela e imagem) e Layout (M3). Dois estados
+por grupo. O estado intermediario, com botoes menores em tres linhas, e as abas
+contextuais (Layout da Tabela, Formato da Imagem) entram no M6; ate' la os
+comandos de tabela ficam na aba Inserir e no menu de contexto.
 """
 
 from __future__ import annotations
@@ -21,11 +22,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QDoubleValidator
 from PySide6.QtWidgets import (QComboBox, QFontComboBox, QFrame, QHBoxLayout, QLabel,
                                QMenu, QStackedWidget, QTabBar, QToolButton, QVBoxLayout,
-                               QWidget)
+                               QWidget, QWidgetAction)
 
-from editdoc.edicao import formatacao
+from editdoc.edicao import formatacao, tabelas
 from editdoc.interface.comandos import MARGENS_DAS_ACOES, PAPEL_DAS_ACOES, Comandos
 from editdoc.interface.planejamento import recolher_grupos
+from editdoc.interface.seletor_grade import SeletorDeGrade
 
 TAMANHOS = (8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72)
 MARGEM_FAIXA = 8
@@ -43,6 +45,8 @@ ROTULOS = {
     "alinhar_direita": "Direita", "justificar": "Justificar",
     "localizar": "Localizar", "substituir": "Substituir",
     "selecionar_tudo": "Selecionar", "quebra_pagina": "Quebra",
+    "excluir_tabela": "Excluir tabela", "inserir_imagem": "Imagem",
+    "tamanho_imagem": "Tamanho da imagem",
 }
 
 
@@ -214,6 +218,35 @@ class Faixa(QFrame):
         ])
         layout_linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
 
+        # Aba Inserir (M4): tabela (grade de escolha ou dialogo), comandos de tabela e imagem.
+        self.seletor_grade = SeletorDeGrade()
+        self.seletor_grade.escolhido.connect(self._grade_escolhida)
+        self._botao_tabela = QToolButton()
+        self._botao_tabela.setText("Tabela ▾")
+        self._botao_tabela.setToolTip("Inserir tabela")
+        self._botao_tabela.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._botao_tabela.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._botao_tabela.setAutoRaise(True)
+        self._botao_tabela.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.menu_tabela = QMenu(self._botao_tabela)
+        grade_acao = QWidgetAction(self.menu_tabela)
+        grade_acao.setDefaultWidget(self.seletor_grade)
+        self.menu_tabela.addAction(grade_acao)
+        self.menu_tabela.addAction(c.acao("inserir_tabela"))
+        self._botao_tabela.setMenu(self.menu_tabela)
+        inserir_linha = _linha([
+            self._botao_tabela,
+            _menu("Linhas e colunas", [c.acao(i) for i in (
+                "inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerda",
+                "inserir_coluna_direita", "excluir_linha", "excluir_coluna")]),
+            _menu("Mesclar", [c.acao("mesclar_celulas"), c.acao("dividir_celula")]),
+            _botao(c, "excluir_tabela"),
+            _botao(c, "inserir_imagem"),
+            _botao(c, "tamanho_imagem"),
+        ])
+        inserir_linha.layout().addStretch(1)
+        inserir_linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
+
         topo = QHBoxLayout()
         topo.setContentsMargins(0, 0, 0, 0)
         if botao_arquivo is not None:
@@ -222,6 +255,7 @@ class Faixa(QFrame):
         topo.addWidget(_botao(c, "refazer"))
         self._abas = QTabBar()
         self._abas.addTab("Página Inicial")
+        self._abas.addTab("Inserir")
         self._abas.addTab("Layout")
         self._abas.setExpanding(False)
         topo.addWidget(self._abas, 1)
@@ -237,6 +271,7 @@ class Faixa(QFrame):
 
         self._conteudo = QStackedWidget()
         self._conteudo.addWidget(pagina_inicial)
+        self._conteudo.addWidget(inserir_linha)
         self._conteudo.addWidget(layout_linha)
         self._abas.currentChanged.connect(self._conteudo.setCurrentIndex)
 
@@ -268,6 +303,20 @@ class Faixa(QFrame):
     def resizeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
         super().resizeEvent(evento)
         self.ajustar()
+
+    def abrir_aba(self, nome: str) -> None:
+        """Mostra a aba pelo nome ("Página Inicial", "Inserir", "Layout")."""
+        for i in range(self._abas.count()):
+            if self._abas.tabText(i) == nome:
+                self._abas.setCurrentIndex(i)
+                return
+
+    # -- tabela ---------------------------------------------------------------
+
+    def _grade_escolhida(self, linhas: int, colunas: int) -> None:
+        self.menu_tabela.close()
+        tabelas.inserir_tabela(self._editor, linhas, colunas)
+        self._editor.setFocus()
 
     # -- fonte --------------------------------------------------------------
 

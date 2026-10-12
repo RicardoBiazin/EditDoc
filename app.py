@@ -48,7 +48,16 @@ OBRIGATORIOS = (
     "editdoc.interface.controle_zoom",
     "editdoc.modelo.pagina",
     "editdoc.modelo.folhas",
+    "editdoc.modelo.imagem",
+    "editdoc.ponte_qt.imagens",
+    "editdoc.edicao.tabelas",
+    "editdoc.edicao.imagens",
+    "editdoc.interface.seletor_grade",
 )
+
+#: Formatos de imagem que o .docx traz e o Qt precisa decodificar. JPEG e GIF vem de
+#: plugins (imageformats/qjpeg.dll, qgif.dll): sem eles a imagem vira quadro cinza.
+FORMATOS_DE_IMAGEM = ("png", "jpeg", "gif", "bmp")
 
 AUMID = "RicardoBiazin.EditDoc"
 
@@ -63,18 +72,38 @@ def _identidade_na_barra_de_tarefas() -> None:
 
 
 def _ida_e_volta_docx(falhas: list[str]) -> None:
-    """Escreve um .docx e le de volta, sem Qt: pega lxml ou zipfile ausentes no .exe."""
+    """Escreve um .docx e le de volta, sem Qt: pega lxml ou zipfile ausentes no .exe.
+
+    Desde o M4 a ida-e-volta leva uma tabela, que precisa voltar como tabela.
+    """
     from editdoc.formato_docx.escritor import escrever
     from editdoc.formato_docx.leitor import ler
-    from editdoc.modelo.documento import Documento, Paragrafo, Run
+    from editdoc.modelo.documento import Celula, Documento, Linha, Paragrafo, Run, Tabela
 
     try:
-        ida = Documento(paragrafos=[Paragrafo(runs=[Run("autoverificacao", negrito=True)])])
+        tabela = Tabela(colunas_tw=[2000], linhas=[Linha(celulas=[Celula(
+            blocos=[Paragrafo(runs=[Run("celula")])])])])
+        ida = Documento(paragrafos=[Paragrafo(runs=[Run("autoverificacao", negrito=True)]),
+                                    tabela])
         lido, _avisos = ler(escrever(ida))
-        if [p.runs[0].texto for p in lido.paragrafos if p.runs] != ["autoverificacao"]:
+        if [p.runs[0].texto for p in lido.paragrafos
+                if isinstance(p, Paragrafo) and p.runs] != ["autoverificacao"]:
             falhas.append("ida-e-volta do .docx nao confere")
+        if not any(isinstance(b, Tabela) for b in lido.paragrafos):
+            falhas.append("a tabela nao voltou do .docx como tabela")
     except Exception as erro:  # noqa: BLE001 - interessa o motivo, qualquer um
         falhas.append(f"ida-e-volta do .docx falhou: {erro}")
+
+
+def _formatos_de_imagem(falhas: list[str]) -> None:
+    """Os plugins de imagem do Qt estao no pacote (JPEG e GIF sao plugins)."""
+    from PySide6.QtGui import QImageReader
+
+    suportados = {bytes(f).decode("ascii", "replace").lower()
+                  for f in QImageReader.supportedImageFormats()}
+    for formato in FORMATOS_DE_IMAGEM:
+        if formato not in suportados:
+            falhas.append(f"o Qt nao decodifica {formato}: falta o plugin de imagem no pacote")
 
 
 def autoverificacao() -> int:
@@ -97,6 +126,8 @@ def autoverificacao() -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
     if "qtbase_pt_BR" not in idioma.instalar(app):
         falhas.append("traducao qtbase_pt_BR nao carregou: botoes sairiam em ingles")
+
+    _formatos_de_imagem(falhas)
 
     try:
         from editdoc.interface.janela_principal import JanelaPrincipal

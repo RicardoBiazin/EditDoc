@@ -21,7 +21,8 @@ from PySide6.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from editdoc import APP, VERSAO, configuracao, log_interno, recursos
 from editdoc.armazenamento import gravacao
-from editdoc.edicao import busca
+from editdoc.edicao import busca, tabelas
+from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao.busca import Opcoes
 from editdoc.formato_docx import conferencia
 from editdoc.formato_docx.avisos import Aviso
@@ -32,11 +33,12 @@ from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
-from editdoc.interface.comandos import Comandos
+from editdoc.interface.comandos import TABELA, Comandos
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import Faixa
 from editdoc.interface.painel_documento import PainelDocumento
 from editdoc.interface.regua import Regua
+from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.documento import Documento
 from editdoc.modelo.estatisticas import contar
 from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
@@ -91,6 +93,10 @@ class JanelaPrincipal(QMainWindow):
                                      "papel": self._mudar_papel,
                                      "orientacao": self._mudar_orientacao,
                                      "margens": self._mudar_margens,
+                                 }, ao_inserir={
+                                     "tabela": self._inserir_tabela,
+                                     "imagem": self._inserir_imagem,
+                                     "tamanho_imagem": self._tamanho_imagem,
                                  })
         self.botao_arquivo = BotaoArquivo(self.comandos, self._recentes, self._abrir_recente)
         self.faixa = Faixa(self.comandos, self.painel, self.botao_arquivo)
@@ -105,6 +111,9 @@ class JanelaPrincipal(QMainWindow):
         self.atualizador = AtualizadorDeEstado(self.painel, self.comandos,
                                                self.faixa.familia, self.faixa.tamanho)
         self.painel.registrar_atalhos(self.comandos.todas())
+        self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
+            *TABELA, "tamanho_imagem")])
+        self.painel.mensagem.connect(lambda texto: self.statusBar().showMessage(texto, 6000))
         # Sem isto o atalho so' funciona quando o foco esta no painel.
         for acao in self.comandos.todas():
             self.addAction(acao)
@@ -176,6 +185,49 @@ class JanelaPrincipal(QMainWindow):
             _, sup, inf, esq, dir_ = predefinida
             nova = atual.com_margens(sup, inf, esq, dir_)
         self._alterar_pagina(nova)
+
+    # -- inserir: tabela e imagem -------------------------------------------
+
+    def _inserir_tabela(self) -> None:
+        escolha = dialogos_modais.pedir_tamanho_tabela(self, tabelas.LINHAS_MAXIMAS,
+                                                       tabelas.COLUNAS_MAXIMAS)
+        if escolha is None:
+            return
+        linhas, colunas = escolha
+        if tabelas.inserir_tabela(self.painel, linhas, colunas) is None:
+            dialogos_modais.avisar(self, "Inserir tabela",
+                                   f"A tabela pode ter no máximo {tabelas.CELULAS_MAXIMAS} "
+                                   "células. Com mais que isso a digitação fica lenta demais.")
+        self.painel.setFocus()
+
+    def _inserir_imagem(self) -> None:
+        caminho = dialogos_modais.pedir_arquivo_imagem(self)
+        if not caminho:
+            return
+        try:
+            if os.path.getsize(caminho) > mod_imagem.BYTES_MAXIMOS:
+                raise ed_imagens.ImagemRecusada("A imagem tem mais de 64 MB.")
+            with open(caminho, "rb") as arquivo:
+                dados = arquivo.read(mod_imagem.BYTES_MAXIMOS + 1)
+            ed_imagens.inserir_bytes(self.painel, dados)
+        except ed_imagens.ImagemRecusada as erro:
+            dialogos_modais.avisar(self, "Inserir imagem", str(erro))
+        except OSError as erro:
+            log.warning("imagem ilegivel %s: %s", caminho, erro)
+            dialogos_modais.avisar(self, "Inserir imagem", "Não foi possível ler o arquivo de imagem.")
+        self.painel.setFocus()
+
+    def _tamanho_imagem(self) -> None:
+        pos = self.painel.imagem_selecionada()
+        tamanho = ed_imagens.tamanho_em_px(self.painel, pos) if pos is not None else None
+        if tamanho is None:
+            return
+        escolha = dialogos_modais.pedir_tamanho_imagem(self, ed_imagens.cm_de_px(tamanho[0]),
+                                                       ed_imagens.cm_de_px(tamanho[1]))
+        if escolha is not None:
+            ed_imagens.redimensionar(self.painel, pos, ed_imagens.px_de_cm(escolha[0]),
+                                     ed_imagens.px_de_cm(escolha[1]))
+        self.painel.setFocus()
 
     # -- estatisticas e busca ----------------------------------------------
 

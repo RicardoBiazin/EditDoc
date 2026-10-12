@@ -20,6 +20,8 @@ class Contagem:
 
 
 def contar(texto: str) -> Contagem:
+    # A imagem ocupa um caractere de objeto (U+FFFC) no texto; o Word nao a conta.
+    texto = texto.replace(chr(0xFFFC), "")
     quebras = sum(texto.count(q) for q in _QUEBRAS)
     return Contagem(
         palavras=len(texto.split()),

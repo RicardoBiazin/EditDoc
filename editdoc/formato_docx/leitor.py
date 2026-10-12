@@ -6,8 +6,11 @@ recusado antes do parse, codificacao UTF-8 so', lxml sem entidades externas, sem
 rede, sem DTD e com profundidade limitada. Toda falha vira `ErroDocx` com codigo.
 
 O que o programa nao modela NAO e' descartado em silencio: vira aviso (ver
-`avisos.py`). Tabela simples vira paragrafos, com aviso; campos viram o texto que
-o Word mostra; revisoes aceitas; exclusoes e controles de conteudo tem aviso.
+`avisos.py`). Tabelas (M4) viram `Tabela`; a que passa dos limites, ou esta'
+aninhada fundo demais, vira paragrafos com aviso. Imagens na linha (PNG, JPEG,
+GIF, BMP) viram `Imagem` com os bytes originais; outro formato e' aviso. Campos
+viram o texto que o Word mostra; revisoes aceitas; exclusoes e controles de
+conteudo tem aviso.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import os
 import posixpath
 import re
 import zipfile
+from dataclasses import replace
 
 from lxml import etree
 
@@ -24,11 +28,16 @@ from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.padroes import (FONTE_PADRAO, LINHA_PADRAO,
                                          TAMANHO_PADRAO_MEIO_PT)
-from editdoc.formato_docx.nomes import (CP, CT_DOCUMENTO_MACRO, DC, DCT, MC_NS, PKG_CT,
-                                        RT_STRICT, W, W_STRICT, q)
+from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, MATH_NS, MC_NS,
+                                        PIC_NS, PKG_CT, R_NS, RT_STRICT, URI_IMAGEM, W,
+                                        W_STRICT, WP_NS, q)
 from editdoc.formato_docx.ordem import caminho_dos_rels
-from editdoc.modelo.documento import Documento, Paragrafo, Run, normalizar
-from editdoc.modelo.pagina import Pagina
+from editdoc.modelo import imagem as mod_imagem
+from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Celula,
+                                      Documento, Imagem, Linha, Paragrafo, Run, Tabela,
+                                      colunas_da_linha, normalizar, run_de_imagem)
+from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
+from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
 LIMITES_PADRAO = {
     "entradas": 5000,
@@ -37,7 +46,30 @@ LIMITES_PADRAO = {
     "razao_min_bytes": 10 * 1024 * 1024,  # so checa a razao acima deste tamanho
     "razao_max": 200,
     "profundidade": 256,
+    # Tabelas (M4). O Qt refaz o layout da tabela inteira a cada tecla: medido,
+    # cerca de 0,06 ms por celula (5000 celulas = 300 ms por tecla). Acima disto a
+    # tabela vira paragrafos, com aviso. 63 colunas e' o maximo do proprio Word.
+    "tabela_linhas": 2000,
+    "tabela_colunas": 63,
+    "tabela_celulas": 5000,
+    "tabela_profundidade": 4,
 }
+
+#: Maior medida aceita para imagem e coluna: o maior papel (176 cm).
+_EMU_MAXIMO = PAPEL_MAXIMO_TW * EMU_POR_TWIP
+_ESTILO_BORDA = {"single": "simples", "double": "dupla", "dotted": "pontilhada",
+                 "dashed": "tracejada", "none": "nenhuma", "nil": "nenhuma"}
+_LADOS_TABELA = (("top", "sup"), ("left", "esq"), ("start", "esq"), ("bottom", "inf"),
+                 ("right", "dir"), ("end", "dir"), ("insideH", "horizontal"),
+                 ("insideV", "vertical"))
+_VALIGN = {"top": "topo", "center": "centro", "bottom": "base"}
+_JC_TABELA = {"left": "esquerda", "start": "esquerda", "center": "centro",
+              "right": "direita", "end": "direita"}
+#: Filhos de tblPr, trPr e tcPr sem efeito visivel que o modelo nao usa.
+_TBLPR_NEUTRAS = {"tblLook", "tblStyleRowBandSize", "tblStyleColBandSize", "tblOverlap",
+                  "tblPrChange"}
+_TRPR_NEUTRAS = {"cnfStyle", "divId", "cantSplit", "wBefore", "wAfter", "trPrChange"}
+_TCPR_NEUTRAS = {"cnfStyle", "tcW", "noWrap", "tcFitText", "hideMark", "tcPrChange"}
 
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _DOCTYPE = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)", re.IGNORECASE)
@@ -84,6 +116,12 @@ def _onoff(el) -> bool:
     return v is None or v.lower() not in ("0", "false", "off")
 
 
+def _onoff_atr(el, nome: str) -> bool:
+    """Atributo on/off ausente = falso (ao contrario do elemento on/off)."""
+    v = _atr(el, nome)
+    return v is not None and v.lower() in ("1", "true", "on")
+
+
 def _inteiro(valor: str | None) -> int | None:
     if valor is None:
         return None
@@ -120,7 +158,8 @@ def _parse(dados: bytes, nome: str, profundidade: int):
 
 
 class _Contexto:
-    def __init__(self, coletor: Coletor, numeracao: dict[str, str | None]) -> None:
+    def __init__(self, coletor: Coletor, numeracao: dict[str, str | None],
+                 lim: dict | None = None) -> None:
         self.coletor = coletor
         #: numId -> formato do nivel 0 ("bullet", "decimal", outro ou None)
         self.numeracao = numeracao
@@ -128,6 +167,19 @@ class _Contexto:
         self.secoes = 0
         #: pagina do sectPr final, ja validada; None se nao for representavel
         self.pagina_final: Pagina | None = None
+        self.lim = {**LIMITES_PADRAO, **(lim or {})}
+        #: relacoes do documento principal: rId -> (tipo, alvo resolvido, externo)
+        self.relacoes: dict[str, tuple[str, str, bool]] = {}
+        #: le uma parte do pacote (com os limites do leitor); None fora do _ler
+        self.ler_parte = None
+        self.nomes: set[str] = set()
+        #: alvo -> bytes, para nao ler duas vezes a mesma imagem
+        self.midias: dict[str, bytes] = {}
+        #: estilos de tabela: styleId -> elemento w:style; e o id do padrao
+        self.estilos_tabela: dict[str, object] = {}
+        self.estilo_tabela_padrao: str | None = None
+        #: profundidade de tabela atual (0 = corpo)
+        self.nivel_tabela = 0
 
 
 # -- classificacao ------------------------------------------------------------
@@ -136,7 +188,9 @@ def _classificar_desenho(el) -> str:
     locais = {etree.QName(x).localname for x in el.iter() if isinstance(x.tag, str)}
     if "txbxContent" in locais:
         return "CAIXA_DE_TEXTO"
-    if locais & {"blip", "imagedata", "pic", "chart"}:
+    if "chart" in locais:
+        return "OBJETO"
+    if locais & {"blip", "imagedata", "pic"}:
         return "IMAGEM"
     if locais & {"wsp", "shape", "sp", "wgp", "grpSp"}:
         return "CAIXA_DE_TEXTO"
@@ -278,10 +332,34 @@ def _ler_numpr(numpr, out: dict, ctx: _Contexto) -> None:
             c.somar("LISTA")
 
 
+class _Pedacos:
+    """Texto de um w:r em montagem. Uma imagem no meio fecha o trecho de texto."""
+
+    def __init__(self, base: Run, saida: list[Run]) -> None:
+        self.base = base
+        self.saida = saida
+        self.partes: list[str] = []
+
+    def append(self, texto: str) -> None:
+        self.partes.append(texto)
+
+    def descarregar(self) -> None:
+        texto = "".join(self.partes)
+        self.partes = []
+        if texto:
+            self.saida.append(replace(self.base, texto=texto))
+
+    def imagem(self, imagem: Imagem) -> None:
+        self.descarregar()
+        self.saida.append(run_de_imagem(imagem))
+
+
 def _ler_run(r, ctx: _Contexto, saida: list[Run]) -> None:
-    c = ctx.coletor
     run = Run()
-    partes: list[str] = []
+    rpr = r.find(q("rPr"))
+    if rpr is not None:
+        _ler_rpr(rpr, run, ctx)
+    pedacos = _Pedacos(run, saida)
     for f in r:
         ns, loc = _local(f)
         if loc is None:
@@ -290,23 +368,21 @@ def _ler_run(r, ctx: _Contexto, saida: list[Run]) -> None:
             ramo = _escolha(f)
             if ramo is not None:
                 for sub in ramo:
-                    _ler_item_run(sub, run, partes, ctx)
+                    _ler_item_run(sub, pedacos, ctx)
             continue
         if ns != W:
             continue
-        _ler_item_run(f, run, partes, ctx)
-    run.texto = "".join(partes)
-    if run.texto:
-        saida.append(run)
+        _ler_item_run(f, pedacos, ctx)
+    pedacos.descarregar()
 
 
-def _ler_item_run(f, run: Run, partes: list[str], ctx: _Contexto) -> None:
+def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     c = ctx.coletor
     ns, loc = _local(f)
     if loc is None or ns != W:
         return
     if loc == "rPr":
-        _ler_rpr(f, run, ctx)
+        return  # lido antes, em _ler_run
     elif loc == "t":
         partes.append(f.text or "")
     elif loc == "delText":
@@ -334,7 +410,11 @@ def _ler_item_run(f, run: Run, partes: list[str], ctx: _Contexto) -> None:
             c.somar("CAMPO")
     elif loc == "instrText" or loc == "fldData":
         return
-    elif loc in ("drawing", "pict", "object"):
+    elif loc == "drawing":
+        imagem = _ler_desenho(f, ctx)
+        if imagem is not None:
+            partes.imagem(imagem)
+    elif loc in ("pict", "object"):
         c.somar(_classificar_desenho(f))
     elif loc == "commentReference":
         c.somar("COMENTARIO")
@@ -342,6 +422,76 @@ def _ler_item_run(f, run: Run, partes: list[str], ctx: _Contexto) -> None:
         c.somar("NOTA")
     else:
         c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _medida_emu(valor: str | None) -> int | None:
+    n = _inteiro(valor)
+    return n if n is not None and 0 < n <= _EMU_MAXIMO else None
+
+
+def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
+    """w:drawing -> Imagem, ou None (com aviso) se nao for figura que o EditDoc mostra.
+
+    wp:inline e' a imagem na linha. wp:anchor (flutuante) vira imagem na linha, com
+    aviso: a posicao e a quebra de texto se perdem, a imagem nao.
+    """
+    c = ctx.coletor
+    quadro = None
+    for filho in drawing:
+        if _local(filho) in ((WP_NS, "inline"), (WP_NS, "anchor")):
+            quadro = filho
+            break
+    if quadro is None:
+        c.somar(_classificar_desenho(drawing))
+        return None
+    dados_graf = quadro.find("{%s}graphic/{%s}graphicData" % (A_NS, A_NS))
+    if dados_graf is None or dados_graf.get("uri") != URI_IMAGEM:
+        c.somar(_classificar_desenho(drawing))
+        return None
+    pic = dados_graf.find("{%s}pic" % PIC_NS)
+    blip = pic.find("{%s}blipFill/{%s}blip" % (PIC_NS, A_NS)) if pic is not None else None
+    rid = blip.get("{%s}embed" % R_NS) if blip is not None else None
+    relacao = ctx.relacoes.get(rid or "")
+    if relacao is None or relacao[2] or not relacao[0].endswith("/image") \
+            or relacao[1] not in ctx.nomes or ctx.ler_parte is None:
+        # Sem r:embed (so' r:link, imagem vinculada a arquivo externo) ou relacao quebrada.
+        c.somar("IMAGEM")
+        return None
+    alvo = relacao[1]
+    _validar_nome(alvo)
+    if alvo not in ctx.midias:
+        ctx.midias[alvo] = ctx.ler_parte(alvo)
+    dados = ctx.midias[alvo]
+    formato = mod_imagem.formato_de(dados)
+    dims = mod_imagem.dimensoes(dados, formato) if formato else None
+    if formato is None or dims is None or dims[0] <= 0 or dims[1] <= 0:
+        c.somar("IMAGEM")  # EMF, WMF, TIFF, SVG... ou imagem danificada
+        return None
+    if not mod_imagem.decodificavel(*dims):
+        c.somar("IMAGEM_GRANDE")
+    extent = quadro.find("{%s}extent" % WP_NS)
+    cx = _medida_emu(extent.get("cx")) if extent is not None else None
+    cy = _medida_emu(extent.get("cy")) if extent is not None else None
+    if cx is None or cy is None:
+        # Sem tamanho valido: o da imagem a 96 dpi, limitado ao maior papel.
+        escala = min(1.0, _EMU_MAXIMO / (max(dims) * EMU_POR_PX))
+        cx = max(1, round(dims[0] * EMU_POR_PX * escala))
+        cy = max(1, round(dims[1] * EMU_POR_PX * escala))
+        c.somar("FORMATACAO")
+    if _local(quadro)[1] == "anchor":
+        c.somar("IMAGEM_FLUTUANTE")
+    if blip.getparent() is not None:
+        recorte = blip.getparent().find("{%s}srcRect" % A_NS)
+        if recorte is not None and any((recorte.get(k) or "0") != "0" for k in "ltrb"):
+            c.somar("FORMATACAO")  # recorte da imagem: o EditDoc mostra a imagem inteira
+    xfrm = pic.find("{%s}spPr/{%s}xfrm" % (PIC_NS, A_NS))
+    if xfrm is not None and (xfrm.get("rot") not in (None, "0") or xfrm.get("flipH") in ("1", "true")
+                             or xfrm.get("flipV") in ("1", "true")):
+        c.somar("FORMATACAO")  # rotacao ou espelhamento
+    doc_pr = quadro.find("{%s}docPr" % WP_NS)
+    descricao = (doc_pr.get("descr") or "") if doc_pr is not None else ""
+    return Imagem(dados=dados, formato=formato, largura_emu=cx, altura_emu=cy,
+                  descricao=descricao)
 
 
 def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
@@ -354,6 +504,11 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             ramo = _escolha(f)
             if ramo is not None:
                 _runs_em(ramo, ctx, saida)
+            continue
+        if ns == MATH_NS and loc in ("oMath", "oMathPara"):
+            # Equacao (OMML) fica no namespace m:, nao no w:. Antes do M4 o teste de
+            # namespace a descartava sem aviso.
+            c.somar("EQUACAO")
             continue
         if ns != W:
             continue
@@ -401,8 +556,20 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
             props = _ler_ppr(f, ctx)
     runs: list[Run] = []
     _runs_em(p, ctx, runs)
+    if ctx.nivel_tabela > 0:
+        # Quebra de pagina dentro de celula: o EditDoc nao pagina dentro da tabela por
+        # quebra manual. Vira quebra de linha, com aviso.
+        quebras = sum(r.texto.count("\f") for r in runs if r.imagem is None)
+        quebras += 1 if props.pop("quebra_antes", False) else 0
+        if quebras:
+            ctx.coletor.somar("QUEBRA_EM_TABELA", quebras)
+            runs = [r if r.imagem is not None else replace(r, texto=r.texto.replace("\f", "\n"))
+                    for r in runs]
     saida = [Paragrafo(runs=[], **props)]
     for run in runs:
+        if run.imagem is not None:
+            saida[-1].runs.append(run)
+            continue
         for i, pedaco in enumerate(run.texto.split("\f")):
             if i > 0:
                 atual = saida[-1]
@@ -418,7 +585,12 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
     return saida
 
 
-def _blocos(elemento, paras: list[Paragrafo], ctx: _Contexto) -> None:
+def _blocos(elemento, paras: list[Bloco], ctx: _Contexto, achatar: bool = False) -> None:
+    """Blocos de `elemento` (corpo, celula, sdtContent...) para `paras`.
+
+    `achatar`: a tabela vira paragrafos (tabela acima dos limites, ou aninhada fundo
+    demais). E' o comportamento do M2, so' para o caso de excecao.
+    """
     c = ctx.coletor
     for f in elemento:
         ns, loc = _local(f)
@@ -427,28 +599,314 @@ def _blocos(elemento, paras: list[Paragrafo], ctx: _Contexto) -> None:
         if ns == MC_NS and loc == "AlternateContent":
             ramo = _escolha(f)
             if ramo is not None:
-                _blocos(ramo, paras, ctx)
+                _blocos(ramo, paras, ctx, achatar)
             continue
         if ns != W:
             continue
         if loc == "p":
             paras.extend(_paragrafos(f, ctx))
         elif loc == "tbl":
-            c.somar("TABELA")
-            _blocos(f, paras, ctx)
+            if achatar:
+                _blocos(f, paras, ctx, achatar=True)
+                continue
+            tabela = _tabela(f, ctx)
+            if tabela is None:
+                c.somar("TABELA")
+                ctx.nivel_tabela += 1
+                try:
+                    _blocos(f, paras, ctx, achatar=True)
+                finally:
+                    ctx.nivel_tabela -= 1
+            else:
+                paras.append(tabela)
         elif loc in ("tr", "tc", "customXml", "smartTag", "sdtContent", "ins"):
-            _blocos(f, paras, ctx)
+            _blocos(f, paras, ctx, achatar)
         elif loc == "sdt":
             c.somar("CONTEUDO_CONTROLADO")
             conteudo = f.find(q("sdtContent"))
             if conteudo is not None:
-                _blocos(conteudo, paras, ctx)
+                _blocos(conteudo, paras, ctx, achatar)
         elif loc in ("del", "moveFrom"):
             c.somar("REVISAO")
-        elif loc in _IGNORADOS_BLOCO:
+        elif loc in _IGNORADOS_BLOCO or loc == "tblPrEx":
             continue
         else:
             c.somar("ELEMENTO_DESCONHECIDO")
+
+
+# -- tabelas ------------------------------------------------------------------
+
+def _filhos_w(elemento, nome: str, ctx: _Contexto):
+    """Filhos `w:nome`, desembrulhando sdt, customXml e AlternateContent (com aviso do sdt)."""
+    for f in elemento:
+        ns, loc = _local(f)
+        if loc is None:
+            continue
+        if ns == MC_NS and loc == "AlternateContent":
+            ramo = _escolha(f)
+            if ramo is not None:
+                yield from _filhos_w(ramo, nome, ctx)
+        elif ns != W:
+            continue
+        elif loc == nome:
+            yield f
+        elif loc == "sdt":
+            ctx.coletor.somar("CONTEUDO_CONTROLADO")
+            conteudo = f.find(q("sdtContent"))
+            if conteudo is not None:
+                yield from _filhos_w(conteudo, nome, ctx)
+        elif loc in ("customXml", "ins"):
+            yield from _filhos_w(f, nome, ctx)
+
+
+def _borda(el, ctx: _Contexto) -> Borda:
+    valor = _atr(el, "val") or "single"
+    estilo = _ESTILO_BORDA.get(valor)
+    if estilo is None:
+        # Estilo que o EditDoc nao desenha (ondulada, tripla, 3D...): vira simples.
+        estilo = "simples"
+        ctx.coletor.somar("FORMATACAO")
+    tamanho = _inteiro(_atr(el, "sz"))
+    tamanho = 4 if tamanho is None else min(max(tamanho, 1), 96)
+    cor = _atr(el, "color")
+    cor = cor.upper() if cor and _HEX6.fullmatch(cor) else None
+    return Borda(estilo=estilo, oitavos_pt=tamanho, cor_hex=cor)
+
+
+def _ler_bordas(el, alvo, ctx: _Contexto, lados=_LADOS_TABELA) -> None:
+    """Preenche `alvo` (BordasTabela ou BordasCelula) com os lados de tblBorders/tcBorders."""
+    for f in el:
+        ns, loc = _local(f)
+        if ns != W:
+            continue
+        campo = dict(lados).get(loc)
+        if campo is not None and hasattr(alvo, campo):
+            setattr(alvo, campo, _borda(f, ctx))
+        elif loc in ("tl2br", "tr2bl"):
+            ctx.coletor.somar("FORMATACAO")  # diagonal
+
+
+def _estilo_de_tabela(ctx: _Contexto, sid: str | None):
+    """Elementos w:style da cadeia basedOn do estilo de tabela, do proprio para a base."""
+    cadeia = []
+    vistos: set[str] = set()
+    while sid and sid not in vistos and len(cadeia) < 8:
+        vistos.add(sid)
+        estilo = ctx.estilos_tabela.get(sid)
+        if estilo is None:
+            break
+        cadeia.append(estilo)
+        base = estilo.find(q("basedOn"))
+        sid = _atr(base, "val") if base is not None else None
+    return cadeia
+
+
+def _bordas_do_estilo(ctx: _Contexto, sid: str | None) -> BordasTabela:
+    bordas = BordasTabela()
+    for estilo in reversed(_estilo_de_tabela(ctx, sid)):  # da base para o proprio
+        tb = estilo.find(q("tblPr") + "/" + q("tblBorders"))
+        if tb is not None:
+            _ler_bordas(tb, bordas, ctx)
+    return bordas
+
+
+def _linhas_xml(tbl, ctx: _Contexto) -> list:
+    return list(_filhos_w(tbl, "tr", ctx))
+
+
+def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
+    """w:tbl -> Tabela. None se passar dos limites (quem chama achata, com aviso)."""
+    c = ctx.coletor
+    lim = ctx.lim
+    if ctx.nivel_tabela >= lim["tabela_profundidade"]:
+        return None
+    linhas_xml = _linhas_xml(tbl, ctx)
+    celulas_xml = [list(_filhos_w(tr, "tc", ctx)) for tr in linhas_xml]
+    if (len(linhas_xml) > lim["tabela_linhas"]
+            or sum(len(x) for x in celulas_xml) > lim["tabela_celulas"]
+            or any(len(x) > lim["tabela_colunas"] for x in celulas_xml)):
+        return None
+
+    tabela = Tabela()
+    # -- tblPr
+    tbl_pr = tbl.find(q("tblPr"))
+    estilo_id = ctx.estilo_tabela_padrao
+    diretas = None
+    if tbl_pr is not None:
+        for f in tbl_pr:
+            ns, loc = _local(f)
+            if ns != W or loc is None:
+                continue
+            if loc == "tblStyle":
+                estilo_id = _atr(f, "val")
+            elif loc == "tblW":
+                tipo = _atr(f, "type") or "dxa"
+                valor = _inteiro(_atr(f, "w")) or 0
+                if tipo in ("dxa", "pct", "auto") and 0 <= valor <= PAPEL_MAXIMO_TW:
+                    tabela.largura = (tipo, valor)
+            elif loc == "jc":
+                valor = _JC_TABELA.get(_atr(f, "val") or "")
+                if valor is None:
+                    c.somar("FORMATACAO")
+                tabela.alinhamento = valor
+            elif loc == "tblInd":
+                valor = _inteiro(_atr(f, "w"))
+                if valor is not None and (_atr(f, "type") or "dxa") == "dxa" \
+                        and abs(valor) <= PAPEL_MAXIMO_TW:
+                    tabela.recuo_tw = valor
+                elif valor:
+                    c.somar("FORMATACAO")
+            elif loc == "tblBorders":
+                diretas = f
+            elif loc == "tblLayout":
+                tabela.layout_fixo = _atr(f, "type") == "fixed"
+            elif loc == "tblCellMar":
+                margens = {"top": 0, "left": 108, "bottom": 0, "right": 108}
+                for m in f:
+                    nome = {"start": "left", "end": "right"}.get(_local(m)[1], _local(m)[1])
+                    valor = _inteiro(_atr(m, "w"))
+                    if nome in margens and valor is not None and 0 <= valor <= 20000:
+                        margens[nome] = valor
+                tabela.margens_celula_tw = (margens["top"], margens["left"],
+                                            margens["bottom"], margens["right"])
+            elif loc in _TBLPR_NEUTRAS:
+                continue
+            else:
+                # tblpPr (tabela flutuante), shd, tblCellSpacing, bidiVisual, legenda...
+                c.somar("FORMATACAO")
+    # Bordas efetivas: as do estilo (cadeia basedOn), depois as diretas. Lado sem
+    # borda nenhuma fica explicito como "nenhuma": o escritor grava os seis lados.
+    bordas = _bordas_do_estilo(ctx, estilo_id)
+    if diretas is not None:
+        _ler_bordas(diretas, bordas, ctx)
+    for campo in ("sup", "inf", "esq", "dir", "horizontal", "vertical"):
+        if getattr(bordas, campo) is None:
+            setattr(bordas, campo, Borda(estilo="nenhuma", oitavos_pt=0))
+    tabela.bordas = bordas
+    cadeia = _estilo_de_tabela(ctx, estilo_id)
+    if any(e.find(q("tblStylePr")) is not None or e.find(q("tcPr")) is not None
+           or e.find(q("rPr")) is not None for e in cadeia):
+        # Estilo com formatacao condicional (linha de cabecalho colorida, faixas...).
+        c.somar("ESTILO")
+
+    # -- tblGrid
+    grade = tbl.find(q("tblGrid"))
+    colunas: list[int] = []
+    if grade is not None:
+        for g in grade.findall(q("gridCol")):
+            colunas.append(_inteiro(_atr(g, "w")) or 0)
+
+    # -- linhas
+    ctx.nivel_tabela += 1
+    try:
+        for tr, tcs in zip(linhas_xml, celulas_xml):
+            tabela.linhas.append(_linha(tr, tcs, ctx))
+    finally:
+        ctx.nivel_tabela -= 1
+    if not tabela.linhas:
+        return None
+
+    # Grade: tantas colunas quanto a linha mais larga; largura invalida vira a media.
+    largura_max = max(colunas_da_linha(lin) for lin in tabela.linhas)
+    if largura_max > lim["tabela_colunas"]:
+        return None
+    validas = [w for w in colunas if 0 < w <= PAPEL_MAXIMO_TW]
+    padrao = round(sum(validas) / len(validas)) if validas else 9026 // max(1, largura_max)
+    if len(validas) != len(colunas) or len(colunas) not in (0, largura_max):
+        if colunas:
+            c.somar("FORMATACAO")
+    colunas = [w if 0 < w <= PAPEL_MAXIMO_TW else padrao for w in colunas]
+    while len(colunas) < largura_max:
+        colunas.append(padrao)
+    tabela.colunas_tw = colunas[:max(largura_max, 1)]
+    # Linha mais curta que a grade (w:gridBefore/gridAfter, ou celula faltando):
+    # completa com celulas vazias, como o Word desenha.
+    for linha in tabela.linhas:
+        falta = len(tabela.colunas_tw) - colunas_da_linha(linha)
+        if falta > 0:
+            linha.celulas.append(Celula(blocos=[Paragrafo()], colunas=falta))
+    return tabela
+
+
+def _linha(tr, tcs: list, ctx: _Contexto) -> Linha:
+    c = ctx.coletor
+    linha = Linha()
+    tr_pr = tr.find(q("trPr"))
+    if tr_pr is not None:
+        for f in tr_pr:
+            ns, loc = _local(f)
+            if ns != W or loc is None:
+                continue
+            if loc == "tblHeader":
+                linha.cabecalho = _onoff(f)
+            elif loc == "trHeight":
+                valor = _inteiro(_atr(f, "val"))
+                if valor is not None and 0 < valor <= PAPEL_MAXIMO_TW:
+                    linha.altura_tw = valor
+                    linha.altura_exata = _atr(f, "hRule") == "exact"
+            elif loc in ("gridBefore", "gridAfter", "jc", "hidden", "tblCellSpacing"):
+                c.somar("FORMATACAO")
+            elif loc in ("ins", "del"):
+                c.somar("REVISAO")
+            elif loc in _TRPR_NEUTRAS:
+                continue
+            else:
+                c.somar("FORMATACAO")
+    for tc in tcs:
+        celula = _celula(tc, ctx)
+        if celula is None:
+            # hMerge="continue" (mescla horizontal antiga): soma na celula anterior.
+            if linha.celulas:
+                linha.celulas[-1].colunas += 1
+            continue
+        linha.celulas.append(celula)
+    return linha
+
+
+def _celula(tc, ctx: _Contexto) -> Celula | None:
+    c = ctx.coletor
+    celula = Celula()
+    tc_pr = tc.find(q("tcPr"))
+    if tc_pr is not None:
+        for f in tc_pr:
+            ns, loc = _local(f)
+            if ns != W or loc is None:
+                continue
+            if loc == "gridSpan":
+                valor = _inteiro(_atr(f, "val"))
+                celula.colunas = valor if valor is not None and 1 <= valor <= 63 else 1
+            elif loc == "hMerge":
+                if (_atr(f, "val") or "continue") == "continue":
+                    return None
+            elif loc == "vMerge":
+                celula.mescla_vertical = "inicio" if _atr(f, "val") == "restart" else "continua"
+            elif loc == "tcBorders":
+                celula.bordas = BordasCelula()
+                _ler_bordas(f, celula.bordas, ctx)
+            elif loc == "shd":
+                fill = _atr(f, "fill")
+                if fill and _HEX6.fullmatch(fill):
+                    celula.sombreamento_hex = fill.upper()
+                elif fill not in (None, "auto"):
+                    c.somar("FORMATACAO")
+                if (_atr(f, "val") or "clear") not in ("clear", "nil"):
+                    c.somar("FORMATACAO")  # padrao de hachura
+            elif loc == "vAlign":
+                celula.alinhamento_vertical = _VALIGN.get(_atr(f, "val") or "")
+            elif loc in ("cellIns", "cellDel", "cellMerge"):
+                c.somar("REVISAO")
+            elif loc in _TCPR_NEUTRAS:
+                continue
+            else:
+                c.somar("FORMATACAO")  # tcMar, textDirection...
+    _blocos(tc, celula.blocos, ctx)
+    if celula.mescla_vertical == "continua" and any(
+            r.texto for p in celula.blocos if isinstance(p, Paragrafo) for r in p.runs):
+        # O Word nao mostra o conteudo de celula coberta por mescla vertical.
+        c.somar("CELULA_ESCONDIDA")
+    if not celula.blocos or isinstance(celula.blocos[-1], Tabela):
+        celula.blocos.append(Paragrafo())
+    return celula
 
 
 def _checar_secao(sect, ctx: _Contexto) -> None:
@@ -644,12 +1102,23 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         # Partes ligadas ao documento principal: numeracao e estilos.
         numeracao: dict[str, str | None] = {}
         estilos = None
+        relacoes: dict[str, tuple[str, str, bool]] = {}
         rels_doc = caminho_dos_rels(alvo_doc)
         if rels_doc in nomes:
             base = posixpath.dirname(alvo_doc)
             for rel in _parse(ler_parte(rels_doc), rels_doc, profundidade):
                 tipo = rel.get("Type", "")
-                alvo = posixpath.normpath(posixpath.join(base, rel.get("Target", "")))
+                externo = rel.get("TargetMode") == "External"
+                bruto = rel.get("Target", "")
+                if externo:
+                    alvo = bruto
+                elif bruto.startswith("/"):
+                    alvo = bruto[1:]
+                else:
+                    alvo = posixpath.normpath(posixpath.join(base, bruto))
+                relacoes[rel.get("Id", "")] = (tipo, alvo, externo)
+                if externo:
+                    continue
                 if tipo.endswith("/numbering") and alvo in nomes:
                     _validar_nome(alvo)
                     numeracao = _numeracao(_parse(ler_parte(alvo), alvo, profundidade))
@@ -657,11 +1126,19 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                     _validar_nome(alvo)
                     estilos = _parse(ler_parte(alvo), alvo, profundidade)
 
-        ctx = _Contexto(coletor, numeracao)
+        ctx = _Contexto(coletor, numeracao, lim)
+        ctx.relacoes = relacoes
+        ctx.ler_parte = ler_parte
+        ctx.nomes = nomes
         if estilos is not None:
             _padrao_do_documento(estilos, coletor)
+            for estilo in estilos.findall(q("style")):
+                if _atr(estilo, "type") == "table" and _atr(estilo, "styleId"):
+                    ctx.estilos_tabela[_atr(estilo, "styleId")] = estilo
+                    if _onoff_atr(estilo, "default"):
+                        ctx.estilo_tabela_padrao = _atr(estilo, "styleId")
 
-        paras: list[Paragrafo] = []
+        paras: list[Bloco] = []
         _blocos(corpo, paras, ctx)
         sect_final = corpo.find(q("sectPr"))
         if sect_final is not None:

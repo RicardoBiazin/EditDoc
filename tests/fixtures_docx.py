@@ -7,11 +7,14 @@ Tudo aqui e' montado em memoria ou em pasta temporaria. Os arquivos hostis
 from __future__ import annotations
 
 import io
+import struct
 import zipfile
+import zlib
 
 from editdoc.formato_docx.escritor import escrever
 from editdoc.formato_docx.nomes import W_STRICT
-from editdoc.modelo.documento import Documento, Paragrafo, Run
+from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula, Documento, Imagem,
+                                      Linha, Paragrafo, Run, Tabela, run_de_imagem)
 
 
 def documento_completo() -> Documento:
@@ -69,6 +72,109 @@ def documento_com_numeracao_separada() -> Documento:
         Paragrafo(runs=[Run("b")], numeracao="numeracao"),
         Paragrafo(runs=[Run("meio")]),
         Paragrafo(runs=[Run("c")], numeracao="numeracao"),
+    ])
+
+
+def png(largura: int, altura: int, cor: tuple[int, int, int] = (220, 30, 30)) -> bytes:
+    """PNG RGB de uma cor so', montado byte a byte (sem Qt e sem Pillow)."""
+    linhas = b"".join(b"\x00" + bytes(cor) * largura for _ in range(altura))
+
+    def pedaco(tipo: bytes, dados: bytes) -> bytes:
+        corpo = struct.pack(">I", len(dados)) + tipo + dados
+        return corpo + struct.pack(">I", zlib.crc32(tipo + dados) & 0xFFFFFFFF)
+
+    cabecalho = struct.pack(">IIBBBBB", largura, altura, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + pedaco(b"IHDR", cabecalho)
+            + pedaco(b"IDAT", zlib.compress(linhas)) + pedaco(b"IEND", b""))
+
+
+def gif(largura: int, altura: int, cor: tuple[int, int, int] = (220, 30, 30)) -> bytes:
+    """GIF de uma cor so', montado byte a byte (o Qt le GIF, mas nao grava).
+
+    LZW sem crescer a tabela: um codigo "limpar" antes de cada pixel mantem o codigo
+    em 3 bits, o que qualquer decodificador aceita.
+    """
+    bits = []
+    for _ in range(largura * altura):
+        bits += [(4, 3), (0, 3)]  # limpar, indice 0
+    bits.append((5, 3))  # fim
+    acumulado = 0
+    n = 0
+    saida = bytearray()
+    for valor, tamanho in bits:
+        acumulado |= valor << n
+        n += tamanho
+        while n >= 8:
+            saida.append(acumulado & 0xFF)
+            acumulado >>= 8
+            n -= 8
+    if n:
+        saida.append(acumulado & 0xFF)
+    blocos = b"".join(bytes([len(saida[i:i + 255])]) + bytes(saida[i:i + 255])
+                      for i in range(0, len(saida), 255))
+    return (b"GIF89a" + struct.pack("<HHBBB", largura, altura, 0x80, 0, 0)
+            + bytes(cor) + b"\x00\x00\x00"
+            + b"\x2c" + struct.pack("<HHHHB", 0, 0, largura, altura, 0)
+            + b"\x02" + blocos + b"\x00" + b"\x3b")
+
+
+def png_declarando(largura: int, altura: int) -> bytes:
+    """PNG cujo cabecalho DIZ ter largura x altura, com 1 linha de dados (arquivo hostil)."""
+    base = bytearray(png(1, 1))
+    base[16:24] = struct.pack(">II", largura, altura)
+    crc = zlib.crc32(bytes(base[12:29])) & 0xFFFFFFFF
+    base[29:33] = struct.pack(">I", crc)
+    return bytes(base)
+
+
+def imagem(dados: bytes | None = None, largura_cm: float = 4.0, altura_cm: float = 2.0,
+           descricao: str = "") -> Imagem:
+    dados = dados if dados is not None else png(40, 20)
+    return Imagem(dados=dados, formato="png", largura_emu=round(largura_cm * 360000),
+                  altura_emu=round(altura_cm * 360000), descricao=descricao)
+
+
+def _cel(texto: str = "", **kw) -> Celula:
+    return Celula(blocos=[Paragrafo(runs=[Run(texto)] if texto else [])], **kw)
+
+
+def tabela_mesclada() -> Tabela:
+    """3 x 3 com mescla horizontal (gridSpan) na 1a linha, vertical (vMerge) na 1a coluna,
+    bordas proprias, sombreamento, alinhamento vertical, linha de cabecalho e altura."""
+    return Tabela(
+        colunas_tw=[3000, 2500, 3500],
+        bordas=BordasTabela(sup=Borda("dupla", 8, "C00000"), inf=Borda(), esq=Borda(),
+                            dir=Borda(), horizontal=Borda(), vertical=Borda("tracejada", 4)),
+        linhas=[
+            Linha(cabecalho=True, celulas=[_cel("Título mesclado", colunas=2,
+                                                sombreamento_hex="D9E2F3"),
+                                           _cel("C1", bordas=BordasCelula(inf=Borda("simples", 12, "0070C0")))]),
+            Linha(altura_tw=600, celulas=[_cel("Mescla vertical", mescla_vertical="inicio",
+                                               alinhamento_vertical="centro"),
+                                          _cel("B2"), _cel("C2")]),
+            Linha(celulas=[_cel(mescla_vertical="continua"), _cel("B3"),
+                           _cel("C3", alinhamento_vertical="base")]),
+        ])
+
+
+def documento_com_tabela_e_imagem() -> Documento:
+    """Amostra do M4: tabela mesclada, tabela aninhada, imagem no texto e na celula."""
+    interna = Tabela(colunas_tw=[1200, 1200], linhas=[
+        Linha(celulas=[_cel("in1"), _cel("in2")])])
+    tabela = tabela_mesclada()
+    tabela.linhas[1].celulas[1].blocos.append(interna)
+    tabela.linhas[1].celulas[1].blocos.append(Paragrafo())
+    tabela.linhas[1].celulas[2].blocos = [Paragrafo(runs=[run_de_imagem(
+        imagem(png(30, 30, (30, 120, 220)), 1.5, 1.5, "quadrado azul"))])]
+    return Documento(titulo="Amostra M4", autor="Teste", paragrafos=[
+        Paragrafo(runs=[Run("Tabelas e imagens", negrito=True, tamanho_meio_pt=32)],
+                  alinhamento="centro"),
+        Paragrafo(runs=[Run("Imagem na linha: "), run_de_imagem(imagem(descricao="retângulo")),
+                        Run(" e o texto continua.")]),
+        tabela,
+        Paragrafo(runs=[Run("Depois da tabela, uma lista:")]),
+        Paragrafo(runs=[Run("item um")], numeracao="marcadores"),
+        Paragrafo(runs=[Run("item dois")], numeracao="marcadores"),
     ])
 
 

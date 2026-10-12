@@ -238,6 +238,41 @@ trocar o zoom. A rolagem por passo fixo de 120 px é a da roda do Windows (3 lin
 
 Dados brutos (JSON e log): pasta de rascunho do scratchpad, fora do repositório.
 
+## Medições do M4 (tabelas e imagens)
+
+Feitas no Qt 6.11.2, com o layout a 1440 dpi do produto, antes de fixar os limites.
+
+| Medida | Resultado |
+|---|---|
+| Digitar numa célula, 50 x 5 | 5,8 ms por tecla (só o layout) |
+| Digitar numa célula, 100 x 5 / 200 x 5 / 400 x 5 | 12,7 / 31,4 / 64,3 ms |
+| Digitar numa célula, 100 x 20 (2000 células) | 85 ms |
+| Digitar numa célula, 2000 x 5 (10000 células) | 731 ms |
+| Digitar num parágrafo depois de tabela de 400 x 5 | 8 ms |
+
+O custo é linear no número de células (cerca de 0,06 ms por célula): o Qt refaz a tabela
+inteira a cada mudança. Daí o limite de 5000 células do leitor (cerca de 300 ms por tecla no
+pior caso) e a pendência abaixo.
+
+Outros fatos medidos, que decidiram o desenho:
+
+- `insertTable` no meio de um bloco parte o bloco: o texto de antes fica acima e o de depois
+  vai para o bloco que o Qt cria abaixo da tabela. Sempre há um bloco antes e um depois de cada
+  tabela (inclusive entre duas tabelas seguidas e no começo de uma célula).
+- Remover a tabela inteira (seleção do quadro) funde o bloco de cima com o de baixo.
+- `insertRows` não copia o formato da célula; `insertColumns` copia o da vizinha e repete a
+  largura da coluna da esquerda. Todos os comandos de grade entram no desfazer do documento.
+- Depois de mudar a grade, a `QTextTableCell` antiga fica inválida: chamar `row()` nela derruba
+  o processo (acesso inválido).
+- Linha mais alta que a página: o Qt divide o conteúdo da célula entre as páginas; a linha de
+  texto que não cabe desce com um deslocamento dentro do bloco (o retângulo do bloco cruza a
+  divisa, a linha não).
+- O Qt troca o recurso de imagem (bytes) pela imagem decodificada depois de desenhar: os bytes
+  originais não podem ficar só no documento.
+- `QTextDocument.loadResource` pode ser sobrescrito no PySide6 e é chamado para o recurso que
+  falta (imagem colada de outra janela).
+- A tabela colada só aparece em `rootFrame().childFrames()` depois do `endEditBlock`.
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
@@ -245,3 +280,7 @@ Dados brutos (JSON e log): pasta de rascunho do scratchpad, fora do repositório
   em `%TEMP%\claude\...\scratchpad\spike-docx`, fora do repositório.
 - Cache de página: medido no Gate do M3 (acima). Adotado com teto de zoom.
 - Fonte embutida para os testes de renderização visual.
+- M4: abrir no Word, sem reparo, a amostra `tests/saida/amostra_m4_tabelas_imagens.docx` (gerada
+  pela suíte, fora do repositório) e um arquivo salvo pelo EditDoc com tabela e imagem.
+- M4: digitação em tabela grande (acima de ~250 células passa de 16 ms por tecla). Caminhos:
+  layout incremental próprio da tabela, ou adiar o relayout para depois da tecla.

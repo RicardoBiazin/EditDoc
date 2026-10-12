@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QTextListFormat
 from PySide6.QtWidgets import QTextEdit
 
-from editdoc.edicao import formatacao
+from editdoc.edicao import formatacao, tabelas
 from editdoc.modelo.folhas import passo_de_zoom
 from editdoc.modelo.unidades import RECUO_PADRAO_PX
 
@@ -80,7 +80,27 @@ DEFINICOES = (
     Definicao("margens_larga", "Larga", (), True, "Margens largas"),
     Definicao("margens_personalizadas", "Personalizadas...", (), True,
               "Margens personalizadas"),
+    # Inserir (M4): tabela e imagem.
+    Definicao("inserir_tabela", "Inserir tabela...", (), dica="Inserir tabela"),
+    Definicao("inserir_linha_acima", "Inserir linha acima", (), dica="Inserir linha acima"),
+    Definicao("inserir_linha_abaixo", "Inserir linha abaixo", (), dica="Inserir linha abaixo"),
+    Definicao("inserir_coluna_esquerda", "Inserir coluna à esquerda", (),
+              dica="Inserir coluna à esquerda"),
+    Definicao("inserir_coluna_direita", "Inserir coluna à direita", (),
+              dica="Inserir coluna à direita"),
+    Definicao("excluir_linha", "Excluir linha", (), dica="Excluir as linhas da seleção"),
+    Definicao("excluir_coluna", "Excluir coluna", (), dica="Excluir as colunas da seleção"),
+    Definicao("excluir_tabela", "Excluir tabela", (), dica="Excluir a tabela inteira"),
+    Definicao("mesclar_celulas", "Mesclar células", (), dica="Mesclar as células selecionadas"),
+    Definicao("dividir_celula", "Dividir células", (), dica="Desfazer a mescla da célula"),
+    Definicao("inserir_imagem", "Imagem...", (), dica="Inserir imagem de um arquivo"),
+    Definicao("tamanho_imagem", "Tamanho da imagem...", (), dica="Tamanho da imagem em centímetros"),
 )
+
+#: Comandos que so' valem com o cursor numa tabela (o atualizador os habilita).
+TABELA = ("inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerda",
+          "inserir_coluna_direita", "excluir_linha", "excluir_coluna", "excluir_tabela",
+          "mesclar_celulas", "dividir_celula")
 
 #: Papel: id da acao -> nome do papel em editdoc/modelo/pagina.py (PAPEIS).
 PAPEL_DAS_ACOES = {"papel_a4": "A4", "papel_carta": "Carta", "papel_oficio": "Ofício"}
@@ -117,9 +137,26 @@ def _chamar(ganchos: dict[str, Callable], chave: str, *args) -> None:
 def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
                 ao_substituir: Callable[[], None],
                 ao_arquivo: dict[str, Callable[[], None]],
-                ao_layout: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
+                ao_layout: dict[str, Callable] | None = None,
+                ao_inserir: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
     fmt = formatacao
     layout = ao_layout or {}
+    inserir = ao_inserir or {}
+    executores_inserir: dict[str, Callable[[], None]] = {
+        # Os dialogos (tamanho da tabela, arquivo de imagem, tamanho da imagem) sao da janela.
+        "inserir_tabela": lambda: _chamar(inserir, "tabela"),
+        "inserir_imagem": lambda: _chamar(inserir, "imagem"),
+        "tamanho_imagem": lambda: _chamar(inserir, "tamanho_imagem"),
+        "inserir_linha_acima": lambda: tabelas.inserir_linha(editor, abaixo=False),
+        "inserir_linha_abaixo": lambda: tabelas.inserir_linha(editor, abaixo=True),
+        "inserir_coluna_esquerda": lambda: tabelas.inserir_coluna(editor, direita=False),
+        "inserir_coluna_direita": lambda: tabelas.inserir_coluna(editor, direita=True),
+        "excluir_linha": lambda: tabelas.excluir_linhas(editor),
+        "excluir_coluna": lambda: tabelas.excluir_colunas(editor),
+        "excluir_tabela": lambda: tabelas.excluir_tabela(editor),
+        "mesclar_celulas": lambda: tabelas.mesclar_celulas(editor),
+        "dividir_celula": lambda: tabelas.dividir_celula(editor),
+    }
     executores_layout: dict[str, Callable[[], None]] = {
         "quebra_pagina": editor.inserir_quebra_de_pagina,
         "ampliar": lambda: editor.definir_zoom(
@@ -163,6 +200,7 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
     for id_ in ARQUIVO:
         executores[id_] = ao_arquivo.get(id_, _nada)
     executores.update(executores_layout)
+    executores.update(executores_inserir)
     return executores
 
 
@@ -173,11 +211,12 @@ class Comandos(QObject):
                  ao_localizar: Callable[[], None],
                  ao_substituir: Callable[[], None],
                  ao_arquivo: dict[str, Callable[[], None]] | None = None,
-                 ao_layout: dict[str, Callable] | None = None) -> None:
+                 ao_layout: dict[str, Callable] | None = None,
+                 ao_inserir: dict[str, Callable] | None = None) -> None:
         super().__init__(pai)
         self._acoes: dict[str, QAction] = {}
         self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {},
-                                       ao_layout)
+                                       ao_layout, ao_inserir)
         self._grupo_alinhamento = QActionGroup(self)
         self._grupo_alinhamento.setExclusive(True)
         self._grupo_espacamento = QActionGroup(self)

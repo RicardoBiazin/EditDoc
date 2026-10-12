@@ -1,3 +1,53 @@
+## 0.0.7 - 2026-10-12
+
+Tabelas e imagens (M4). Tabela e imagem na linha do texto abrem do `.docx`, aparecem na visão
+em páginas, são editadas e voltam ao arquivo. A aba Inserir é nova.
+
+- Tabelas: leitura e escrita de `w:tbl` com grade (`w:tblGrid`), mescla horizontal
+  (`w:gridSpan`, e o `w:hMerge` antigo) e vertical (`w:vMerge`), bordas da tabela e da célula
+  (simples, dupla, pontilhada, tracejada, nenhuma), sombreamento, alinhamento vertical, linha de
+  cabeçalho (repete no alto de cada página), altura da linha e tabela dentro de tabela. As
+  bordas do estilo da tabela (o "Table Grid" do Word) são lidas; toda tabela sai com o estilo
+  "Table Grid" e os seis lados da borda gravados nela mesma.
+- Aba Inserir: botão Tabela com a grade de escolha (até 10 x 8) e o diálogo "Inserir tabela...";
+  inserir linha acima e abaixo, coluna à esquerda e à direita; excluir linha, coluna e tabela;
+  mesclar e dividir células. Os comandos de tabela também ficam no menu de contexto, e só
+  habilitam com o cursor numa tabela.
+- Teclado na tabela: Tab vai para a próxima célula e seleciona o conteúdo, Shift+Tab volta,
+  Tab na última célula cria uma linha, Ctrl+Tab insere tabulação. Ctrl+Enter dentro da célula
+  vira Enter comum.
+- Imagens na linha do texto: PNG, JPEG, GIF e BMP, no tamanho do arquivo (`wp:extent`), com o
+  texto alternativo. Os bytes da imagem voltam ao `.docx` sem recodificar, em `word/media`,
+  com relação e tipo de conteúdo; imagens iguais dividem uma parte.
+- Inserir imagem de arquivo (aba Inserir), colar imagem da área de transferência, clicar na
+  imagem para selecioná-la, redimensionar pelas alças dos cantos ou pelo diálogo "Tamanho da
+  imagem" em centímetros, com a proporção travada. Copiar a imagem leva a imagem para outros
+  programas.
+- Avisos novos: imagem flutuante (`wp:anchor`) vira imagem na linha, sem perder a imagem;
+  formato que o EditDoc não mostra (EMF, WMF, TIFF, SVG, VML, imagem vinculada) sai com aviso;
+  quebra de página dentro de célula vira quebra de linha; texto escondido em célula mesclada.
+- Limites contra arquivo hostil: tabela com mais de 2000 linhas, 63 colunas ou 5000 células,
+  ou aninhada mais de 4 níveis, vira parágrafos com aviso (nenhum texto se perde). Imagem acima
+  de 64 megapixels (ou 30000 px num lado) não é decodificada: fica no arquivo e aparece como um
+  quadro cinza. A tela recebe uma prévia de no máximo 1800 px no lado maior.
+- Desfazer e refazer: cada comando de tabela, a inserção de tabela e de imagem, colar e o
+  redimensionamento são um passo de desfazer.
+- Defeito corrigido: equação (`m:oMath`) era descartada sem aviso, porque o leitor só olhava o
+  namespace `w:`. Agora gera o aviso EQUACAO.
+- O validador do pacote confere também a ordem de `tblPr`, `tcPr` e das bordas, a célula que
+  não termina em parágrafo, a linha que não ocupa a grade inteira, o corpo que termina em
+  tabela e o `wp:docPr` repetido. A conferência do arquivo gravado compara tabelas, células,
+  mesclas e os bytes das imagens.
+
+Limites deste marco: digitar numa tabela grande é lento, porque o Qt refaz a tabela inteira a
+cada tecla (cerca de 0,06 ms por célula: 300 ms com 5000 células). A altura de linha fica no
+arquivo, mas a tela não a aplica. Tabela mais larga que o corpo é cortada na tela na margem.
+"Dividir células" só desfaz mescla (não divide uma célula simples em várias). Uma tabela
+copiada e colada no EditDoc volta com a grade padrão (as bordas próprias se perdem na cópia).
+Uma linha vazia aparece na tela antes de uma tabela no começo do documento ou entre duas
+tabelas; ela não vai para o arquivo. A abertura no Word ainda depende de conferência manual
+(amostra em `tests/saida/amostra_m4_tabelas_imagens.docx`, gerada pela suíte).
+
 ## 0.0.6 - 2026-10-12
 
 Visão em páginas (M3). O documento aparece em folhas com margens, régua, quebras de página,

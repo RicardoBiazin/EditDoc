@@ -90,3 +90,13 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | `PageBreak_AlwaysBefore` | A quebra e' uma propriedade do bloco. O Enter precisa zerar o bloco novo para `PageBreak_Auto`, senao a quebra se copia para o paragrafo seguinte. |
 | escala da tela | Quando o corpo da fonte passa de 56 a 64 px no dispositivo (tamanho x 4/3 x zoom x DPR), o Qt pinta o texto por caminho e a digitacao passa de 16 ms. Medido: 14 pt a 300% (56 px) passa; 16 pt a 300% (64 px) nao. Por isso o zoom tem teto (`ESCALA_DISPOSITIVO_MAXIMA`, em `editdoc/modelo/folhas.py`). |
 | `docx` `w:br type="page"` | Um `` e' a sentinela do leitor para a quebra de pagina. XML 1.0 nao aceita `` em `w:t`, entao so' vem dali. A quebra no meio do texto parte o paragrafo. |
+| `QTextTableCell` | Depois de `insertRows`, `removeColumns`, `mergeCells` ou `splitCell`, a celula guardada fica invalida: `row()` nela **derruba o processo**. Guardar linha e coluna em inteiros antes de mexer na grade. |
+| `insertTable` | O Qt sempre tem um bloco antes e um depois de cada tabela, e parte o bloco no cursor. O bloco que o modelo nao tem leva `PROP_ESTRUTURAL` (`ponte_qt/para_qt.py`) e, vazio, nao volta ao salvar. Enter e digitacao nele tiram a marca. |
+| remover tabela | Selecionar o quadro inteiro e `removeSelectedText` funde o paragrafo de cima com o de baixo. `excluir_tabela` parte o bloco de novo. |
+| recurso de imagem | Depois de desenhar, o Qt troca o recurso (bytes) pela imagem decodificada. Os bytes originais ficam no registro de `ponte_qt/imagens.py`, nunca so' no documento. |
+| `QTextDocument.loadResource` | O padrao le `file:` de um HTML colado. O `DocumentoQt` so' entrega imagem do registro; o resto vira quadro cinza ou nada. |
+| tabela colada | So' aparece em `rootFrame().childFrames()` depois do `endEditBlock`. O ajuste da tabela colada usa `joinPreviousEditBlock` para ficar no mesmo desfazer. |
+| linha de tabela entre paginas | O retangulo do bloco na celula pode cruzar a divisa: o Qt desce a LINHA com um deslocamento dentro do bloco. Testar corte pela linha (`lineAt`), nao pelo `blockBoundingRect`. |
+| tabela grande | O Qt refaz a tabela inteira a cada tecla (~0,06 ms por celula). Os limites do leitor (`tabela_celulas` etc.) e dos comandos (`edicao/tabelas.py`) existem por isso. |
+| leitor e namespace | Elemento fora do `w:` (equacao `m:oMath`) era pulado pelo `if ns != W` sem aviso. Conferir o namespace ANTES de descartar. |
+| area de transferencia no offscreen | Sair do processo com algo na area de transferencia derruba o processo (codigo 139) so' no offscreen. `ajudantes.preparar_qt` limpa no `atexit`. |

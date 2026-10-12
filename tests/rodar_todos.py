@@ -74,6 +74,10 @@ SUITES = [
      "Ctrl+Enter: quebra no .docx e na tela; sem aviso quando a quebra e' representada"),
     ("teste_layout.py",
      "papel, orientacao e margens no sectPr e na janela; PAGINA so' com mais de uma secao"),
+    ("teste_tabelas.py",
+     "tabelas: .docx com mesclas, oraculo, limites, Qt, paginas, Tab e comandos com desfazer"),
+    ("teste_imagens.py",
+     "imagens: bytes intactos no .docx, avisos, zoom, alca, colar, dialogo e salvar"),
 ]
 
 

@@ -7,14 +7,17 @@ QMessageBox nem QFileDialog diretamente. O nome de cada funcao diz a pergunta.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                               QMessageBox, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
+                               QFormLayout, QMessageBox, QSpinBox, QWidget)
 
 from editdoc import APP
 from editdoc.modelo.pagina import CORPO_MINIMO_TW, TWIPS_POR_CM, Pagina
 
 FILTRO_DOCX = "Documento Word (*.docx)"
 EXTENSAO = ".docx"
+FILTRO_IMAGEM = "Imagens (*.png *.jpg *.jpeg *.gif *.bmp)"
+#: Maior lado de imagem no dialogo de tamanho, em cm (o maior papel tem 176 cm).
+IMAGEM_MAXIMA_CM = 100.0
 
 
 def _caixa(pai: QWidget | None, titulo: str, texto: str,
@@ -106,6 +109,77 @@ def pedir_descartar(pai: QWidget | None, nome: str) -> str:
     if clicado is descartar:
         return "descartar"
     return "cancelar"
+
+
+def _botoes_ok(dialogo: QDialog) -> QDialogButtonBox:
+    botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+    botoes.accepted.connect(dialogo.accept)
+    botoes.rejected.connect(dialogo.reject)
+    return botoes
+
+
+def pedir_tamanho_tabela(pai: QWidget | None, maximo_linhas: int = 2000,
+                         maximo_colunas: int = 63) -> tuple[int, int] | None:
+    """(linhas, colunas) da tabela nova, ou None se cancelar."""
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"Inserir tabela - {APP}")
+    grade = QFormLayout(dialogo)
+    colunas = QSpinBox()
+    colunas.setRange(1, maximo_colunas)
+    colunas.setValue(5)
+    linhas = QSpinBox()
+    linhas.setRange(1, maximo_linhas)
+    linhas.setValue(2)
+    grade.addRow("Número de colunas:", colunas)
+    grade.addRow("Número de linhas:", linhas)
+    grade.addRow(_botoes_ok(dialogo))
+    if dialogo.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return linhas.value(), colunas.value()
+
+
+def pedir_arquivo_imagem(pai: QWidget | None) -> str | None:
+    caminho, _filtro = QFileDialog.getOpenFileName(pai, "Inserir imagem", "", FILTRO_IMAGEM)
+    return caminho or None
+
+
+def pedir_tamanho_imagem(pai: QWidget | None, largura_cm: float,
+                         altura_cm: float) -> tuple[float, float] | None:
+    """Novo (largura, altura) em cm. Com a proporcao travada (padrao), um campo segue o outro."""
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"Tamanho da imagem - {APP}")
+    grade = QFormLayout(dialogo)
+    proporcao = altura_cm / largura_cm if largura_cm > 0 else 1.0
+    campos = []
+    for valor in (largura_cm, altura_cm):
+        spin = QDoubleSpinBox()
+        spin.setRange(0.1, IMAGEM_MAXIMA_CM)
+        spin.setDecimals(2)
+        spin.setSingleStep(0.1)
+        spin.setSuffix(" cm")
+        spin.setValue(round(valor, 2))
+        campos.append(spin)
+    largura, altura = campos
+    travar = QCheckBox("Manter a proporção")
+    travar.setChecked(True)
+    ocupado = [False]
+
+    def seguir(origem: QDoubleSpinBox, destino: QDoubleSpinBox, fator: float) -> None:
+        if travar.isChecked() and not ocupado[0]:
+            ocupado[0] = True
+            destino.setValue(origem.value() * fator)
+            ocupado[0] = False
+
+    largura.valueChanged.connect(lambda _v: seguir(largura, altura, proporcao))
+    altura.valueChanged.connect(lambda _v: seguir(altura, largura, 1 / proporcao))
+    grade.addRow("Largura:", largura)
+    grade.addRow("Altura:", altura)
+    grade.addRow(travar)
+    grade.addRow(_botoes_ok(dialogo))
+    if dialogo.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return largura.value(), altura.value()
 
 
 def pedir_margens(pai: QWidget | None, atual: Pagina) -> Pagina | None:

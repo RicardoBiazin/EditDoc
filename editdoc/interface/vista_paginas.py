@@ -41,6 +41,8 @@ COR_FOLHA = QColor(255, 255, 255)
 COR_SELECAO = QColor(0, 120, 215)
 COR_CARET = QColor(0, 0, 0)
 COR_QUEBRA = QColor(0x70, 0x76, 0x80)
+#: Lado da alca de imagem desenhada, em px logicos.
+ALCA_TELA_PX = 7.0
 _QUEBRA_ANTES = QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore
 
 PALETA_TEXTO = QPalette()
@@ -201,13 +203,34 @@ class VistaPaginas(QAbstractScrollArea):
         altura = dl.blockBoundingRect(doc.lastBlock()).bottom()
         anterior, self._altura_doc_anterior = self._altura_doc_anterior, altura
         if anterior is None or abs(altura - anterior) >= 0.5 or len(pendencias) > 1:
-            topo = min(dl.blockBoundingRect(doc.findBlock(p)).top() for p, _ in pendencias)
+            topo = min(self._faixa_de(p, p)[0] for p, _ in pendencias)
             self._invalidar_faixa(topo, math.inf)
             return
         pos, adicionado = pendencias[0]
-        topo = dl.blockBoundingRect(doc.findBlock(pos)).top()
-        base = dl.blockBoundingRect(doc.findBlock(pos + adicionado)).bottom()
+        topo, base = self._faixa_de(pos, pos + adicionado)
         self._invalidar_faixa(topo, base)
+
+    def _faixa_de(self, inicio: int, fim: int) -> tuple[float, float]:
+        """Faixa vertical (twips) afetada por uma mudanca entre `inicio` e `fim`.
+
+        Dentro de tabela vale a tabela inteira (a de fora, se aninhada): a altura de uma
+        linha muda as celulas vizinhas, e uma borda redesenhada muda a grade toda.
+        """
+        doc = self.layout_pag.doc
+        dl = doc.documentLayout()
+        topo = dl.blockBoundingRect(doc.findBlock(inicio)).top()
+        base = dl.blockBoundingRect(doc.findBlock(fim)).bottom()
+        cursor = QTextCursor(doc)
+        cursor.setPosition(min(max(inicio, 0), doc.characterCount() - 1))
+        quadro = cursor.currentFrame()
+        externo = None
+        while quadro is not None and quadro.parentFrame() is not None:
+            externo = quadro
+            quadro = quadro.parentFrame()
+        if externo is not None:
+            r = dl.frameBoundingRect(externo)
+            topo, base = min(topo, r.top()), max(base, r.bottom())
+        return topo, base
 
     def _tile(self, n: int, i: int, j: int, dpr: float, m: Mapa) -> QPixmap:
         chave = (n, i, j, self._zoom, dpr)
@@ -246,6 +269,24 @@ class VistaPaginas(QAbstractScrollArea):
 
     def _selecao_atual(self) -> QTextCursor | None:
         return None
+
+    def _posicao_imagem_selecionada(self) -> int | None:
+        """Imagem selecionada, para desenhar o quadro e as alcas (o painel informa)."""
+        return None
+
+    def _retangulo_redimensionando(self) -> QRectF | None:
+        """Retangulo do arrasto de alca em andamento, em px do viewport (o painel informa)."""
+        return None
+
+    def retangulo_imagem_na_tela(self, pos: int) -> QRectF | None:
+        """Retangulo da imagem em `pos`, em pixels do viewport."""
+        r = self.layout_pag.retangulo_imagem(pos)
+        if r is None:
+            return None
+        m = self._mapa()
+        # Pelo canto de cima: a base da imagem pode cair exatamente na divisa da pagina.
+        x0, y0 = m.doc_para_tela(r.left(), r.top(), self._paginas())
+        return QRectF(x0, y0, r.width() * m.escala, r.height() * m.escala)
 
     def _alternar_caret(self) -> None:
         self._caret_ligado = not self._caret_ligado
@@ -330,7 +371,31 @@ class VistaPaginas(QAbstractScrollArea):
             p.restore()
         self._desenhar_quebras(p, m, i0, i1, n_total)
         self._desenhar_caret(p, m, dpr, n_total)
+        self._desenhar_imagem_selecionada(p)
         p.end()
+
+    def _desenhar_imagem_selecionada(self, p: QPainter) -> None:
+        """Quadro e alcas nos quatro cantos da imagem selecionada; tracejado durante o arrasto."""
+        pos = self._posicao_imagem_selecionada()
+        if pos is None:
+            return
+        r = self.retangulo_imagem_na_tela(pos)
+        if r is None:
+            return
+        p.save()
+        p.setPen(QPen(COR_SELECAO, 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(r)
+        lado = ALCA_TELA_PX
+        for canto in (r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()):
+            alca = QRectF(canto.x() - lado / 2, canto.y() - lado / 2, lado, lado)
+            p.fillRect(alca, COR_FOLHA)
+            p.drawRect(alca)
+        novo = self._retangulo_redimensionando()
+        if novo is not None:
+            p.setPen(QPen(COR_SELECAO, 1, Qt.PenStyle.DashLine))
+            p.drawRect(novo)
+        p.restore()
 
     def _desenhar_caret(self, p: QPainter, m: Mapa, dpr: float, n_total: int) -> None:
         pos = self._posicao_caret()

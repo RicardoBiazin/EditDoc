@@ -115,7 +115,20 @@ def preparar_qt() -> bool:
         return False
     if QApplication.instance() is None:
         QApplication([])
+        # No offscreen, sair com algo na area de transferencia derruba o processo no fim
+        # (acesso invalido, codigo 139), e o rodar_todos marca a suite como PROBLEMA.
+        # Medido no M4; na plataforma windows nao acontece.
+        atexit.register(_limpar_area_de_transferencia)
     return True
+
+
+def _limpar_area_de_transferencia() -> None:
+    try:
+        from PySide6.QtWidgets import QApplication
+        if QApplication.instance() is not None:
+            QApplication.clipboard().clear()
+    except Exception:  # noqa: BLE001 - fim de processo: nada a fazer
+        pass
 
 
 def pular(motivo: str) -> int:

@@ -15,8 +15,9 @@ from PySide6.QtCore import Qt, QObject, QSignalBlocker, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QComboBox, QFontComboBox, QTextEdit
 
+from editdoc.edicao import imagens, tabelas
 from editdoc.edicao.estado import ler
-from editdoc.interface.comandos import ALINHAMENTOS, ESPACAMENTOS, Comandos
+from editdoc.interface.comandos import ALINHAMENTOS, ESPACAMENTOS, TABELA, Comandos
 
 
 class AtualizadorDeEstado(QObject):
@@ -68,6 +69,16 @@ class AtualizadorDeEstado(QObject):
             c.acao(id_).setChecked(ALINHAMENTOS[id_] == _alinhamento_de(estado.alinhamento))
         for id_, percentual in ESPACAMENTOS.items():
             c.acao(id_).setChecked(percentual == estado.espacamento)
+
+        # Tabela e imagem: o comando so' fica habilitado onde faz sentido.
+        cursor = self._editor.textCursor()
+        em_tabela = cursor.currentTable() is not None
+        for id_ in TABELA:
+            c.acao(id_).setEnabled(em_tabela)
+        if em_tabela:
+            c.acao("mesclar_celulas").setEnabled(tabelas.pode_mesclar(cursor))
+            c.acao("dividir_celula").setEnabled(tabelas.pode_dividir(cursor))
+        c.acao("tamanho_imagem").setEnabled(imagens.imagem_selecionada(self._editor) is not None)
 
         with QSignalBlocker(self._familia), QSignalBlocker(self._tamanho):
             if estado.familia and self._familia.currentFont().family() != estado.familia:

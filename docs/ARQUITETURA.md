@@ -59,6 +59,37 @@ estrutura, e a aparência não muda.
 Limites aceitos: o Qt não tem viúva e órfã (fora do M3); uma tabela se divide entre páginas por
 linha; `` não quebra página (usa-se a política de quebra do bloco).
 
+## Tabelas e imagens
+
+Implementadas no M4 (0.0.7).
+
+- Modelo: `Documento.paragrafos` passou a ser a lista de blocos do corpo, `Paragrafo` ou
+  `Tabela` (o nome do campo ficou o do M2). `Tabela` tem a grade (`colunas_tw`), linhas e
+  células; a célula tem os seus próprios blocos e pode ter outra tabela. A mescla segue o
+  `.docx`: `colunas` é o `gridSpan`, e `mescla_vertical` é `inicio` ou `continua` (o `vMerge`).
+- Imagem na linha: um `Run` com `imagem` e o texto U+FFFC (o mesmo caractere que o Qt usa). Os
+  bytes são os do arquivo, sem recodificar; o tamanho fica em EMU.
+- Ponte Qt: a tabela vira `QTextTable` com borda colapsada, largura fixa por coluna e
+  `rowSpan`/`columnSpan`. O que o Qt não guarda (bordas do arquivo, sombreamento, altura da
+  linha, largura `tblW`) vai em JSON numa propriedade de usuário do formato da tabela e da
+  célula, e volta igual. A borda que aparece na tela é recalculada pela posição da célula
+  (`aplicar_formatos_das_celulas`) a cada mudança na grade.
+- O Qt exige um bloco antes e depois de cada tabela. O bloco que o modelo não tem (tabela no
+  começo do documento ou da célula, duas tabelas seguidas) leva a marca `PROP_ESTRUTURAL` e,
+  vazio, não volta para o modelo. Na tela ele aparece como uma linha vazia.
+- Imagem no Qt: o recurso do documento é uma prévia (no máximo 1800 px no lado maior); os bytes
+  ficam num registro por conteúdo (`ponte_qt/imagens.py`), porque o Qt troca o recurso pela
+  imagem decodificada depois de desenhar. O `DocumentoQt` busca no registro a imagem colada de
+  outra janela e nunca lê recurso de arquivo nem de rede.
+- Escrita: toda tabela usa o estilo "Table Grid" (espaçamento zero dentro da célula, como no
+  Word) e grava os seis lados da borda. Célula e corpo sempre terminam em parágrafo.
+
+Limites: o Qt refaz o layout da tabela inteira a cada tecla (cerca de 0,06 ms por célula,
+medido; ver docs/SPIKES.md). Por isso o leitor transforma em parágrafos, com aviso, a tabela
+acima de 2000 linhas, 63 colunas ou 5000 células, ou aninhada mais de 4 níveis. Imagem
+flutuante (`wp:anchor`) vira imagem na linha, com aviso; o posicionamento flutuante fica para
+depois da 0.1.0 (formas e caixas de texto).
+
 ## Estilos e formatação
 
 - O estilo nomeado fica numa propriedade de usuário do bloco ou do fragmento.
@@ -91,9 +122,9 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M1 Editor básico | 0.0.4 (feito) | visão provisória, faixa com colapso, formatação, desfazer, localizar |
 | M2 `.docx` de texto | 0.0.5 (feito) | abrir e salvar parágrafos, runs, listas simples; gravação atômica |
 | M3 Visão em páginas | 0.0.6 (feito) | A4, Carta, Ofício, margens, régua, quebras, zoom, Página X de Y |
-| M4 Tabelas e imagens | 0.0.7 | tabela e imagem inline, no `.docx` e na visão |
+| M4 Tabelas e imagens | 0.0.7 (feito) | tabela e imagem inline, no `.docx` e na visão |
 | M5 Cabeçalho e rodapé | 0.0.8 | edição no lugar, número de página |
-| M6 Estilos e faixa final | 0.0.9 | galeria, abas Inserir, Layout e Exibir |
+| M6 Estilos e faixa final | 0.0.9 | galeria, aba Exibir e abas contextuais de tabela e imagem |
 | M7 Impressão e PDF | 0.0.10 | imprimir, pré-visualizar, exportar PDF |
 | M8 Polimento | 0.1.0 | recuperação automática, preferências, acessibilidade, documentação final |
 

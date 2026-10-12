@@ -6,6 +6,8 @@ W_STRICT = "http://purl.oclc.org/ooxml/wordprocessingml/main"
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+#: Equacoes (OMML).
+MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 PKG_CT = "http://schemas.openxmlformats.org/package/2006/content-types"
 CP = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
@@ -13,10 +15,17 @@ DC = "http://purl.org/dc/elements/1.1/"
 DCT = "http://purl.org/dc/terms/"
 XSI = "http://www.w3.org/2001/XMLSchema-instance"
 EP = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+#: DrawingML (imagens, M4).
+WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+#: graphicData de uma figura (pic:pic). Grafico, forma e SmartArt usam outros.
+URI_IMAGEM = PIC_NS
 
 RT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
 RT_STRICT = "http://purl.oclc.org/ooxml/officeDocument/relationships/"
 RT_CORE = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
+RT_IMAGEM = RT + "image"
 
 CT_DOCUMENTO = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 CT_DOCUMENTO_MACRO = "application/vnd.ms-word.document.macroEnabled.main+xml"

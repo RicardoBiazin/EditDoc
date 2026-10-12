@@ -29,11 +29,30 @@ def _plural(n: int, singular: str, plural: str) -> str:
 CATALOGO: dict[str, tuple] = {
     "TABELA": (
         lambda n: f"{n} {_plural(n, 'tabela foi convertida', 'tabelas foram convertidas')} "
-                  "em parágrafos. A grade e as células se perdem ao salvar.",
+                  "em parágrafos, por ser grande demais ou estar aninhada fundo demais. "
+                  "A grade e as células se perdem ao salvar.",
         True),
     "IMAGEM": (
-        lambda n: f"{n} {_plural(n, 'imagem não é editada', 'imagens não são editadas')} "
-                  "nesta versão e sai do arquivo ao salvar.",
+        lambda n: f"{n} {_plural(n, 'imagem está', 'imagens estão')} em formato que o EditDoc "
+                  "não mostra (EMF, WMF, TIFF, SVG, VML ou vinculada a arquivo externo) "
+                  "e sai do arquivo ao salvar.",
+        True),
+    "IMAGEM_GRANDE": (
+        lambda n: f"{n} {_plural(n, 'imagem é grande demais', 'imagens são grandes demais')} "
+                  "para mostrar (mais de 64 megapixels) e aparece como um quadro cinza. "
+                  "A imagem continua no arquivo ao salvar.",
+        False),
+    "IMAGEM_FLUTUANTE": (
+        lambda n: f"{n} {_plural(n, 'imagem flutuante foi posta', 'imagens flutuantes foram postas')} "
+                  "na linha do texto. A posição e a disposição do texto em volta se perdem ao salvar.",
+        True),
+    "QUEBRA_EM_TABELA": (
+        lambda n: f"{n} {_plural(n, 'quebra de página dentro de tabela virou', 'quebras de página dentro de tabela viraram')} "
+                  "quebra de linha.",
+        True),
+    "CELULA_ESCONDIDA": (
+        lambda n: f"{n} {_plural(n, 'célula mesclada tinha', 'células mescladas tinham')} texto que o "
+                  "Word esconde. Esse texto sai do arquivo ao salvar.",
         True),
     "CAIXA_DE_TEXTO": (
         lambda n: f"{n} {_plural(n, 'caixa de texto ou forma não é editada', 'caixas de texto ou formas não são editadas')} "

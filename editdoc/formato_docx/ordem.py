@@ -40,6 +40,18 @@ ORDEM_RPR = [
 #: Ordem de `w:lvl` (numeracao): o escritor monta lvl com estes filhos.
 ORDEM_LVL = ["start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff", "lvlText",
              "lvlPicBulletId", "legacy", "lvlJc", "pPr", "rPr"]
+#: Tabelas (M4): propriedades da tabela e da celula, na ordem do esquema transitional.
+ORDEM_TBLPR = ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize",
+               "tblStyleColBandSize", "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders",
+               "shd", "tblLayout", "tblCellMar", "tblLook", "tblCaption", "tblDescription",
+               "tblPrChange"]
+ORDEM_TCPR = ["cnfStyle", "tcW", "gridSpan", "hMerge", "vMerge", "tcBorders", "shd", "noWrap",
+              "tcMar", "textDirection", "tcFitText", "vAlign", "hideMark", "headers",
+              "cellIns", "cellDel", "cellMerge", "tcPrChange"]
+ORDEM_BORDAS = ["top", "left", "start", "bottom", "right", "end", "insideH", "insideV",
+                "tl2br", "tr2bl"]
+_ORDENS = {"pPr": ORDEM_PPR, "rPr": ORDEM_RPR, "tblPr": ORDEM_TBLPR, "tcPr": ORDEM_TCPR,
+           "tblBorders": ORDEM_BORDAS, "tcBorders": ORDEM_BORDAS}
 
 XML_PARTES = ("word/document.xml", "word/styles.xml", "word/numbering.xml",
               "word/settings.xml", "docProps/core.xml", "docProps/app.xml")
@@ -64,10 +76,10 @@ def _nome(el) -> str:
 
 
 def validar_ordem(raiz) -> list[str]:
-    """Filhos de pPr e rPr fora da ordem do esquema, ou desconhecidos."""
+    """Filhos de pPr, rPr, tblPr, tcPr e das bordas fora da ordem do esquema, ou desconhecidos."""
     problemas: list[str] = []
-    for elemento in raiz.iter(q("pPr"), q("rPr")):
-        ordem = ORDEM_PPR if elemento.tag == q("pPr") else ORDEM_RPR
+    for elemento in raiz.iter(*(q(nome) for nome in _ORDENS)):
+        ordem = _ORDENS[_nome(elemento)]
         pai = _nome(elemento)
         indices = []
         for filho in elemento:
@@ -88,6 +100,59 @@ def validar_xml_space(raiz) -> list[str]:
         texto = t.text or ""
         if texto != texto.strip() and t.get("{%s}space" % XML_NS) != "preserve":
             problemas.append(f"{_nome(t)} com espaco nas pontas sem xml:space=\"preserve\": {texto[:20]!r}")
+    return problemas
+
+
+def validar_estrutura(raiz) -> list[str]:
+    """Regras de tabela e de imagem que o Word exige e o XML bem formado nao garante.
+
+    - w:tbl comeca com tblPr e tblGrid e tem ao menos uma linha;
+    - cada linha ocupa exatamente as colunas da grade (soma dos gridSpan);
+    - w:tc termina em w:p (sem isso o Word abre com reparo);
+    - o corpo nao termina em tabela;
+    - cada wp:docPr tem id unico, e cada imagem tem tamanho positivo.
+    """
+    problemas: list[str] = []
+    for tbl in raiz.iter(q("tbl")):
+        filhos = [f for f in tbl if isinstance(f.tag, str)]
+        nomes = [_nome(f) for f in filhos]
+        if nomes[:2] != ["tblPr", "tblGrid"]:
+            problemas.append(f"tbl sem tblPr e tblGrid no inicio: {nomes[:3]}")
+            continue
+        grade = len(filhos[1].findall(q("gridCol")))
+        linhas = [f for f in filhos if f.tag == q("tr")]
+        if not linhas:
+            problemas.append("tbl sem nenhuma linha")
+        for i, tr in enumerate(linhas):
+            soma = 0
+            for tc in tr.findall(q("tc")):
+                span = tc.find(q("tcPr") + "/" + q("gridSpan"))
+                soma += int(span.get(q("val"))) if span is not None else 1
+            if soma != grade:
+                problemas.append(f"linha {i + 1} da tabela ocupa {soma} colunas, a grade tem {grade}")
+    for tc in raiz.iter(q("tc")):
+        blocos = [f for f in tc if isinstance(f.tag, str) and _nome(f) != "tcPr"]
+        if not blocos or blocos[-1].tag != q("p"):
+            problemas.append("tc nao termina em paragrafo")
+    corpo = raiz.find(q("body"))
+    if corpo is not None:
+        blocos = [f for f in corpo if isinstance(f.tag, str) and _nome(f) != "sectPr"]
+        if blocos and blocos[-1].tag == q("tbl"):
+            problemas.append("o corpo termina em tabela (falta o paragrafo final)")
+    ids: set[str] = set()
+    wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    for doc_pr in raiz.iter("{%s}docPr" % wp):
+        ident = doc_pr.get("id", "")
+        if ident in ids:
+            problemas.append(f"wp:docPr com id repetido: {ident}")
+        ids.add(ident)
+    for extent in raiz.iter("{%s}extent" % wp):
+        try:
+            ok = int(extent.get("cx", "0")) > 0 and int(extent.get("cy", "0")) > 0
+        except ValueError:
+            ok = False
+        if not ok:
+            problemas.append("imagem com tamanho invalido (wp:extent)")
     return problemas
 
 
@@ -190,6 +255,8 @@ def validar_partes_xml(partes: dict[str, bytes]) -> list[str]:
             raiz = etree.fromstring(partes[nome])
             problemas += [f"{nome}: {p}" for p in validar_ordem(raiz)]
             problemas += [f"{nome}: {p}" for p in validar_xml_space(raiz)]
+            if nome == "word/document.xml":
+                problemas += [f"{nome}: {p}" for p in validar_estrutura(raiz)]
     return problemas
 
 

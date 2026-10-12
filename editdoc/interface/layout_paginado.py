@@ -23,6 +23,7 @@ from PySide6.QtCore import QPointF, QRectF, QSizeF
 from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument
 
 from editdoc.modelo.pagina import Pagina
+from editdoc.ponte_qt.imagens import DocumentoQt
 
 DPI_LAYOUT = 1440
 
@@ -42,7 +43,8 @@ def criar_dispositivo_layout() -> QImage:
 class LayoutPaginado:
     def __init__(self, pagina: Pagina, fonte: str, tamanho_pt: float) -> None:
         self._dispositivo: QImage | None = criar_dispositivo_layout()
-        self.doc = QTextDocument()
+        # DocumentoQt acha no registro a imagem colada de outra janela (ponte_qt/imagens.py).
+        self.doc: QTextDocument = DocumentoQt()
         self.doc.setDocumentMargin(0)
         padrao = QFont(fonte)
         padrao.setPointSizeF(float(tamanho_pt))
@@ -95,6 +97,35 @@ class LayoutPaginado:
         x, _ = linha.cursorToX(rel)
         o = self.origem_bloco(bloco)
         return QRectF(o.x() + x, o.y() + linha.y(), 1.0, linha.height())
+
+    def retangulo_imagem(self, pos: int) -> QRectF | None:
+        """Retangulo da imagem cujo caractere esta' em `pos`, em coordenadas do documento.
+
+        A imagem fica na linha de base: o topo e' a base da linha menos a altura dela.
+        O formato guarda o tamanho em px96; o layout e' em twips (x15).
+        """
+        cur = QTextCursor(self.doc)
+        if pos < 0 or pos >= self.doc.characterCount() - 1:
+            return None
+        cur.setPosition(pos)
+        cur.setPosition(pos + 1, QTextCursor.MoveMode.KeepAnchor)
+        fmt = cur.charFormat()
+        if cur.selectedText() != chr(0xFFFC) or not fmt.isImageFormat():
+            return None
+        img = fmt.toImageFormat()
+        bloco = self.doc.findBlock(pos)
+        rel = pos - bloco.position()
+        lay = bloco.layout()
+        linha = lay.lineForTextPosition(rel)
+        if not linha.isValid():
+            return None
+        x0, _ = linha.cursorToX(rel)
+        x1, _ = linha.cursorToX(rel + 1)
+        o = self.origem_bloco(bloco)
+        altura = img.height() * 15.0
+        largura = abs(x1 - x0) or img.width() * 15.0
+        topo = o.y() + linha.y() + linha.ascent() - altura
+        return QRectF(o.x() + min(x0, x1), topo, largura, altura)
 
     def pagina_do_cursor(self, pos: int) -> int:
         return self.pagina_de_y(self.retangulo_cursor(pos).center().y())
