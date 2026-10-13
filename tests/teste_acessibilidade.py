@@ -388,6 +388,40 @@ def testar_contraste() -> None:
           "rotulo da edicao do cabecalho sobre a folha")
     fechar(janela)
 
+    # Tema escuro: a paleta da texto claro. A barra de aviso tem fundo amarelo
+    # fixo, entao o rotulo e os botoes tem de ignorar a paleta (bug relatado em
+    # 13/10/2026: o aviso ficava ilegivel, branco sobre amarelo).
+    from PySide6.QtGui import QPalette
+    app = QApplication.instance()
+    paleta_antes = app.palette()
+    escura = QPalette(paleta_antes)
+    for papel, cor in ((QPalette.ColorRole.Window, "#202020"),
+                       (QPalette.ColorRole.WindowText, "#f0f0f0"),
+                       (QPalette.ColorRole.Text, "#f0f0f0"),
+                       (QPalette.ColorRole.Button, "#2d2d2d"),
+                       (QPalette.ColorRole.ButtonText, "#f0f0f0")):
+        escura.setColor(papel, QColor(cor))
+    app.setPalette(escura)
+    try:
+        janela = janela_pronta()
+        barra = janela.barra_aviso
+        barra.mostrar([Aviso("EQUACAO", "1 equação.", 1, True)])
+        drenar_eventos()
+        amarelo = QColor("#fff3c4")
+        cor_rotulo = barra._rotulo.palette().color(barra._rotulo.foregroundRole())
+        checa(contraste(cor_rotulo, amarelo) >= 4.5,
+              f"tema escuro: texto da barra de aviso legivel ({contraste(cor_rotulo, amarelo):.1f}:1)")
+        for botao in (barra._detalhes, barra._fechar):
+            cor = botao.palette().color(botao.foregroundRole())
+            fundo_botao = QColor("#fffaf0")
+            checa(contraste(cor, fundo_botao) >= 4.5,
+                  f"tema escuro: botao '{botao.text()}' da barra legivel ({contraste(cor, fundo_botao):.1f}:1)")
+        checa(contraste(QColor("#f0f0f0"), amarelo) < 4.5,
+              "contraprova: o texto claro da paleta escura sobre o amarelo nao passa")
+        fechar(janela)
+    finally:
+        app.setPalette(paleta_antes)
+
 
 def _acoes_de_menu(menu: QMenu, saida: set) -> None:
     for acao in menu.actions():

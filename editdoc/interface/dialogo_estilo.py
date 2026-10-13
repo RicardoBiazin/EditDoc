@@ -133,7 +133,9 @@ class DialogoEstilo(QDialog):
         vertical.addWidget(caixa_par)
         vertical.addWidget(self.galeria)
         self._erro = QLabel()
-        self._erro.setStyleSheet("color: #B00020;")
+        # Vermelho escuro some no tema escuro; o claro, no tema claro.
+        escuro = self.palette().window().color().lightness() < 128
+        self._erro.setStyleSheet("color: #FF8A80;" if escuro else "color: #B00020;")
         vertical.addWidget(self._erro)
         vertical.addWidget(botoes)
         self._preencher(estilo)

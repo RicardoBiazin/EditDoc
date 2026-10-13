@@ -1,3 +1,14 @@
+## 0.1.1 - 2026-10-13
+
+Correção de legibilidade no tema escuro.
+
+- A faixa amarela de aviso ("Este documento tem recursos que o EditDoc não edita…") ficava
+  ilegível no tema escuro: o texto e os botões herdavam a cor clara da paleta sobre o fundo
+  amarelo fixo (contraste 1:1). Agora o texto e os botões da faixa são sempre escuros
+  (14,8:1). Teste novo em `teste_acessibilidade.py` com a paleta escura, que falha sem a
+  correção.
+- A mensagem de erro do diálogo de estilo usa um vermelho claro no tema escuro.
+
 ## 0.1.0 - 2026-10-12
 
 Polimento (M8): a primeira versão completa do roteiro. Recuperação automática,

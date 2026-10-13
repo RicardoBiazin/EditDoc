@@ -14,6 +14,16 @@ from editdoc.interface import dialogos_modais
 
 _COR = "#fff3c4"
 _BORDA = "#d9b44a"
+# O fundo e' sempre amarelo claro, entao o texto tem de ser sempre escuro. Sem
+# isto, no tema escuro o rotulo herda o texto claro da paleta e some no amarelo.
+_TEXTO = "#1f1f1f"
+_ESTILO = (
+    f"#barraAviso {{ background: {_COR}; border-bottom: 1px solid {_BORDA}; }}"
+    f"#barraAviso QLabel {{ color: {_TEXTO}; background: transparent; }}"
+    f"#barraAviso QPushButton {{ color: {_TEXTO}; background: #fffaf0;"
+    f" border: 1px solid {_BORDA}; border-radius: 3px; padding: 2px 10px; }}"
+    f"#barraAviso QPushButton:hover {{ background: #ffe9a8; }}"
+    f"#barraAviso QPushButton:focus {{ border: 2px solid #8a6d00; }}")
 
 
 class BarraAviso(QFrame):
@@ -22,8 +32,7 @@ class BarraAviso(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("barraAviso")
-        self.setStyleSheet(
-            f"#barraAviso {{ background: {_COR}; border-bottom: 1px solid {_BORDA}; }}")
+        self.setStyleSheet(_ESTILO)
         self._avisos: list[Aviso] = []
         self._rotulo = QLabel()
         self._rotulo.setWordWrap(True)
