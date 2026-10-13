@@ -115,7 +115,16 @@ def png_de(img: QImage) -> bytes:
 
 
 class DocumentoQt(QTextDocument):
-    """QTextDocument que acha no registro a imagem que nao esta' nos seus recursos."""
+    """QTextDocument que acha no registro a imagem que nao esta' nos seus recursos.
+
+    Tambem registra o manipulador dos objetos opacos (0.1.2), que pinta o marcador da
+    caixa de texto, da forma ou do grafico preservado.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        from editdoc.ponte_qt import opacos  # import tardio: opacos usa a previa daqui
+        self._manipulador_opacos = opacos.registrar_manipulador(self)
 
     def loadResource(self, tipo, url):  # noqa: N802 - nome do Qt
         """Recurso que falta: so' as imagens do registro. Nada vem de arquivo nem de rede.

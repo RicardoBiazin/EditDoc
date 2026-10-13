@@ -21,6 +21,9 @@ bytes ficam no registro de `imagens.py`.
 Campos (M5): o run de campo vira o caractere de objeto com o formato de campo de
 `campos.py`, que o manipulador do layout pinta com o numero da pagina.
 
+Objetos opacos (0.1.2): o run de objeto vira o caractere de objeto com o formato de
+`opacos.py`; o XML e as partes ficam no registro de la'.
+
 Estilos (M6): o formato do Qt recebe o efetivo, estilo resolvido (cadeia basedOn) mais a
 formatacao direta do modelo, e o id do estilo numa propriedade de usuario
 (`ponte_qt/estilos.py`). O catalogo vai para o documento (`definir_catalogo_base`).
@@ -40,7 +43,7 @@ from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula,
                                       Paragrafo, Tabela, bordas_padrao)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
-from editdoc.ponte_qt import campos, imagens
+from editdoc.ponte_qt import campos, imagens, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
 
 LINHA_SEPARADORA = chr(0x2028)
@@ -338,6 +341,8 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas,
     for r in p.runs:
         if r.imagem is not None:
             inserir_imagem(cursor, r.imagem)
+        elif r.objeto is not None:
+            opacos.inserir(cursor, r.objeto, _formato_do_run(r, p.estilo, res))
         elif r.campo is not None:
             campos.inserir_campo(cursor, r.campo, r.texto, _formato_do_run(r, p.estilo, res))
         elif r.texto:

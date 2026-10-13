@@ -16,6 +16,11 @@ Imagem na linha do texto: um `Run` com `imagem` e o texto CARACTERE_OBJETO
 (U+FFFC, o mesmo caractere que o Qt usa para o objeto). Assim o texto do
 paragrafo conta a imagem, e a conferencia do arquivo gravado ve a imagem sumir.
 
+Objeto opaco (0.1.2): um `Run` com `objeto` e o texto CARACTERE_OBJETO. Caixa de
+texto, forma, grafico, SmartArt, OLE, equacao e imagem flutuante: o XML original e as
+partes que ele usa ficam no `ObjetoOpaco`, e voltam iguais ao arquivo. O EditDoc nao
+edita o objeto por dentro; apagar remove o objeto inteiro.
+
 Campo (M5): um `Run` com `campo` (a instrucao, "PAGE" ou "NUMPAGES" com as opcoes)
 e o texto do ultimo resultado que o arquivo mostrava. O valor real depende da
 pagina e e' calculado na tela (modelo/campos.py); o texto so' vai para o arquivo
@@ -59,6 +64,61 @@ class Imagem:
     descricao: str = ""  # texto alternativo (wp:docPr descr)
 
 
+@dataclass(frozen=True)
+class ParteOpaca:
+    """Parte do pacote que um objeto opaco usa (grafico, imagem da forma, planilha...).
+
+    `nome` e' o nome no pacote de origem: serve so' de chave entre as relacoes. O escritor
+    escolhe um nome livre. `relacoes` sao as da propria parte: (Id, tipo, alvo, externo),
+    com o alvo interno no nome de origem de outra parte do mesmo objeto. `refs_hospedeiro`:
+    valores de atributo dentro da parte que apontam para relacoes da parte hospedeira (o
+    relId do SmartArt, que o escritor reescreve com o rId novo).
+    """
+    nome: str
+    tipo_conteudo: str
+    dados: bytes
+    relacoes: tuple = ()
+    refs_hospedeiro: tuple = ()
+
+
+@dataclass(frozen=True)
+class ObjetoOpaco:
+    """O que o EditDoc nao edita mas preserva: caixa de texto, forma, grafico, SmartArt,
+    objeto OLE, imagem flutuante ou em formato que a tela nao mostra, equacao.
+
+    `xml` e' o XML original (um w:r so' com o rPr e o objeto, ou o m:oMath/m:oMathPara),
+    com as declaracoes de namespace. Volta ao arquivo igual, com os rIds renumerados.
+    `relacoes`: as da parte hospedeira (documento, cabecalho, rodape) que o objeto usa,
+    (rId de origem, tipo, alvo, externo). `partes`: o fecho das partes internas.
+    `ignoraveis`: (prefixo, namespace) do mc:Ignorable da raiz de origem.
+    """
+    xml: bytes
+    tipo: str  # ver ROTULOS_OPACOS
+    resumo: str = ""  # inicio do texto da caixa (ou da equacao), para a tela
+    flutuante: bool = False
+    largura_emu: int | None = None
+    altura_emu: int | None = None
+    relacoes: tuple = ()
+    partes: tuple = ()
+    ignoraveis: tuple = ()
+    previa: bytes | None = None  # imagem que a tela pode mostrar (PNG, JPEG, GIF, BMP)
+
+
+#: Tipo do objeto opaco -> rotulo na tela.
+ROTULOS_OPACOS = {
+    "caixa_de_texto": "Caixa de texto",
+    "forma": "Forma",
+    "grupo": "Grupo de formas",
+    "desenho": "Tela de desenho",
+    "grafico": "Gráfico",
+    "smartart": "SmartArt",
+    "objeto": "Objeto",
+    "tinta": "Tinta",
+    "imagem": "Imagem",
+    "equacao": "Equação",
+}
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -79,10 +139,20 @@ class Run:
     # Estilo de caractere (M6, w:rStyle): o id no catalogo. None = sem estilo de caractere.
     # Os campos acima sao a formatacao DIRETA: o que o texto tem alem do estilo.
     estilo: str | None = None
+    # Objeto opaco (0.1.2): texto == CARACTERE_OBJETO; o XML original volta ao arquivo.
+    objeto: ObjetoOpaco | None = None
+
+    def eh_objeto(self) -> bool:
+        """Run que ocupa o caractere de objeto: imagem ou objeto opaco."""
+        return self.imagem is not None or self.objeto is not None
 
 
 def run_de_imagem(imagem: Imagem) -> Run:
     return Run(texto=CARACTERE_OBJETO, imagem=imagem)
+
+
+def run_de_objeto(objeto: ObjetoOpaco) -> Run:
+    return Run(texto=CARACTERE_OBJETO, objeto=objeto)
 
 
 @dataclass
@@ -202,15 +272,15 @@ def _formato_de(run: Run) -> tuple:
 def _normalizar_paragrafo(paragrafo: Paragrafo) -> None:
     fundidos: list[Run] = []
     for run in paragrafo.runs:
-        if run.imagem is not None or run.campo is not None:
-            # Imagem e campo nunca fundem: duas imagens iguais lado a lado sao duas
+        if run.eh_objeto() or run.campo is not None:
+            # Imagem, objeto e campo nunca fundem: duas imagens iguais lado a lado sao duas
             # imagens, e o campo PAGE seguido de outro PAGE sao dois campos.
             fundidos.append(run)
             continue
         if run.texto == "":
             continue
         anterior = fundidos[-1] if fundidos else None
-        if anterior is not None and anterior.imagem is None and anterior.campo is None and \
+        if anterior is not None and not anterior.eh_objeto() and anterior.campo is None and \
                 _formato_de(anterior) == _formato_de(run):
             anterior.texto += run.texto
         else:
@@ -271,6 +341,19 @@ def paragrafos_de(blocos: list[Bloco]):
                     yield from paragrafos_de(celula.blocos)
         else:
             yield bloco
+
+
+def objetos_de(doc: Documento):
+    """Todos os objetos opacos do documento, na ordem em que o escritor os grava:
+    corpo, depois cabecalhos e rodapes (padrao, primeira, par)."""
+    listas = [doc.paragrafos]
+    for faixas in (doc.cabecalhos, doc.rodapes):
+        listas.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
+    for blocos in listas:
+        for p in paragrafos_de(blocos):
+            for r in p.runs:
+                if r.objeto is not None:
+                    yield r.objeto
 
 
 def tabelas_de(blocos: list[Bloco]):

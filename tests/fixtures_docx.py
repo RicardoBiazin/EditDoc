@@ -429,3 +429,321 @@ def documento_m7(paginas_de_texto: int = 110):
     doc.paragrafos[2:2] = [Paragrafo(runs=[Run("Tabela e imagem no corpo, como saem no papel:")]),
                            *extra[1:]]
     return doc
+
+
+# -- objetos opacos (0.1.2) ----------------------------------------------------------------
+
+#: Namespaces que o Word declara na raiz e que os objetos usam.
+NS_OBJETOS = {
+    "mc": "http://schemas.openxmlformats.org/markup-compatibility/2006",
+    "wps": "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    "wpg": "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+    "wpc": "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas",
+    "w14": "http://schemas.microsoft.com/office/word/2010/wordml",
+    "wp14": "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
+    "v": "urn:schemas-microsoft-com:vml",
+    "o": "urn:schemas-microsoft-com:office:office",
+    "w10": "urn:schemas-microsoft-com:office:word",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+    "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
+}
+_RT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+RT_GRAFICO = _RT + "chart"
+RT_PACOTE = _RT + "package"
+RT_IMAGEM = _RT + "image"
+RT_OLE = _RT + "oleObject"
+RT_HIPERLINK = _RT + "hyperlink"
+RT_DGM_DADOS = _RT + "diagramData"
+RT_DGM_LAYOUT = _RT + "diagramLayout"
+RT_DGM_ESTILO = _RT + "diagramQuickStyle"
+RT_DGM_CORES = _RT + "diagramColors"
+RT_DGM_DESENHO = "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing"
+RT_ESTILO_GRAFICO = "http://schemas.microsoft.com/office/2011/relationships/chartStyle"
+CT_GRAFICO = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+CT_ESTILO_GRAFICO = "application/vnd.ms-office.chartstyle+xml"
+CT_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CT_OLE = "application/vnd.openxmlformats-officedocument.oleObject"
+CT_DGM = "application/vnd.openxmlformats-officedocument.drawingml.diagram"
+CT_DGM_DESENHO = "application/vnd.ms-office.drawingml.diagramDrawing+xml"
+URI_FORMA = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+
+
+def _quadro(tipo: str, ident: int, uri: str, conteudo: str, cx: int = 2743200, cy: int = 914400,
+            ancora_id: str = "") -> str:
+    """w:drawing com wp:inline ou wp:anchor em volta de um a:graphicData."""
+    extra = f' wp14:anchorId="{ancora_id}"' if ancora_id else ""
+    pos = ""
+    if tipo == "anchor":
+        pos = ('<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>914400'
+               '</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0'
+               '</wp:posOffset></wp:positionV>')
+        abre = (f'<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" '
+                f'relativeHeight="251659264" behindDoc="0" locked="0" layoutInCell="1" '
+                f'allowOverlap="1"{extra}>')
+        quebra = '<wp:wrapSquare wrapText="bothSides"/>'
+    else:
+        abre = f'<wp:inline distT="0" distB="0" distL="0" distR="0"{extra}>'
+        quebra = ""
+    return (f'<w:drawing>{abre}{pos}<wp:extent cx="{cx}" cy="{cy}"/>'
+            f'<wp:effectExtent l="0" t="0" r="0" b="0"/>{quebra}'
+            f'<wp:docPr id="{ident}" name="Objeto {ident}"/><wp:cNvGraphicFramePr/>'
+            f'<a:graphic><a:graphicData uri="{uri}">{conteudo}</a:graphicData></a:graphic>'
+            f'</wp:{tipo}></w:drawing>')
+
+
+def _paragrafos_da_caixa(para_ids=("1A2B3C4D", "1A2B3C4E"), extra: str = "") -> str:
+    return (f'<w:p w14:paraId="{para_ids[0]}" w14:textId="77777777"><w:pPr><w:jc w:val="center"/>'
+            '</w:pPr><w:r><w:rPr><w:b/><w14:ligatures w14:val="standard"/></w:rPr>'
+            '<w:t>Texto da caixa</w:t></w:r></w:p>'
+            f'<w:p w14:paraId="{para_ids[1]}" w14:textId="77777777"><w:r>'
+            '<w:t xml:space="preserve">Segunda linha com </w:t></w:r>'
+            f'<w:hyperlink r:id="rId60"><w:r><w:t>link</w:t></w:r></w:hyperlink>{extra}</w:p>')
+
+
+def caixa_de_texto(ident: int = 101, para_ids=("1A2B3C4D", "1A2B3C4E"),
+                   ancora_id: str = "5A1B2C3D", extra: str = "") -> str:
+    """Caixa de texto DrawingML flutuante, com o VML de reserva, como o Word grava.
+
+    O w14:paraId dos paragrafos e o anchorId se repetem no Choice e no Fallback, como no
+    Word. `extra` entra no fim do segundo paragrafo (dentro dos dois ramos)."""
+    paragrafos = _paragrafos_da_caixa(para_ids, extra)
+    wsp = ('<wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/>'
+           '<a:ext cx="2743200" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/>'
+           f'</a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{paragrafos}</w:txbxContent>'
+           '</wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" anchor="t"><a:noAutofit/>'
+           '</wps:bodyPr></wps:wsp>')
+    escolha = _quadro("anchor", ident, URI_FORMA, wsp, ancora_id=ancora_id)
+    reserva = ('<w:pict><v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" '
+               'path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/>'
+               '<v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>'
+               f'<v:shape id="Caixa {ident}" o:spid="_x0000_s{ident}" type="#_x0000_t202" '
+               'style="position:absolute;margin-left:72pt;margin-top:0;width:216pt;height:72pt;'
+               f'z-index:251659264" w14:anchorId="{ancora_id}"><v:textbox><w:txbxContent>'
+               f'{paragrafos}</w:txbxContent></v:textbox><w10:wrap type="square"/></v:shape></w:pict>')
+    return ('<w:r><w:rPr><w:noProof/></w:rPr><mc:AlternateContent><mc:Choice Requires="wps">'
+            f'{escolha}</mc:Choice><mc:Fallback>{reserva}</mc:Fallback></mc:AlternateContent></w:r>')
+
+
+def forma_sem_texto(ident: int = 102) -> str:
+    wsp = ('<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="0"/>'
+           '</a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom><a:ln w="12700"><a:solidFill>'
+           '<a:srgbClr val="C00000"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>')
+    # Linha reta: altura zero no wp:extent (o validador aceita na forma, nao na figura).
+    return ('<w:r>' + _quadro("anchor", ident, URI_FORMA, wsp, cx=1828800, cy=0,
+                              ancora_id="6B2C3D4E") + '</w:r>')
+
+
+def grupo_de_formas(ident: int = 103) -> str:
+    forma = ('<wps:wsp><wps:cNvPr id="{n}" name="R{n}"/><wps:cNvSpPr/><wps:spPr><a:xfrm>'
+             '<a:off x="{x}" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom '
+             'prst="ellipse"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>')
+    wgp = ('<wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1371600" '
+           'cy="457200"/><a:chOff x="0" y="0"/><a:chExt cx="1371600" cy="457200"/></a:xfrm>'
+           '</wpg:grpSpPr>' + forma.format(n=1, x=0) + forma.format(n=2, x=914400) + '</wpg:wgp>')
+    return ('<w:r>' + _quadro("inline", ident, "http://schemas.microsoft.com/office/word/2010/"
+                              "wordprocessingGroup", wgp, cx=1371600, cy=457200) + '</w:r>')
+
+
+def grafico(ident: int = 104, rid: str = "rId50") -> str:
+    conteudo = (f'<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+                f'r:id="{rid}"/>')
+    return '<w:r>' + _quadro("inline", ident, "http://schemas.openxmlformats.org/drawingml/2006/chart",
+                             conteudo, cx=5486400, cy=3200400) + '</w:r>'
+
+
+GRAFICO_XML = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+               b'<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+               b'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+               b'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+               b'<c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/>'
+               b'<c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val>'
+               b'<c:numRef><c:f>Planilha1!$B$2:$B$3</c:f></c:numRef></c:val></c:ser></c:barChart>'
+               b'</c:plotArea></c:chart><c:externalData r:id="rId1"><c:autoUpdate val="0"/>'
+               b'</c:externalData></c:chartSpace>')
+GRAFICO_RELS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{RT_PACOTE}" Target="../embeddings/Planilha1.xlsx"/>'
+                f'<Relationship Id="rId2" Type="{RT_ESTILO_GRAFICO}" Target="style1.xml"/>'
+                '</Relationships>').encode("utf-8")
+ESTILO_GRAFICO = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                  b'<cs:chartStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/'
+                  b'chartStyle" id="201"/>')
+#: Nao e' um .xlsx de verdade: o EditDoc nunca abre a planilha, so' a leva junto.
+PLANILHA = b"PK\x03\x04 planilha de exemplo do grafico \x00\x01\x02"
+
+
+def imagem_flutuante(ident: int = 105, rid: str = "rId51") -> str:
+    pic = ('<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="foto.png"/><pic:cNvPicPr/></pic:nvPicPr>'
+           f'<pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch>'
+           '</pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1440000" cy="720000"/>'
+           '</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>')
+    return '<w:r>' + _quadro("anchor", ident, "http://schemas.openxmlformats.org/drawingml/2006/picture",
+                             pic, cx=1440000, cy=720000, ancora_id="7C3D4E5F") + '</w:r>'
+
+
+def objeto_ole() -> str:
+    return ('<w:r><w:object w:dxaOrig="1440" w:dyaOrig="720">'
+            '<v:shape id="_x0000_i1025" type="#_x0000_t75" style="width:72pt;height:36pt" o:ole="">'
+            '<v:imagedata r:id="rId52" o:title=""/></v:shape>'
+            '<o:OLEObject Type="Embed" ProgID="Package" ShapeID="_x0000_i1025" DrawAspect="Icon" '
+            'ObjectID="_1700000000" r:id="rId53"/></w:object></w:r>')
+
+
+EMF = b"\x01\x00\x00\x00" + b"\x00" * 36 + b" EMF" + b"\x00" * 60
+OLE_BIN = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 120
+
+
+def smartart(ident: int = 106) -> str:
+    conteudo = ('<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+                'r:dm="rId54" r:lo="rId55" r:qs="rId56" r:cs="rId57"/>')
+    return '<w:r>' + _quadro("inline", ident, "http://schemas.openxmlformats.org/drawingml/2006/diagram",
+                             conteudo, cx=5486400, cy=3200400) + '</w:r>'
+
+
+DGM_DADOS = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             b'<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+             b'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+             b'<dgm:ptLst><dgm:pt modelId="{1}" type="doc"/></dgm:ptLst><dgm:extLst>'
+             b'<a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram">'
+             b'<dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" '
+             b'relId="rId58" minVer="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>'
+             b'</a:ext></dgm:extLst></dgm:dataModel>')
+DGM_DESENHO = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+               b'<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram"/>')
+
+
+def _dgm(raiz: str) -> bytes:
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<dgm:{raiz} xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>'
+            ).encode("utf-8")
+
+
+def imagem_vinculada(ident: int = 107) -> str:
+    pic = ('<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="vinculada.png"/><pic:cNvPicPr/>'
+           '</pic:nvPicPr><pic:blipFill><a:blip r:link="rId59"/><a:stretch><a:fillRect/></a:stretch>'
+           '</pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="720000" cy="720000"/>'
+           '</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>')
+    return '<w:r>' + _quadro("inline", ident, "http://schemas.openxmlformats.org/drawingml/2006/picture",
+                             pic, cx=720000, cy=720000) + '</w:r>'
+
+
+EQUACAO_BLOCO = ('<m:oMathPara><m:oMath><m:r><m:t>x</m:t></m:r><m:r><m:t>=</m:t></m:r>'
+                 '<m:f><m:num><m:r><m:t>a+b</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r>'
+                 '</m:den></m:f></m:oMath></m:oMathPara>')
+EQUACAO_LINHA = ('<m:oMath><m:r><m:t>E=mc</m:t></m:r><m:sSup><m:e/><m:sup><m:r><m:t>2</m:t>'
+                 '</m:r></m:sup></m:sSup></m:oMath>')
+#: Retangulo VML no cabecalho (marca d agua, faixa lateral), sem relacao nenhuma.
+RETANGULO_VML = ('<w:r><w:pict><v:rect id="Faixa" o:spid="_x0000_s2049" style="position:absolute;'
+                 'margin-left:0;margin-top:0;width:20pt;height:70pt;z-index:-1" fillcolor="#be003e" '
+                 'stroked="f"><w10:wrap anchorx="page"/></v:rect></w:pict></w:r>')
+
+#: Os objetos de `docx_com_objetos`, na ordem do escritor (corpo, cabecalho): (tipo, flutuante).
+OBJETOS_ESPERADOS = [("caixa_de_texto", True), ("forma", True), ("grupo", False),
+                     ("grafico", False), ("imagem", True), ("objeto", False), ("smartart", False),
+                     ("imagem", False), ("equacao", False), ("equacao", False), ("forma", True)]
+
+
+def _com_namespaces(xml: str, raiz: str) -> str:
+    decl = " ".join(f'xmlns:{k}="{v}"' for k, v in NS_OBJETOS.items() if f'xmlns:{k}=' not in xml)
+    return xml.replace(f"<w:{raiz} ", f'<w:{raiz} {decl} mc:Ignorable="w14 wp14" ', 1)
+
+
+def docx_com_corpo_de_objetos(corpo_xml: str, relacoes=(), partes_extra=None, tipos=(), padroes=(),
+                              cabecalho_xml: str = "", documento: Documento | None = None) -> bytes:
+    """Um .docx com `corpo_xml` no comeco do corpo e os namespaces do Word na raiz.
+
+    O documento de base tem uma imagem do EditDoc (word/media/image1.png) e um cabecalho.
+    `relacoes`: (rId, tipo, alvo[, "External"]) no document.xml.rels; `tipos`: Overrides;
+    `padroes`: (extensao, tipo) dos Defaults; `cabecalho_xml`: paragrafo a mais no cabecalho.
+    """
+    doc = documento or Documento(
+        paragrafos=[Paragrafo(runs=[Run("Imagem do EditDoc: "), run_de_imagem(imagem(png(40, 20)))]),
+                    Paragrafo(runs=[Run("Fim do documento.")])],
+        cabecalhos={"padrao": [Paragrafo(runs=[Run("Cabeçalho")])]})
+    partes = partes_de(bytes_de(doc))
+    xml = _com_namespaces(partes["word/document.xml"].decode("utf-8"), "document")
+    inicio = xml.index("<w:body>") + len("<w:body>")
+    partes["word/document.xml"] = (xml[:inicio] + corpo_xml + xml[inicio:]).encode("utf-8")
+    if cabecalho_xml and "word/header1.xml" in partes:
+        cab = _com_namespaces(partes["word/header1.xml"].decode("utf-8"), "hdr")
+        partes["word/header1.xml"] = cab.replace("</w:hdr>", cabecalho_xml + "</w:hdr>").encode("utf-8")
+    rels = partes["word/_rels/document.xml.rels"].decode("utf-8")
+    novas = "".join(
+        f'<Relationship Id="{r[0]}" Type="{r[1]}" Target="{r[2]}"'
+        + (f' TargetMode="{r[3]}"' if len(r) > 3 else "") + "/>" for r in relacoes)
+    partes["word/_rels/document.xml.rels"] = rels.replace("</Relationships>",
+                                                          novas + "</Relationships>").encode("utf-8")
+    ct = partes["[Content_Types].xml"].decode("utf-8")
+    novos = "".join(f'<Default Extension="{e}" ContentType="{t}"/>' for e, t in padroes
+                    if f'Extension="{e}"' not in ct)
+    novos += "".join(f'<Override PartName="{p}" ContentType="{t}"/>' for p, t in tipos)
+    partes["[Content_Types].xml"] = ct.replace("</Types>", novos + "</Types>").encode("utf-8")
+    for nome, dados in (partes_extra or {}).items():
+        partes[nome] = dados
+    return montar(partes)
+
+
+#: Relacoes, partes e tipos dos objetos de `docx_com_objetos`.
+RELACOES_OBJETOS = [
+    ("rId50", RT_GRAFICO, "charts/chart1.xml"),
+    # A imagem flutuante usa a mesma parte que a imagem do EditDoc (word/media/image1.png):
+    # na gravacao as duas disputam o nome.
+    ("rId51", RT_IMAGEM, "media/image1.png"),
+    ("rId52", RT_IMAGEM, "media/image3.emf"),
+    ("rId53", RT_OLE, "embeddings/oleObject1.bin"),
+    ("rId54", RT_DGM_DADOS, "diagrams/data1.xml"),
+    ("rId55", RT_DGM_LAYOUT, "diagrams/layout1.xml"),
+    ("rId56", RT_DGM_ESTILO, "diagrams/quickStyle1.xml"),
+    ("rId57", RT_DGM_CORES, "diagrams/colors1.xml"),
+    ("rId58", RT_DGM_DESENHO, "diagrams/drawing1.xml"),
+    ("rId59", RT_IMAGEM, "http://exemplo.invalid/vinculada.png", "External"),
+    ("rId60", RT_HIPERLINK, "https://exemplo.invalid/caixa", "External"),
+]
+PARTES_OBJETOS = {
+    "word/charts/chart1.xml": GRAFICO_XML,
+    "word/charts/_rels/chart1.xml.rels": GRAFICO_RELS,
+    "word/charts/style1.xml": ESTILO_GRAFICO,
+    "word/embeddings/Planilha1.xlsx": PLANILHA,
+    "word/media/image3.emf": EMF,
+    "word/embeddings/oleObject1.bin": OLE_BIN,
+    "word/diagrams/data1.xml": DGM_DADOS,
+    "word/diagrams/layout1.xml": _dgm("layoutDef"),
+    "word/diagrams/quickStyle1.xml": _dgm("styleDef"),
+    "word/diagrams/colors1.xml": _dgm("colorsDef"),
+    "word/diagrams/drawing1.xml": DGM_DESENHO,
+}
+TIPOS_OBJETOS = [("/word/charts/chart1.xml", CT_GRAFICO),
+                 ("/word/charts/style1.xml", CT_ESTILO_GRAFICO),
+                 ("/word/diagrams/data1.xml", CT_DGM + "Data+xml"),
+                 ("/word/diagrams/layout1.xml", CT_DGM + "Layout+xml"),
+                 ("/word/diagrams/quickStyle1.xml", CT_DGM + "Style+xml"),
+                 ("/word/diagrams/colors1.xml", CT_DGM + "Colors+xml"),
+                 ("/word/diagrams/drawing1.xml", CT_DGM_DESENHO)]
+PADROES_OBJETOS = [("xlsx", CT_XLSX), ("emf", "image/x-emf"), ("bin", CT_OLE)]
+
+
+def docx_com_objetos() -> bytes:
+    """Um de cada: caixa de texto (DrawingML + VML de reserva, com hiperlink), forma sem
+    texto (linha), grupo, grafico (com planilha e estilo), imagem flutuante, objeto OLE,
+    SmartArt (com o desenho apontado pelo relId do dataModelExt), imagem vinculada,
+    equacao em bloco e na linha, e um retangulo VML no cabecalho."""
+    corpo = (
+        '<w:p><w:r><w:t xml:space="preserve">Antes da caixa </w:t></w:r>' + caixa_de_texto()
+        + '<w:r><w:t xml:space="preserve"> depois da caixa.</w:t></w:r></w:p>'
+        + '<w:p><w:r><w:t xml:space="preserve">Forma sem texto: </w:t></w:r>' + forma_sem_texto()
+        + '</w:p>'
+        + '<w:p>' + grupo_de_formas() + '<w:r><w:t xml:space="preserve"> grupo</w:t></w:r></w:p>'
+        + '<w:p><w:r><w:t xml:space="preserve">Gráfico: </w:t></w:r>' + grafico() + '</w:p>'
+        + '<w:p>' + imagem_flutuante() + '<w:r><w:t>Texto ao lado da imagem flutuante.</w:t>'
+        '</w:r></w:p>'
+        + '<w:p><w:r><w:t xml:space="preserve">Objeto OLE: </w:t></w:r>' + objeto_ole() + '</w:p>'
+        + '<w:p>' + smartart() + '</w:p>'
+        + '<w:p><w:r><w:t xml:space="preserve">Vinculada: </w:t></w:r>' + imagem_vinculada()
+        + '</w:p>'
+        + '<w:p>' + EQUACAO_BLOCO + '</w:p>'
+        + '<w:p><w:r><w:t xml:space="preserve">Equação: </w:t></w:r>' + EQUACAO_LINHA
+        + '<w:r><w:t xml:space="preserve"> fim.</w:t></w:r></w:p>')
+    return docx_com_corpo_de_objetos(corpo, RELACOES_OBJETOS, PARTES_OBJETOS, TIPOS_OBJETOS,
+                                     PADROES_OBJETOS, cabecalho_xml="<w:p>" + RETANGULO_VML + "</w:p>")

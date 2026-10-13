@@ -26,7 +26,7 @@ from editdoc.modelo.documento import (CARACTERE_OBJETO, Celula, Documento, Image
                                       Paragrafo, Run, Tabela)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
-from editdoc.ponte_qt import campos, imagens
+from editdoc.ponte_qt import campos, imagens, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
@@ -162,6 +162,16 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                         # Instrucao estranha (formato montado a mao): fica o texto, sem campo.
                         run.campo = instrucao if tipo_do_campo(instrucao) else None
                         p.runs.append(run)
+            elif opacos.eh_opaco(cf):
+                # Objetos opacos iguais lado a lado viram um fragmento so': um por caractere.
+                obj = opacos.objeto_de(cf)
+                for caractere in frag.text():
+                    if caractere != CARACTERE_OBJETO:
+                        continue
+                    if obj is not None:
+                        p.runs.append(Run(texto=CARACTERE_OBJETO, objeto=obj))
+                    else:
+                        log.warning("objeto opaco sem registro descartado ao salvar")
             elif cf.isImageFormat():
                 # Imagens iguais lado a lado viram um fragmento so': uma por caractere.
                 for caractere in frag.text():

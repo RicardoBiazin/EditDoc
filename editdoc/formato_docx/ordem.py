@@ -10,6 +10,14 @@ O Word abre com reparo, ou pede "Modo de Compatibilidade", quando:
 Nenhuma dessas falhas aparece no round-trip do modelo nem no python-docx: por isso
 o validador roda nos testes e tambem antes de cada gravacao.
 
+Objetos opacos (0.1.2): o que esta' dentro de uma caixa de texto, de um
+mc:AlternateContent, de um w:pict, de um w:object ou de uma equacao veio do arquivo de
+origem e volta como veio. As regras de ordem, de xml:space, de tabela, de campo e de
+estilo valem para o que o EditDoc escreve, entao pulam esses trechos. O que vale para o
+documento inteiro continua valendo la' dentro: wp:docPr com id unico, r:id com relacao
+na propria parte (inclusive o o:relid do VML), e as partes do grafico e do SmartArt
+tambem tem os r:id conferidos.
+
 As listas de ordem sao as do esquema transitional, conferidas contra a ordem de
 sucessores do python-docx 1.2.0 (spikes/docx, fato 10).
 """
@@ -21,7 +29,8 @@ import re
 
 from lxml import etree
 
-from editdoc.formato_docx.nomes import CT_XML, PKG_CT, PKG_REL, R_NS, W, XML_NS, q
+from editdoc.formato_docx.nomes import (CT_XML, MATH_NS, MC_NS, O_NS, PKG_CT, PKG_REL, R_NS,
+                                        W, XML_NS, q)
 
 ORDEM_PPR = [
     "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl",
@@ -66,6 +75,29 @@ def eh_faixa(nome: str) -> bool:
     return _FAIXA.fullmatch(nome) is not None
 
 
+#: Elementos cujo conteudo veio do arquivo de origem como objeto opaco (0.1.2).
+_CONTEINERES_OPACOS = (q("txbxContent"), "{%s}AlternateContent" % MC_NS, q("pict"), q("object"),
+                       "{%s}oMath" % MATH_NS, "{%s}oMathPara" % MATH_NS)
+
+
+#: Filhos de w:r que fazem do run inteiro (o rPr tambem) um objeto vindo do arquivo.
+_ITENS_DE_OBJETO = {q("drawing"), q("pict"), q("object"), "{%s}AlternateContent" % MC_NS}
+
+
+def dentro_de_opacos(raiz) -> set:
+    """Os elementos de objetos opacos: o conteudo dos conteineres e o run inteiro (com o
+    rPr de origem, que pode ter filho de outro namespace) de desenho, VML ou OLE."""
+    saida: set = set()
+    for conteiner in raiz.iter(*_CONTEINERES_OPACOS):
+        if conteiner in saida:
+            continue
+        saida.update(conteiner.iter())
+    for run in raiz.iter(q("r")):
+        if run not in saida and any(f.tag in _ITENS_DE_OBJETO for f in run):
+            saida.update(run.iter())
+    return saida
+
+
 def ordenar_filhos(elemento, ordem: list[str]) -> None:
     """Reordena os filhos de `elemento` conforme `ordem`, de forma estavel."""
     indice = {q(nome): i for i, nome in enumerate(ordem)}
@@ -92,7 +124,10 @@ def validar_ordem(raiz, estrangeiros: bool = False) -> list[str]:
     de origem; no document.xml o EditDoc nunca grava esses elementos.
     """
     problemas: list[str] = []
+    opacos = dentro_de_opacos(raiz)
     for elemento in raiz.iter(*(q(nome) for nome in _ORDENS)):
+        if elemento in opacos:
+            continue
         ordem = _ORDENS[_nome(elemento)]
         pai = _nome(elemento)
         indices = []
@@ -112,7 +147,10 @@ def validar_ordem(raiz, estrangeiros: bool = False) -> list[str]:
 def validar_xml_space(raiz) -> list[str]:
     """Texto com espaco nas pontas precisa de xml:space="preserve"."""
     problemas: list[str] = []
+    opacos = dentro_de_opacos(raiz)
     for t in raiz.iter(q("t"), q("delText"), q("instrText")):
+        if t in opacos:
+            continue
         texto = t.text or ""
         if texto != texto.strip() and t.get("{%s}space" % XML_NS) != "preserve":
             problemas.append(f"{_nome(t)} com espaco nas pontas sem xml:space=\"preserve\": {texto[:20]!r}")
@@ -126,10 +164,14 @@ def validar_estrutura(raiz) -> list[str]:
     - cada linha ocupa exatamente as colunas da grade (soma dos gridSpan);
     - w:tc termina em w:p (sem isso o Word abre com reparo);
     - o corpo nao termina em tabela;
-    - cada wp:docPr tem id unico, e cada imagem tem tamanho positivo.
+    - cada wp:docPr tem id unico (tambem nos objetos opacos), e cada imagem tem tamanho
+      positivo (a forma pode ter altura zero: uma linha reta).
     """
     problemas: list[str] = []
+    opacos = dentro_de_opacos(raiz)
     for tbl in raiz.iter(q("tbl")):
+        if tbl in opacos:
+            continue
         filhos = [f for f in tbl if isinstance(f.tag, str)]
         nomes = [_nome(f) for f in filhos]
         if nomes[:2] != ["tblPr", "tblGrid"]:
@@ -147,6 +189,8 @@ def validar_estrutura(raiz) -> list[str]:
             if soma != grade:
                 problemas.append(f"linha {i + 1} da tabela ocupa {soma} colunas, a grade tem {grade}")
     for tc in raiz.iter(q("tc")):
+        if tc in opacos:
+            continue
         blocos = [f for f in tc if isinstance(f.tag, str) and _nome(f) != "tcPr"]
         if not blocos or blocos[-1].tag != q("p"):
             problemas.append("tc nao termina em paragrafo")
@@ -155,7 +199,7 @@ def validar_estrutura(raiz) -> list[str]:
         blocos = [f for f in raiz if isinstance(f.tag, str)]
         if not blocos or blocos[-1].tag != q("p"):
             problemas.append(f"{_nome(raiz)} nao termina em paragrafo")
-    problemas += _validar_campos(raiz)
+    problemas += _validar_campos(raiz, opacos)
     corpo = raiz.find(q("body"))
     if corpo is not None:
         blocos = [f for f in corpo if isinstance(f.tag, str) and _nome(f) != "sectPr"]
@@ -169,8 +213,12 @@ def validar_estrutura(raiz) -> list[str]:
             problemas.append(f"wp:docPr com id repetido: {ident}")
         ids.add(ident)
     for extent in raiz.iter("{%s}extent" % wp):
+        quadro = extent.getparent()
+        figura = quadro is not None and quadro.find(
+            "{%s}graphic/{%s}graphicData[@uri='%s']" % (_A, _A, _PIC)) is not None
         try:
-            ok = int(extent.get("cx", "0")) > 0 and int(extent.get("cy", "0")) > 0
+            cx, cy = int(extent.get("cx", "0")), int(extent.get("cy", "0"))
+            ok = (cx > 0 and cy > 0) if figura else (cx >= 0 and cy >= 0)
         except ValueError:
             ok = False
         if not ok:
@@ -178,16 +226,26 @@ def validar_estrutura(raiz) -> list[str]:
     return problemas
 
 
-def _validar_campos(raiz) -> list[str]:
+_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+
+
+def _validar_campos(raiz, opacos: set | None = None) -> list[str]:
     """Campo complexo: begin, separate e end equilibrados dentro de cada paragrafo.
 
     O EditDoc so' grava campo de um paragrafo (PAGE, NUMPAGES). Um end sem begin, ou
-    um begin sem end, faz o Word engolir o texto seguinte como instrucao.
+    um begin sem end, faz o Word engolir o texto seguinte como instrucao. Os campos de
+    dentro de uma caixa de texto preservada sao do arquivo de origem e ficam de fora.
     """
+    opacos = dentro_de_opacos(raiz) if opacos is None else opacos
     problemas: list[str] = []
     for p in raiz.iter(q("p")):
+        if p in opacos:
+            continue
         abertos = 0
         for fc in p.iter(q("fldChar")):
+            if fc in opacos:
+                continue
             tipo = fc.get(q("fldCharType"))
             if tipo == "begin":
                 abertos += 1
@@ -218,6 +276,10 @@ def _relacoes(dados: bytes, base: str) -> dict[str, tuple[str, str, bool]]:
             alvo = alvo[1:] if alvo.startswith("/") else posixpath.normpath(posixpath.join(base, alvo))
         saida[rel.get("Id", "")] = (rel.get("Type", ""), alvo, externo)
     return saida
+
+
+_RELID_O = "{%s}relid" % O_NS
+_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
 
 
 def caminho_dos_rels(parte: str) -> str:
@@ -275,12 +337,16 @@ def validar_pacote(partes: dict[str, bytes]) -> list[str]:
                 problemas.append(f"relacao de {atual} aponta para parte inexistente: {alvo}")
             else:
                 pilha.append(alvo)
-        # Todo r:id usado no corpo tem de ter relacao na propria parte.
-        if atual in XML_PARTES or eh_faixa(atual):
-            raiz = etree.fromstring(partes[atual])
+        # Todo r:id usado tem de ter relacao na propria parte: no corpo, no cabecalho e
+        # nas partes XML dos objetos opacos (grafico, SmartArt). O o:relid do VML tambem.
+        if atual in XML_PARTES or eh_faixa(atual) or atual.lower().endswith(".xml"):
+            raiz = etree.fromstring(partes[atual], _PARSER)
             for el in raiz.iter():
+                if not isinstance(el.tag, str):
+                    continue
                 for chave, valor in el.attrib.items():
-                    if chave.startswith("{%s}" % R_NS) and valor not in relacoes:
+                    if (chave.startswith("{%s}" % R_NS) or chave == _RELID_O) \
+                            and valor not in relacoes:
                         problemas.append(f"{atual}: r:id '{valor}' sem relacao")
 
     for nome in partes:
@@ -350,8 +416,11 @@ def validar_estilos(partes: dict[str, bytes]) -> list[str]:
         if nome not in partes:
             continue
         raiz = etree.fromstring(partes[nome])
+        opacos = dentro_de_opacos(raiz)
         for tag, tipo in (("pStyle", "paragraph"), ("rStyle", "character")):
             for el in raiz.iter(q(tag)):
+                if el in opacos:
+                    continue  # caixa de texto preservada: o estilo e' o do arquivo de origem
                 sid = el.get(q("val"))
                 if tipos.get(sid) != tipo:
                     problemas.append(f"{nome}: {tag} '{sid}' sem estilo de {tipo} no styles.xml")

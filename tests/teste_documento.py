@@ -64,7 +64,8 @@ def docx_com_tabela_e_quebra() -> bytes:
     EditDoc avisa e nao edita: equacao e quebra de coluna.
 
     Quebra de pagina deixou de ser aviso no M3 (vira quebra_antes), e tabela deixou de
-    ser aviso no M4: a perda que a checagem usa e' a equacao, que continua sem suporte.
+    ser aviso no M4. Desde a 0.1.2 a equacao e' preservada (aviso sem perda): a perda que
+    a checagem usa e' a quebra de coluna, que continua saindo do arquivo.
     """
     base = fx.bytes_de(documento_simples())
     xml = fx.partes_de(base)["word/document.xml"]
@@ -269,8 +270,11 @@ def testar_perda_confirmada(tmp: pathlib.Path) -> None:
     with dialogos(pedir_perda=cancelar):
         checa(janela.salvar() is False, "cancelar a perda nao salva")
     checa(arquivo.read_bytes() == original, "o arquivo continua igual depois do cancelamento")
-    checa(len(perguntas) == 1 and any("equação" in linha for linha in perguntas[0]),
-          "a pergunta lista a perda da equação")
+    # 0.1.2: a equacao passou a ser preservada; a perda que sobra e' a quebra de coluna.
+    checa(len(perguntas) == 1 and any("quebra de coluna" in linha for linha in perguntas[0]),
+          "a pergunta lista a perda da quebra de coluna")
+    checa(len(perguntas) == 1 and not any("equação" in linha for linha in perguntas[0]),
+          "contraprova: a equacao, preservada desde a 0.1.2, nao aparece como perda")
     checa(len(perguntas) == 1 and not any("tabela" in linha for linha in perguntas[0]),
           "contraprova: a tabela nao aparece como perda (M4)")
 

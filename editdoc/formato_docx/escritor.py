@@ -26,10 +26,15 @@ conteudo proprio e, se tiver imagem, relacoes proprias. `w:titlePg` no sectPr e
 Campos (M5): PAGE e NUMPAGES saem como campo complexo (fldChar begin, instrText,
 separate, o ultimo resultado, end), que e' como o Word grava. O Word recalcula.
 
-Estilos (M6): o styles.xml sai de ormato_docx/estilos.py: o original do arquivo, com
+Estilos (M6): o styles.xml sai de formato_docx/estilos.py: o original do arquivo, com
 os estilos alterados e novos reescritos. Paragrafo e run levam w:pStyle e w:rStyle so'
 para estilo que esta' no catalogo (o validador confere). O tema do arquivo de origem
 (theme1.xml) volta, para as fontes de tema dos estilos continuarem as mesmas.
+
+Objetos opacos (0.1.2): caixa de texto, forma, grafico, SmartArt, OLE, imagem flutuante e
+equacao voltam com o XML original e as partes que usam (formato_docx/opacos.py). A raiz
+de cada parte declara os namespaces do mc:Ignorable de origem, e o wp:docPr id das
+imagens do EditDoc nao colide com o dos objetos.
 """
 
 from __future__ import annotations
@@ -44,18 +49,18 @@ import zipfile
 from lxml import etree
 
 from editdoc.formato_docx import estilos as fx_estilos
-from editdoc.formato_docx import ordem
+from editdoc.formato_docx import opacos, ordem
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFIG, CT_CORE,
                                         CT_DOCUMENTO, CT_ESTILOS, CT_NUMERACAO, CT_RELS,
-                                        CT_RODAPE, CT_XML, DC, DCT, EP, PIC_NS, PKG_CT, PKG_REL,
+                                        CT_RODAPE, CT_XML, DC, DCT, EP, MC_NS, PIC_NS, PKG_CT, PKG_REL,
                                         R_NS, RT, RT_CABECALHO, RT_CORE, RT_IMAGEM, RT_RODAPE,
                                         URI_IMAGEM, W, WP_NS, XML_NS, XSI, q)
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Celula, Documento, Imagem,
-                                      Paragrafo, Run, Tabela, bordas_padrao)
+                                      Paragrafo, Run, Tabela, bordas_padrao, objetos_de)
 from editdoc.modelo.estilos import catalogo_padrao
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
@@ -191,16 +196,16 @@ class _Relacoes:
 
     def __init__(self, primeiro: int) -> None:
         self._proximo = primeiro
-        self._por_alvo: dict[tuple[str, str], str] = {}
-        self.itens: list[tuple[str, str, str]] = []
+        self._por_alvo: dict[tuple[str, str, bool], str] = {}
+        self.itens: list[tuple] = []
 
-    def adicionar(self, tipo: str, alvo: str) -> str:
-        chave = (tipo, alvo)
+    def adicionar(self, tipo: str, alvo: str, externo: bool = False) -> str:
+        chave = (tipo, alvo, externo)
         if chave not in self._por_alvo:
             rid = f"rId{self._proximo}"
             self._proximo += 1
             self._por_alvo[chave] = rid
-            self.itens.append((rid, tipo, alvo))
+            self.itens.append((rid, tipo, alvo, "External") if externo else (rid, tipo, alvo))
         return self._por_alvo[chave]
 
 
@@ -209,11 +214,13 @@ class _Midias:
 
     PRIMEIRO_RID = 4  # rId1 a rId3 do documento: estilos, configuracoes e numeracao
 
-    def __init__(self) -> None:
+    def __init__(self, usados: set[str], opacos_: opacos.GravadorOpacos) -> None:
         self._por_hash: dict[str, str] = {}  # sha256 -> alvo relativo a word/
         self.partes: list[tuple[str, bytes]] = []
         self.extensoes: set[str] = set()
-        self._proximo_id_desenho = 1
+        #: nomes de parte ja' tomados, compartilhado com as partes dos objetos opacos
+        self._usados = usados
+        self._opacos = opacos_
 
     def registrar(self, imagem: Imagem) -> str:
         """Alvo da imagem relativo a word/ ("media/image1.png"); cria a parte na primeira vez."""
@@ -221,22 +228,33 @@ class _Midias:
         if chave not in self._por_hash:
             extensao, _tipo = mod_imagem.FORMATOS[imagem.formato]
             n = len(self._por_hash) + 1
+            tomados = {u.lower() for u in self._usados}
+            while f"word/media/image{n}.{extensao}" in tomados:
+                n += 1  # nome que a parte de um objeto opaco ja' usa
+            self._usados.add(f"word/media/image{n}.{extensao}")
             self._por_hash[chave] = f"media/image{n}.{extensao}"
             self.partes.append((f"word/media/image{n}.{extensao}", imagem.dados))
             self.extensoes.add(extensao)
         return self._por_hash[chave]
 
     def id_de_desenho(self) -> int:
-        n = self._proximo_id_desenho
-        self._proximo_id_desenho += 1
-        return n
+        """wp:docPr id: sequencial, pulando os que os objetos opacos ja' usam."""
+        return self._opacos.id_de_desenho()
+
+
+#: Partes que o escritor sempre grava: um objeto opaco nunca toma estes nomes.
+_PARTES_FIXAS = {"[Content_Types].xml", "_rels/.rels", "word/document.xml",
+                 "word/_rels/document.xml.rels", "word/styles.xml", "word/numbering.xml",
+                 "word/settings.xml", "docProps/core.xml", "docProps/app.xml"}
 
 
 class _Ctx:
     def __init__(self, coletor: Coletor, estilos=None) -> None:
         self.coletor = coletor
         self.listas = _Listas()
-        self.midias = _Midias()
+        usados = set(_PARTES_FIXAS)
+        self.opacos = opacos.GravadorOpacos(usados, _rels_xml, ordem.caminho_dos_rels)
+        self.midias = _Midias(usados, self.opacos)
         #: relacoes da parte que esta' sendo escrita (troca no cabecalho e no rodape)
         self.relacoes = _Relacoes(_Midias.PRIMEIRO_RID)
         #: catalogo de estilos (M6): id -> tipo, e o id do estilo de paragrafo padrao
@@ -345,6 +363,10 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
         if run.imagem is not None:
             r = etree.SubElement(pe, q("r"))
             _desenho(r, run.imagem, ctx)
+            continue
+        if run.objeto is not None:
+            # Objeto opaco (0.1.2): o XML original, com os rIds desta parte.
+            pe.append(ctx.opacos.escrever(run.objeto, ctx.relacoes.adicionar))
             continue
         if run.campo is not None:
             _campo(pe, run, coletor, ctx.estilo_de_caractere(run.estilo))
@@ -499,6 +521,22 @@ def _blocos(pai, blocos: list[Bloco], ctx: _Ctx, em_celula: bool) -> None:
 _NSMAP_PARTE = {"w": W, "r": R_NS, "wp": WP_NS, "a": A_NS, "pic": PIC_NS}
 
 
+def _raiz_de_parte(nome: str, ctx: _Ctx):
+    """Raiz de document, hdr ou ftr. Com objetos opacos, declara os namespaces da raiz de
+    origem (wps, v, o, w14...) e o mc:Ignorable de origem (o Word exige o prefixo
+    declarado no escopo)."""
+    gravador = ctx.opacos
+    if not gravador.ignoraveis and not gravador.espacos:
+        return etree.Element(q(nome), nsmap=_NSMAP_PARTE)
+    nsmap = {**_NSMAP_PARTE, **gravador.espacos}
+    if gravador.ignoraveis:
+        nsmap["mc"] = MC_NS
+    raiz = etree.Element(q(nome), nsmap=nsmap)
+    if gravador.ignoraveis:
+        raiz.set("{%s}Ignorable" % MC_NS, " ".join(gravador.ignoraveis))
+    return raiz
+
+
 class _Faixas:
     """Partes de cabecalho e rodape ja escritas: (nome da parte, bytes, relacoes da parte)."""
 
@@ -528,7 +566,7 @@ def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
             nome = f"{prefixo}{n}.xml"
             ctx.relacoes = _Relacoes(1)
             ctx.listas.encerrar()
-            raiz = etree.Element(q(raiz_nome), nsmap=_NSMAP_PARTE)
+            raiz = _raiz_de_parte(raiz_nome, ctx)
             _blocos(raiz, modelo[tipo], ctx, em_celula=True)  # termina em paragrafo
             faixas.partes.append((f"word/{nome}", _xml(raiz)))
             if ctx.relacoes.itens:
@@ -542,7 +580,7 @@ def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
 
 
 def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
-    raiz = etree.Element(q("document"), nsmap=_NSMAP_PARTE)
+    raiz = _raiz_de_parte("document", ctx)
     body = etree.SubElement(raiz, q("body"))
     _blocos(body, doc.paragrafos, ctx, em_celula=False)
     if not doc.paragrafos:
@@ -677,10 +715,13 @@ def _content_types_xml(extensoes_de_imagem: set[str] = frozenset(),
     return _xml(raiz)
 
 
-def _rels_xml(itens: list[tuple[str, str, str]]) -> bytes:
+def _rels_xml(itens: list[tuple]) -> bytes:
+    """Itens (Id, tipo, alvo) ou (Id, tipo, alvo, "External")."""
     raiz = etree.Element("{%s}Relationships" % PKG_REL, nsmap={None: PKG_REL})
-    for rid, tipo, alvo in itens:
-        etree.SubElement(raiz, "{%s}Relationship" % PKG_REL, Id=rid, Type=tipo, Target=alvo)
+    for rid, tipo, alvo, *modo in itens:
+        rel = etree.SubElement(raiz, "{%s}Relationship" % PKG_REL, Id=rid, Type=tipo, Target=alvo)
+        if modo:
+            rel.set("TargetMode", modo[0])
     return _xml(raiz)
 
 
@@ -690,7 +731,7 @@ def _zip(partes: list[tuple[str, bytes]]) -> bytes:
         for nome, dados in partes:
             info = zipfile.ZipInfo(nome, date_time=_ZIP_DATA)
             # Imagem ja vem comprimida (PNG, JPEG, GIF): comprimir de novo so' gasta tempo.
-            midia_comprimida = nome.startswith("word/media/") and not nome.endswith(".bmp")
+            midia_comprimida = nome.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))
             info.compress_type = zipfile.ZIP_STORED if midia_comprimida else zipfile.ZIP_DEFLATED
             info.external_attr = 0o600 << 16
             z.writestr(info, dados)
@@ -701,12 +742,13 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     """Devolve (bytes do .docx, avisos da gravacao). Levanta ErroDocx se o validador reprovar."""
     coletor = Coletor()
     ctx = _Ctx(coletor, doc.estilos)
+    ctx.opacos.preparar(objetos_de(doc), _NSMAP_PARTE)
     agora = _agora_iso()
     criado = doc.criado_em or agora
     modificado = doc.modificado_em or agora
     documento_xml, faixas = _document_xml(doc, ctx)
     tema = ctx.estilos.tema_original
-    extras_tipos = list(faixas.tipos)
+    extras_tipos = list(faixas.tipos) + list(ctx.opacos.tipos)
     partes_tema: list[tuple[str, bytes]] = []
     if tema:
         # O tema volta para as fontes de tema (asciiTheme) dos estilos continuarem as mesmas.
@@ -735,6 +777,7 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         ("docProps/core.xml", _core_xml(doc, criado, modificado)),
         ("docProps/app.xml", _app_xml()),
         *ctx.midias.partes,
+        *ctx.opacos.partes,
     ]
     mapa = dict(partes)
     problemas = ordem.validar(mapa)

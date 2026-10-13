@@ -1,7 +1,7 @@
 """Exportar como texto sem formatacao (M7). Sem Qt.
 
 Um paragrafo por linha. Tabela: uma linha por linha da tabela, celulas separadas por
-tabulacao (o que se cola numa planilha). Imagem nao vira texto. Campo sai com o ultimo
+tabulacao (o que se cola numa planilha). Imagem e objeto opaco nao viram texto. Campo sai com o ultimo
 resultado guardado, como o texto que ele mostra.
 """
 
@@ -14,7 +14,7 @@ FIM_DE_LINHA = "\r\n"
 
 
 def _texto_do_paragrafo(p: Paragrafo) -> str:
-    texto = "".join(r.texto for r in p.runs if r.imagem is None)
+    texto = "".join(r.texto for r in p.runs if not r.eh_objeto())
     # U+2028 (quebra de linha manual) vira quebra de linha; objeto solto nao vira nada.
     return texto.replace(" ", FIM_DE_LINHA).replace(CARACTERE_OBJETO, "")
 

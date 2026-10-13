@@ -95,8 +95,8 @@ Implementadas no M4 (0.0.7).
 Limites: o Qt refaz o layout da tabela inteira a cada tecla (cerca de 0,06 ms por célula,
 medido; ver docs/SPIKES.md). Por isso o leitor transforma em parágrafos, com aviso, a tabela
 acima de 2000 linhas, 63 colunas ou 5000 células, ou aninhada mais de 4 níveis. Imagem
-flutuante (`wp:anchor`) vira imagem na linha, com aviso; o posicionamento flutuante fica para
-depois da 0.1.0 (formas e caixas de texto).
+flutuante (`wp:anchor`) virava imagem na linha, com aviso de perda da posição; desde a 0.1.2
+ela é objeto opaco e volta ao arquivo com a posição (ver "Objetos opacos").
 
 ## Cabeçalho, rodapé e número de página
 
@@ -252,12 +252,73 @@ Implementadas no M8 (0.1.0).
   listar os padrões: o processo cai). O valor com o parágrafo é o que dá para expor sem esse
   risco. Ver docs/SPIKES.md, M8.
 
+## Objetos opacos
+
+Implementados na 0.1.2. O que o EditDoc não edita, mas consegue guardar, deixa de ser
+descartado: caixa de texto, forma, grupo, tela de desenho, gráfico, SmartArt, objeto OLE,
+tinta, imagem flutuante ou em formato que a tela não mostra (EMF, WMF, SVG, VML,
+vinculada) e equação.
+
+- Modelo (`modelo/documento.py`): `ObjetoOpaco` num `Run` (`Run.objeto`, texto U+FFFC,
+  como a imagem). Guarda o XML original, as relações da parte hospedeira que ele usa
+  (rId de origem, tipo, alvo, externo), o fecho das partes (`ParteOpaca`: nome de origem,
+  tipo de conteúdo, bytes, relações próprias e o `relId` do SmartArt que aponta para a
+  parte hospedeira), o tipo para a tela, o começo do texto, o tamanho, se é flutuante, a
+  prévia (imagem que o Qt lê) e os prefixos do `mc:Ignorable` de origem. Objeto não funde
+  com o vizinho e não tem formatação no modelo (o `rPr` vai dentro do XML).
+- Leitura (`formato_docx/opacos.py`, `Capturador`): no run, `w:drawing` que não é imagem
+  na linha editável, `w:pict`, `w:object` e `mc:AlternateContent` que tenha um deles (o
+  AlternateContent vai inteiro, Choice e Fallback); no parágrafo, `m:oMath` e
+  `m:oMathPara`. O XML guardado é um `w:r` só com o `rPr` e o objeto, com os namespaces
+  da raiz declarados nele (o `mc:Choice Requires="wps"` cita o prefixo em texto). O fecho
+  segue os `r:*` e o `o:relid` do XML e as relações de cada parte, com o tipo de conteúdo
+  do Override ou do Default. Falha (relação quebrada, parte de tipo proibido, nome que o
+  escritor usa, limite) = o objeto não é preservado e vira `OBJETO_PERDIDO` (ou `IMAGEM`),
+  com perda. Referência a nota, nota de fim e comentário e `w:numPr` saem de dentro do
+  objeto, com aviso: essas partes não voltam, e a referência ficaria pendurada.
+- Escrita (`GravadorOpacos`): o XML volta igual, com os `r:*` e `o:relid` trocados pelos
+  rIds novos da parte hospedeira; cada parte ganha o nome de origem se livre (senão um
+  sufixo), as relações dela (Id mantido, alvo recalculado: o XML da parte não muda) e um
+  Override. Parte sem relações e de mesmo conteúdo sai uma vez só. O `relId` do
+  `dataModelExt` é a única reescrita dentro de uma parte. Ids que têm de ser únicos no
+  documento (`wp:docPr`, `w14:paraId`, `anchorId`) são trocados no objeto que chega
+  depois, de forma consistente dentro dele (o Choice e o Fallback repetem o id de
+  propósito). As imagens do EditDoc pulam os `docPr` dos objetos. A raiz de cada parte
+  declara os namespaces das raízes de origem e o `mc:Ignorable`.
+- Apagar o objeto apaga as partes: o escritor só grava as partes dos objetos que estão
+  no modelo. Manter parte sem referência seria parte órfã, que o validador recusa e o
+  Word repara.
+- Validador (`formato_docx/ordem.py`): ordem, `xml:space`, tabela, campo e estilo pulam
+  o que está dentro de caixa de texto, AlternateContent, `w:pict`, `w:object` e equação
+  (`dentro_de_opacos`): veio do arquivo de origem. `wp:docPr` único e `r:id` com relação
+  continuam valendo lá dentro; o `r:id` é conferido também nas partes XML dos objetos
+  (gráfico, SmartArt) e no `o:relid` do VML. `wp:extent` pode ter zero na forma (linha
+  reta), não na figura.
+- Conferência (`formato_docx/conferencia.py`): cada parágrafo leva a `opacos.assinatura`
+  de cada objeto: o XML com os rIds trocados pelo conteúdo que apontam (recursivo nas
+  partes) e os ids únicos mascarados. Uma parte trocada ou que falta muda a assinatura ou
+  faz o objeto não ser lido.
+- Qt (`ponte_qt/opacos.py`): caractere de objeto com `TIPO_OPACO` (UserObject + 2) e a
+  chave do registro em `PROP_OPACO`; o objeto fica no registro, como os bytes da imagem,
+  para o desfazer achar de novo. O manipulador (`QPyTextObject`, registrado em todo
+  `DocumentoQt`) pinta um quadro do tamanho do objeto na linha, ou uma etiqueta no ponto
+  da âncora do flutuante e da equação, com o rótulo e o começo do texto. O HTML que o Qt
+  gera não leva o objeto: copiar e colar omite o objeto, e uma marca na área de
+  transferência faz o colar avisar na barra de status.
+
+Limites: 2000 objetos por documento, 4 MB de XML por objeto, 64 MB somados, 64 partes e
+6 níveis de relação por objeto. O objeto não é editado por dentro; para mudar o texto de
+uma caixa, só no Word.
+
 ## Política de perda
 
-Cada recurso do `.docx` é exato, aproximado ou descartado com aviso. Se algo
-que se perderia ao salvar estiver presente, a primeira gravação pede
-confirmação e oferece "Salvar cópia". Comentários, revisões e notas de rodapé
-entram aqui até as versões que os implementam.
+Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
+0.1.2) ou descartado com aviso. Se algo que se perderia ao salvar estiver presente, a
+primeira gravação pede confirmação e oferece "Salvar cópia". O objeto preservado tem
+aviso sem perda e não pede confirmação. Comentários, revisões e notas de rodapé entram
+aqui até as versões que os implementam. Fora dos avisos, hoje, saem do arquivo: as
+propriedades personalizadas (`docProps/custom.xml`), os itens `customXml`, a tabela de
+fontes e as configurações da Web (o `settings.xml` é refeito).
 
 ## Ribbon
 
@@ -287,9 +348,9 @@ modo contínuo, com paginação só na impressão.
 ## Fora da 0.1.0
 
 Revisão com controle de alterações, comentários, notas de rodapé, índices e
-sumários, mala direta, equações, formas, caixas de texto, colunas, seções
-múltiplas editáveis, ortografia (prevista para a 0.2 pela API do Windows),
-`.doc`, RTF, ODT e macros (nunca).
+sumários, mala direta, edição de equações, formas e caixas de texto (preservadas sem
+edição desde a 0.1.2), colunas, seções múltiplas editáveis, ortografia (prevista para a
+0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).
 
 ## Riscos abertos
 

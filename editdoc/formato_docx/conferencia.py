@@ -5,6 +5,9 @@ o que o usuario viu: mesma estrutura (paragrafos, tabelas, linhas, celulas e
 mesclas), mesmo texto, mesmas quebras, as mesmas imagens (pelos bytes) e os
 mesmos campos. Cabecalho e rodape (M5) passam pela mesma comparacao, um por tipo.
 Estilos (M6): o estilo de cada paragrafo e os estilos de caractere usados nele.
+Objetos opacos (0.1.2): cada um, no lugar, pela `opacos.assinatura` (o XML e o conteudo
+das partes que ele usa, sem depender dos nomes de parte e dos rIds renumerados). Uma
+parte referenciada que falta faz o leitor nao preservar o objeto, e a contagem acusa.
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 
+from editdoc.formato_docx import opacos
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import texto_gravavel
 from editdoc.modelo.documento import CARACTERE_OBJETO, Documento, Tabela, normalizar
@@ -26,14 +30,18 @@ class FalhaDeConferencia(Exception):
 
 
 def texto_do_paragrafo(paragrafo) -> str:
-    """Texto como vai para o arquivo. A imagem conta como CARACTERE_OBJETO."""
-    return "".join(CARACTERE_OBJETO if r.imagem is not None else texto_gravavel(r.texto)[0]
+    """Texto como vai para o arquivo. Imagem e objeto opaco contam como CARACTERE_OBJETO."""
+    return "".join(CARACTERE_OBJETO if r.eh_objeto() else texto_gravavel(r.texto)[0]
                    for r in paragrafo.runs)
 
 
 def _imagens(paragrafo) -> list[str]:
     return [hashlib.sha256(r.imagem.dados).hexdigest()[:16] + f"@{r.imagem.largura_emu}x"
             f"{r.imagem.altura_emu}" for r in paragrafo.runs if r.imagem is not None]
+
+
+def _objetos(paragrafo) -> tuple:
+    return tuple(opacos.assinatura(r.objeto) for r in paragrafo.runs if r.objeto is not None)
 
 
 def _campos(paragrafo) -> tuple:
@@ -57,7 +65,8 @@ def _itens(blocos, saida: list, onde: str) -> None:
             n_par += 1
             saida.append((f"{onde}paragrafo {n_par}", "p", texto_do_paragrafo(bloco),
                           bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
-                          bloco.estilo, tuple(sorted({r.estilo for r in bloco.runs if r.estilo}))))
+                          bloco.estilo, tuple(sorted({r.estilo for r in bloco.runs if r.estilo})),
+                          _objetos(bloco)))
 
 
 def conferir(dados: bytes, esperado: Documento) -> None:
@@ -94,7 +103,9 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"quebra de pagina diferente no {lugar}")
             if x[5] != y[5]:
                 raise FalhaDeConferencia(f"campo diferente no {lugar}")
-            if x[6:] != y[6:]:
+            if x[8] != y[8]:
+                raise FalhaDeConferencia(f"objeto (caixa de texto, forma...) diferente no {lugar}")
+            if x[6:8] != y[6:8]:
                 raise FalhaDeConferencia(f"estilo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")
         raise FalhaDeConferencia(f"estrutura de tabela diferente em {lugar}")

@@ -80,6 +80,8 @@ SUITES = [
      "imagens: bytes intactos no .docx, avisos, zoom, alca, colar, dialogo e salvar"),
     ("teste_campos.py",
      "campos PAGE e NUMPAGES: formato, leitura, gravacao, oraculo, Qt e numero por pagina"),
+    ("teste_objetos_opacos.py",
+     "objetos opacos: caixa de texto, forma, grafico, SmartArt, OLE e equacao voltam iguais; apagar e desfazer"),
     ("teste_cabecalho_rodape.py",
      "cabecalho e rodape: .docx, oraculo, limites, tela, edicao no lugar, desfazer e faixa"),
     ("teste_estilos.py",

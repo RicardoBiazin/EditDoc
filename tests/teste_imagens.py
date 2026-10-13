@@ -30,7 +30,7 @@ from editdoc.formato_docx.escritor import escrever, escrever_com_avisos  # noqa:
 from editdoc.formato_docx.leitor import ler  # noqa: E402
 from editdoc.modelo import imagem as mod_imagem  # noqa: E402
 from editdoc.modelo.documento import (CARACTERE_OBJETO, Documento, Paragrafo, Run,  # noqa: E402
-                                      normalizar, paragrafos_de, run_de_imagem)
+                                      normalizar, objetos_de, paragrafos_de, run_de_imagem)
 
 LIMITE_S = 2.0
 
@@ -196,24 +196,33 @@ def testar_docx() -> None:
 
 
 def testar_leitura_do_word() -> None:
-    secao("leitura: flutuante vira na linha, EMF avisa, gigante fica, tamanho invalido, sem relacao")
+    secao("leitura: flutuante e EMF preservados (0.1.2), gigante fica, tamanho invalido, sem relacao")
     modelo, avisos = ler(docx_com_desenho(desenho()))
     imgs = imagens_de(modelo)
     checa(len(imgs) == 1 and not avisos, "wp:inline com PNG vira imagem, sem aviso")
     checa_igual((imgs[0].largura_emu, imgs[0].altura_emu, imgs[0].descricao),
                 (1440000, 720000, "alt do Word"), "tamanho e texto alternativo do arquivo")
 
+    # 0.1.2: a imagem flutuante deixou de virar imagem na linha (a posicao se perdia) e
+    # passou a ser objeto opaco, que volta ao arquivo com a posicao e a quebra de texto.
     modelo, avisos = ler(docx_com_desenho(desenho("anchor")))
-    checa(len(imagens_de(modelo)) == 1 and any(a.codigo == "IMAGEM_FLUTUANTE" for a in avisos),
-          "wp:anchor (flutuante) vira imagem na linha, com aviso IMAGEM_FLUTUANTE")
+    objetos = list(objetos_de(modelo))
+    checa(not imagens_de(modelo) and len(objetos) == 1 and objetos[0].flutuante
+          and objetos[0].tipo == "imagem"
+          and any(a.codigo == "IMAGEM_FLUTUANTE" and not a.perde_ao_salvar for a in avisos),
+          "wp:anchor (flutuante) e' preservado como objeto flutuante, aviso IMAGEM_FLUTUANTE sem perda")
 
     emf = b"\x01\x00\x00\x00" + b"\x00" * 100
     modelo, avisos = ler(docx_com_desenho(desenho(), "media/image1.emf", emf, extensao="emf",
                                           tipo_conteudo="image/x-emf"))
     texto = "".join(r.texto for r in modelo.paragrafos[0].runs)
-    checa(not imagens_de(modelo) and any(a.codigo == "IMAGEM" and a.perde_ao_salvar for a in avisos),
-          "EMF: aviso IMAGEM, com perda ao salvar")
-    checa_igual(texto, "antes  depois", "o texto em volta da imagem nao se perde")
+    # 0.1.2: o EMF deixou de sair do arquivo: e' objeto opaco, com aviso sem perda.
+    checa(not imagens_de(modelo) and len(list(objetos_de(modelo))) == 1
+          and any(a.codigo == "IMAGEM_FORMATO" and not a.perde_ao_salvar for a in avisos)
+          and not any(a.perde_ao_salvar for a in avisos),
+          "EMF: preservado como objeto, aviso IMAGEM_FORMATO sem perda ao salvar")
+    checa_igual(texto, "antes ￼ depois",
+                "o texto em volta da imagem nao se perde (o objeto ocupa o U+FFFC)")
 
     gigante = fx.png_declarando(40000, 40000)
     dados = docx_com_desenho(desenho(), dados=gigante)

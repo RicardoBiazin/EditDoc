@@ -14,7 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextBlockFormat, QTextCharFormat, QTextCursor
 
-from editdoc.ponte_qt import campos
+from editdoc.ponte_qt import campos, opacos
 
 _ALINHAMENTO = {
     "esquerda": Qt.AlignmentFlag.AlignLeft,
@@ -35,7 +35,7 @@ def inserir_campo_no_cursor(painel, instrucao: str) -> None:
     """PAGE ou NUMPAGES no cursor, com a formatacao do cursor. Um passo de desfazer."""
     cursor = painel.textCursor()
     base = QTextCharFormat(cursor.charFormat())
-    for propriedade in campos.PROPS_DE_CAMPO:
+    for propriedade in (*campos.PROPS_DE_CAMPO, *opacos.PROPS_DE_OPACO):
         base.clearProperty(propriedade)
     if base.isImageFormat():
         base = QTextCharFormat()

@@ -1,3 +1,62 @@
+## 0.1.2 - 2026-10-13
+
+Caixas de texto, formas e objetos deixam de sair do arquivo ao salvar.
+
+Defeito: um `.docx` com caixas de texto abria com o aviso "6 caixas de texto ou formas não
+são editadas nesta versão. O texto delas sai do arquivo ao salvar.", e salvar pelo
+EditDoc apagava as caixas, as formas, os gráficos, o SmartArt, os objetos OLE, as equações
+e a posição das imagens flutuantes. Causa: o leitor só transformava em modelo o que o
+EditDoc edita, e o resto virava aviso com perda.
+
+- Objeto opaco: o que o EditDoc não edita mas pode guardar entra no modelo como um objeto
+  no lugar dele no parágrafo, com o XML original (o `w:r` com o desenho, o VML, o OLE ou o
+  `mc:AlternateContent` inteiro, com o Choice e o Fallback; ou o `m:oMath`) e todas as
+  partes que ele usa: imagens de dentro da forma, gráfico com a planilha e o estilo,
+  partes do SmartArt (inclusive o desenho apontado pelo `relId` do `dataModelExt`),
+  embeddings OLE e a prévia EMF, hiperlinks de dentro da caixa. Ao salvar, o XML volta
+  igual, com os rIds renumerados, cada parte com nome livre, relações e tipo de conteúdo;
+  a raiz da parte declara os namespaces e o `mc:Ignorable` de origem. Vale para o corpo,
+  o cabeçalho e o rodapé.
+- Imagem flutuante (`wp:anchor`) deixou de virar imagem na linha: volta ao arquivo com a
+  posição e a quebra de texto intactas. Imagem EMF, WMF, SVG ou vinculada a endereço
+  externo também é preservada (antes saía do arquivo).
+- Na tela, o objeto é um quadro tracejado com o nome ("Caixa de texto: Texto da caixa…",
+  "Gráfico", "SmartArt", "Objeto", "Equação: x=…"), do tamanho do objeto quando ele está
+  na linha, ou uma etiqueta no ponto da âncora quando é flutuante; a imagem flutuante
+  mostra uma miniatura. Delete e Backspace apagam o objeto inteiro (e as partes dele saem
+  do arquivo, sem sobrar parte órfã), Ctrl+Z o traz de volta, e o texto digitado logo
+  depois dele não vira objeto. Copiar e colar leva o texto, não o objeto, e a barra de
+  status avisa.
+- Avisos: caixa de texto, forma, objeto incorporado, equação, imagem flutuante e imagem em
+  formato que a tela não mostra passam a dizer "são preservadas, mas não podem ser
+  editadas nesta versão" e não pedem mais a confirmação de perda ao salvar. Continuam com
+  perda (aviso novo): o objeto que não pode ser preservado inteiro (`OBJETO_PERDIDO`:
+  referência quebrada, parte proibida ou acima dos limites), a imagem com relação
+  quebrada (`IMAGEM`), e, dentro de uma caixa de texto, a referência a nota ou comentário
+  e a numeração de lista (`LISTA_EM_CAIXA`), porque essas partes não voltam ao arquivo.
+- Ids únicos: `wp:docPr`, `w14:paraId` e `anchorId` repetidos entre objetos ganham valor
+  novo no objeto que chega depois (o Choice e o Fallback do mesmo objeto continuam com o
+  mesmo id), e o id das imagens do EditDoc nunca colide com o de um objeto.
+- Limites contra arquivo hostil: 2000 objetos por documento, 4 MB de XML por objeto,
+  64 MB de XML somado, 64 partes e 6 níveis de relação por objeto; parte de documento,
+  estilos, tema, configurações, cabeçalho ou propriedades nunca vai junto com um objeto.
+- Validador e conferência: as regras de ordem, `xml:space`, tabela, campo e estilo pulam
+  o conteúdo dos objetos (vem do arquivo de origem); `wp:docPr` único e `r:id` com relação
+  valem também dentro deles, inclusive o `o:relid` do VML e os `r:id` das partes do
+  gráfico e do SmartArt. A forma pode ter altura zero (linha reta). A conferência
+  pós-gravação compara cada objeto, no lugar, pelo XML e pelo conteúdo das partes, sem
+  depender dos nomes e dos ids renumerados.
+- Testado com um manual real (6 caixas de texto e formas, 2 imagens
+  flutuantes, 41 imagens): depois de salvar, as mesmas 49 `w:drawing`, 6 `txbxContent` com
+  o mesmo texto, 6 `mc:AlternateContent`, as 42 imagens distintas, validador sem
+  problema e nenhum aviso com perda ligado a objeto.
+- Suíte nova `tests/teste_objetos_opacos.py` (79 verificações), com fixtures geradas em
+  código (`fixtures_docx.docx_com_objetos`). Checagens reescritas: em
+  `teste_imagens.py`, a imagem flutuante e o EMF eram esperados como perda e passam a ser
+  preservados; em `teste_documento.py`, a perda que a confirmação lista deixou de ser a
+  equação (preservada) e passou a ser a quebra de coluna, com contraprova de que a
+  equação não aparece.
+
 ## 0.1.1 - 2026-10-13
 
 Correção de legibilidade no tema escuro.

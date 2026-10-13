@@ -8,7 +8,9 @@ rede, sem DTD e com profundidade limitada. Toda falha vira `ErroDocx` com codigo
 O que o programa nao modela NAO e' descartado em silencio: vira aviso (ver
 `avisos.py`). Tabelas (M4) viram `Tabela`; a que passa dos limites, ou esta'
 aninhada fundo demais, vira paragrafos com aviso. Imagens na linha (PNG, JPEG,
-GIF, BMP) viram `Imagem` com os bytes originais; outro formato e' aviso. Campos
+GIF, BMP) viram `Imagem` com os bytes originais. Caixa de texto, forma, grafico,
+SmartArt, OLE, equacao, imagem flutuante e imagem de outro formato (0.1.2) viram
+objeto opaco (`opacos.py`), que volta igual ao arquivo, com aviso sem perda. Campos
 PAGE e NUMPAGES (M5) viram um `Run` com `campo`; os outros viram o texto que o Word
 mostra, com aviso. Revisoes aceitas; exclusoes e controles de conteudo tem aviso.
 
@@ -36,6 +38,7 @@ from dataclasses import replace
 from lxml import etree
 
 from editdoc.formato_docx import estilos as fx_estilos
+from editdoc.formato_docx import opacos
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, MATH_NS, MC_NS,
@@ -47,7 +50,8 @@ from editdoc.modelo.campos import (FORMATOS_NUMERO, INSTRUCAO_MAXIMA, NUMERO_INI
                                    normalizar_instrucao, tipo_do_campo)
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Celula,
                                       Documento, Imagem, Linha, Paragrafo, Run, Tabela,
-                                      colunas_da_linha, normalizar, run_de_imagem)
+                                      colunas_da_linha, normalizar, run_de_imagem,
+                                      run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
 from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
 from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
@@ -71,6 +75,8 @@ LIMITES_PADRAO = {
     "cabecalho_bytes": 4 * 1024 * 1024,
     # Campo dentro de campo dentro de campo...: acima disto o campo nao e' interpretado.
     "campo_profundidade": 8,
+    # Objetos opacos (0.1.2): quantos, o tamanho do XML e o fecho das partes.
+    **opacos.LIMITES,
 }
 
 #: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
@@ -209,21 +215,26 @@ class _Contexto:
         self.faixas_herdadas: dict[tuple[str, str], str] = {}
         #: referencias de cada secao anterior, para saber se diferem das da ultima
         self.faixas_das_secoes: list[dict[tuple[str, str], str]] = []
+        #: objetos opacos (0.1.2): quem captura, e o mc:Ignorable da parte que se le
+        self.capturador: opacos.Capturador | None = None
+        self.ignoraveis: tuple = ()
 
 
-# -- classificacao ------------------------------------------------------------
+# -- objetos opacos -------------------------------------------------------------
 
-def _classificar_desenho(el) -> str:
-    locais = {etree.QName(x).localname for x in el.iter() if isinstance(x.tag, str)}
-    if "txbxContent" in locais:
-        return "CAIXA_DE_TEXTO"
-    if "chart" in locais:
-        return "OBJETO"
-    if locais & {"blip", "imagedata", "pic"}:
-        return "IMAGEM"
-    if locais & {"wsp", "shape", "sp", "wgp", "grpSp"}:
-        return "CAIXA_DE_TEXTO"
-    return "OBJETO"
+def _opaco(item, rpr, ctx: _Contexto) -> Run | None:
+    """O item (desenho, VML, OLE, AlternateContent, equacao) como objeto preservado.
+
+    None, com aviso de perda, se o objeto nao puder voltar inteiro ao arquivo.
+    """
+    obj = None
+    if ctx.capturador is not None:
+        obj = ctx.capturador.capturar(item, rpr, ctx.relacoes, ctx.ignoraveis)
+    if obj is None:
+        ctx.coletor.somar("IMAGEM" if opacos.classificar(item) == "imagem" else "OBJETO_PERDIDO")
+        return None
+    ctx.coletor.somar(opacos.codigo_do_aviso(obj.tipo, obj.flutuante))
+    return run_de_objeto(obj)
 
 
 # -- propriedades -------------------------------------------------------------
@@ -379,12 +390,14 @@ def _ler_numpr(numpr, out: dict, ctx: _Contexto) -> None:
 
 
 class _Pedacos:
-    """Texto de um w:r em montagem. Uma imagem no meio fecha o trecho de texto."""
+    """Texto de um w:r em montagem. Uma imagem ou um objeto no meio fecha o trecho de texto."""
 
-    def __init__(self, base: Run, saida: list[Run]) -> None:
+    def __init__(self, base: Run, saida: list[Run], rpr=None) -> None:
         self.base = base
         self.saida = saida
         self.partes: list[str] = []
+        #: o w:rPr do run, que vai junto no XML do objeto opaco
+        self.rpr = rpr
 
     def append(self, texto: str) -> None:
         self.partes.append(texto)
@@ -399,18 +412,28 @@ class _Pedacos:
         self.descarregar()
         self.saida.append(run_de_imagem(imagem))
 
+    def objeto(self, item, ctx: "_Contexto") -> None:
+        self.descarregar()
+        run = _opaco(item, self.rpr, ctx)
+        if run is not None:
+            self.saida.append(run)
+
 
 def _ler_run(r, ctx: _Contexto, saida: list[Run]) -> None:
     run = Run()
     rpr = r.find(q("rPr"))
     if rpr is not None:
         _ler_rpr(rpr, run, ctx)
-    pedacos = _Pedacos(run, saida)
+    pedacos = _Pedacos(run, saida, rpr)
     for f in r:
         ns, loc = _local(f)
         if loc is None:
             continue
         if ns == MC_NS and loc == "AlternateContent":
+            if opacos.contem_objeto(f):
+                # Forma ou caixa de texto com o VML de reserva: vai inteiro (0.1.2).
+                pedacos.objeto(f, ctx)
+                continue
             ramo = _escolha(f)
             if ramo is not None:
                 for sub in ramo:
@@ -466,8 +489,10 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
         imagem = _ler_desenho(f, ctx)
         if imagem is not None:
             partes.imagem(imagem)
+        else:
+            partes.objeto(f, ctx)
     elif loc in ("pict", "object"):
-        c.somar(_classificar_desenho(f))
+        partes.objeto(f, ctx)
     elif loc == "commentReference":
         c.somar("COMENTARIO")
     elif loc in ("footnoteReference", "endnoteReference"):
@@ -512,7 +537,7 @@ def _fld_char(tipo: str | None, partes: _Pedacos, ctx: _Contexto) -> None:
         inicio = campo["inicio"] if campo["inicio"] is not None else len(saida)
         resultado = saida[inicio:] if campo["saida"] is saida else []
         if (tipo_do_campo(instrucao) is None or campo.get("longo") or campo["aninhado"]
-                or campo["saida"] is not saida or any(r.imagem is not None or r.campo is not None
+                or campo["saida"] is not saida or any(r.eh_objeto() or r.campo is not None
                                                       for r in resultado)):
             ctx.coletor.somar("CAMPO")
             return
@@ -528,10 +553,11 @@ def _medida_emu(valor: str | None) -> int | None:
 
 
 def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
-    """w:drawing -> Imagem, ou None (com aviso) se nao for figura que o EditDoc mostra.
+    """w:drawing -> Imagem, ou None se nao for figura na linha que o EditDoc edita.
 
-    wp:inline e' a imagem na linha. wp:anchor (flutuante) vira imagem na linha, com
-    aviso: a posicao e a quebra de texto se perdem, a imagem nao.
+    So' wp:inline com PNG, JPEG, GIF ou BMP vira Imagem. O resto (imagem flutuante, EMF,
+    SVG, imagem vinculada, forma, caixa de texto, grafico, SmartArt) volta None, e quem
+    chama guarda o desenho como objeto opaco (0.1.2), que volta igual ao arquivo.
     """
     c = ctx.coletor
     quadro = None
@@ -539,12 +565,10 @@ def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
         if _local(filho) in ((WP_NS, "inline"), (WP_NS, "anchor")):
             quadro = filho
             break
-    if quadro is None:
-        c.somar(_classificar_desenho(drawing))
+    if quadro is None or _local(quadro)[1] == "anchor":
         return None
     dados_graf = quadro.find("{%s}graphic/{%s}graphicData" % (A_NS, A_NS))
     if dados_graf is None or dados_graf.get("uri") != URI_IMAGEM:
-        c.somar(_classificar_desenho(drawing))
         return None
     pic = dados_graf.find("{%s}pic" % PIC_NS)
     blip = pic.find("{%s}blipFill/{%s}blip" % (PIC_NS, A_NS)) if pic is not None else None
@@ -552,8 +576,8 @@ def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
     relacao = ctx.relacoes.get(rid or "")
     if relacao is None or relacao[2] or not relacao[0].endswith("/image") \
             or relacao[1] not in ctx.nomes or ctx.ler_parte is None:
-        # Sem r:embed (so' r:link, imagem vinculada a arquivo externo) ou relacao quebrada.
-        c.somar("IMAGEM")
+        # Sem r:embed (so' r:link, imagem vinculada a arquivo externo) ou relacao quebrada:
+        # o objeto opaco preserva a vinculada; a quebrada vira o aviso IMAGEM.
         return None
     alvo = relacao[1]
     _validar_nome(alvo)
@@ -563,8 +587,7 @@ def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
     formato = mod_imagem.formato_de(dados)
     dims = mod_imagem.dimensoes(dados, formato) if formato else None
     if formato is None or dims is None or dims[0] <= 0 or dims[1] <= 0:
-        c.somar("IMAGEM")  # EMF, WMF, TIFF, SVG... ou imagem danificada
-        return None
+        return None  # EMF, WMF, TIFF, SVG... ou imagem danificada: objeto opaco
     if not mod_imagem.decodificavel(*dims):
         c.somar("IMAGEM_GRANDE")
     extent = quadro.find("{%s}extent" % WP_NS)
@@ -576,8 +599,6 @@ def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
         cx = max(1, round(dims[0] * EMU_POR_PX * escala))
         cy = max(1, round(dims[1] * EMU_POR_PX * escala))
         c.somar("FORMATACAO")
-    if _local(quadro)[1] == "anchor":
-        c.somar("IMAGEM_FLUTUANTE")
     if blip.getparent() is not None:
         recorte = blip.getparent().find("{%s}srcRect" % A_NS)
         if recorte is not None and any((recorte.get(k) or "0") != "0" for k in "ltrb"):
@@ -605,8 +626,10 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             continue
         if ns == MATH_NS and loc in ("oMath", "oMathPara"):
             # Equacao (OMML) fica no namespace m:, nao no w:. Antes do M4 o teste de
-            # namespace a descartava sem aviso.
-            c.somar("EQUACAO")
+            # namespace a descartava sem aviso; desde a 0.1.2 ela e' preservada.
+            run = _opaco(f, None, ctx)
+            if run is not None:
+                saida.append(run)
             continue
         if ns != W:
             continue
@@ -620,7 +643,7 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             dentro: list[Run] = []
             _runs_em(f, ctx, dentro)
             if tipo_do_campo(instrucao) is not None and not any(
-                    r.imagem is not None or r.campo is not None for r in dentro):
+                    r.eh_objeto() or r.campo is not None for r in dentro):
                 base = dentro[0] if dentro else Run()
                 texto = "".join(r.texto for r in dentro).replace("\f", "")
                 saida.append(replace(base, texto=texto, campo=instrucao, imagem=None))
@@ -640,7 +663,7 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
         elif loc in ("smartTag", "customXml", "dir", "bdo"):
             _runs_em(f, ctx, saida)
         elif loc in ("oMath", "oMathPara"):
-            c.somar("EQUACAO")
+            c.somar("OBJETO_PERDIDO")  # equacao no namespace errado: nao ha' o que preservar
         elif loc in _IGNORADOS_INLINE:
             continue
         else:
@@ -673,15 +696,15 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
     if ctx.nivel_tabela > 0:
         # Quebra de pagina dentro de celula: o EditDoc nao pagina dentro da tabela por
         # quebra manual. Vira quebra de linha, com aviso.
-        quebras = sum(r.texto.count("\f") for r in runs if r.imagem is None)
+        quebras = sum(r.texto.count("\f") for r in runs if not r.eh_objeto())
         quebras += 1 if props.pop("quebra_antes", False) else 0
         if quebras:
             ctx.coletor.somar("QUEBRA_EM_TABELA", quebras)
-            runs = [r if r.imagem is not None else replace(r, texto=r.texto.replace("\f", "\n"))
+            runs = [r if r.eh_objeto() else replace(r, texto=r.texto.replace("\f", "\n"))
                     for r in runs]
     saida = [Paragrafo(runs=[], **props)]
     for run in runs:
-        if run.imagem is not None or run.campo is not None:
+        if run.eh_objeto() or run.campo is not None:
             saida[-1].runs.append(run)
             continue
         for i, pedaco in enumerate(run.texto.split("\f")):
@@ -1101,12 +1124,15 @@ def _ler_faixa(rid: str, onde: str, ctx: _Contexto, tamanho_de, relacoes_de) -> 
     if _profundidade(raiz) > profundidade:
         raise ErroDocx("XML_PROFUNDIDADE_EXCEDIDA", alvo)
     relacoes_doc = ctx.relacoes
+    ignoraveis_doc = ctx.ignoraveis
     ctx.relacoes = relacoes_de(alvo)
+    ctx.ignoraveis = opacos.ignoraveis_da_raiz(raiz)
     try:
         blocos: list[Bloco] = []
         _blocos(raiz, blocos, ctx)
     finally:
         ctx.relacoes = relacoes_doc
+        ctx.ignoraveis = ignoraveis_doc
     _fechar_campos(ctx)
     return blocos
 
@@ -1267,10 +1293,20 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         _validar_nome(alvo_doc)
 
         tipos_parte = {}
+        tipos_extensao = {}
         if "[Content_Types].xml" in nomes:
             ct = _parse(ler_parte("[Content_Types].xml"), "[Content_Types].xml", profundidade)
             for o in ct.iter("{%s}Override" % PKG_CT):
                 tipos_parte[(o.get("PartName") or "").lstrip("/")] = o.get("ContentType")
+            for d in ct.iter("{%s}Default" % PKG_CT):
+                tipos_extensao[(d.get("Extension") or "").lower()] = d.get("ContentType")
+
+        def tipo_de(parte: str) -> str | None:
+            """Tipo de conteudo da parte: o Override, ou o Default da extensao."""
+            if parte in tipos_parte:
+                return tipos_parte[parte]
+            base = posixpath.basename(parte)
+            return tipos_extensao.get(base.rsplit(".", 1)[1].lower()) if "." in base else None
         if tipos_parte.get(alvo_doc) == CT_DOCUMENTO_MACRO:
             coletor.somar("MACROS")
 
@@ -1344,6 +1380,10 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         ctx.relacoes = relacoes
         ctx.ler_parte = ler_parte
         ctx.nomes = nomes
+        ctx.capturador = opacos.Capturador(
+            ctx.lim, coletor, nomes, ler_parte, relacoes_de, tipo_de,
+            lambda dados, nome: _parse(dados, nome, profundidade), ctx.midias)
+        ctx.ignoraveis = opacos.ignoraveis_da_raiz(raiz)
         if estilos is not None:
             ctx.estilos, removidos = fx_estilos.ler_estilos(estilos, dados_estilos, fontes_tema,
                                                             numeracao, tema)

@@ -27,6 +27,8 @@ from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, Estilos, 
 from editdoc.modelo.unidades import px_de_twips, twips_de_px
 
 _USUARIO = QTextFormat.Property.UserProperty.value
+#: Tipo do objeto opaco (o mesmo de ponte_qt/opacos.py, sem importar o modulo).
+TIPO_OPACO = QTextFormat.ObjectTypes.UserObject.value + 2
 #: Bloco: id do estilo de paragrafo (ausente = estilo padrao).
 PROP_ESTILO = _USUARIO + 4
 #: Caractere: id do estilo de caractere.
@@ -369,8 +371,8 @@ def recompor_blocos(doc: QTextDocument, blocos, velho: Resolvedor, novo: Resolve
                 inicio, fim = max(inicio, trecho[0]), min(fim, trecho[1])
                 if inicio >= fim:
                     continue
-            if cf.isImageFormat():
-                continue
+            if cf.isImageFormat() or cf.objectType() == TIPO_OPACO:
+                continue  # imagem e objeto opaco (0.1.2) nao recebem a fonte do estilo
             sid_car = estilo_do_caractere(cf)
             if filtro is not None and not filtro(sid_velho, sid_car):
                 continue

@@ -49,3 +49,18 @@ RT_RODAPE = RT + "footer"
 RT_CONFIG = RT + "settings"
 CT_CABECALHO = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
 CT_RODAPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+
+#: Objetos opacos (0.1.2): formas, caixas de texto, graficos, SmartArt, OLE e VML.
+WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+WPG_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+WPC_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+WPI_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingInk"
+W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml"
+WP14_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+V_NS = "urn:schemas-microsoft-com:vml"
+O_NS = "urn:schemas-microsoft-com:office:office"
+URI_GRAFICO = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+URI_DIAGRAMA = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+#: Extensao do SmartArt: o relId do dataModelExt aponta para a relacao do documento.
+DSP_NS = "http://schemas.microsoft.com/office/drawing/2008/diagram"
+CT_DIAGRAMA_DADOS = "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml"

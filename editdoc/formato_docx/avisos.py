@@ -6,6 +6,11 @@ gravar de volta apaga aquilo do arquivo. Os avisos com `perde_ao_salvar` pedem
 confirmacao antes de salvar.
 
 Cada codigo aparece uma vez por documento, com a soma das ocorrencias.
+
+Desde a 0.1.2, caixa de texto, forma, grafico, SmartArt, objeto OLE, equacao, imagem
+flutuante e imagem em formato que a tela nao mostra sao preservados como objetos opacos
+(`formato_docx/opacos.py`): os avisos deles sao sem perda. O que nao pode ser preservado
+(referencia quebrada, limite) cai em OBJETO_PERDIDO ou IMAGEM, com perda.
 """
 
 from __future__ import annotations
@@ -33,19 +38,25 @@ CATALOGO: dict[str, tuple] = {
                   "A grade e as células se perdem ao salvar.",
         True),
     "IMAGEM": (
-        lambda n: f"{n} {_plural(n, 'imagem está', 'imagens estão')} em formato que o EditDoc "
-                  "não mostra (EMF, WMF, TIFF, SVG, VML ou vinculada a arquivo externo) "
-                  "e sai do arquivo ao salvar.",
+        lambda n: f"{n} {_plural(n, 'imagem não pôde ser lida', 'imagens não puderam ser lidas')} "
+                  "(relação quebrada ou parte ausente no arquivo) e sai do arquivo ao salvar.",
         True),
+    "IMAGEM_FORMATO": (
+        lambda n: f"{n} {_plural(n, 'imagem está', 'imagens estão')} em formato que o EditDoc "
+                  "não mostra (EMF, WMF, TIFF, SVG, VML ou vinculada a arquivo externo). "
+                  f"{_plural(n, 'Ela é preservada', 'Elas são preservadas')} no arquivo e "
+                  f"{_plural(n, 'aparece', 'aparecem')} como um quadro.",
+        False),
     "IMAGEM_GRANDE": (
         lambda n: f"{n} {_plural(n, 'imagem é grande demais', 'imagens são grandes demais')} "
                   "para mostrar (mais de 64 megapixels) e aparece como um quadro cinza. "
                   "A imagem continua no arquivo ao salvar.",
         False),
     "IMAGEM_FLUTUANTE": (
-        lambda n: f"{n} {_plural(n, 'imagem flutuante foi posta', 'imagens flutuantes foram postas')} "
-                  "na linha do texto. A posição e a disposição do texto em volta se perdem ao salvar.",
-        True),
+        lambda n: f"{n} {_plural(n, 'imagem flutuante é preservada', 'imagens flutuantes são preservadas')} "
+                  "com a posição e a disposição do texto em volta, mas não "
+                  f"{_plural(n, 'pode ser editada', 'podem ser editadas')} nesta versão.",
+        False),
     "QUEBRA_EM_TABELA": (
         lambda n: f"{n} {_plural(n, 'quebra de página dentro de tabela virou', 'quebras de página dentro de tabela viraram')} "
                   "quebra de linha.",
@@ -55,16 +66,25 @@ CATALOGO: dict[str, tuple] = {
                   "Word esconde. Esse texto sai do arquivo ao salvar.",
         True),
     "CAIXA_DE_TEXTO": (
-        lambda n: f"{n} {_plural(n, 'caixa de texto ou forma não é editada', 'caixas de texto ou formas não são editadas')} "
-                  "nesta versão. O texto dela sai do arquivo ao salvar.",
-        True),
+        lambda n: f"{n} {_plural(n, 'caixa de texto ou forma é preservada', 'caixas de texto ou formas são preservadas')}, "
+                  f"mas não {_plural(n, 'pode ser editada', 'podem ser editadas')} nesta versão.",
+        False),
     "OBJETO": (
-        lambda n: f"{n} {_plural(n, 'objeto incorporado não é editado', 'objetos incorporados não são editados')} "
-                  "nesta versão e sai do arquivo ao salvar.",
-        True),
+        lambda n: f"{n} {_plural(n, 'objeto incorporado (gráfico, SmartArt ou objeto OLE) é preservado', 'objetos incorporados (gráficos, SmartArt ou objetos OLE) são preservados')}, "
+                  f"mas não {_plural(n, 'pode ser editado', 'podem ser editados')} nesta versão.",
+        False),
     "EQUACAO": (
-        lambda n: f"{n} {_plural(n, 'equação não é editada', 'equações não são editadas')} "
-                  "nesta versão e sai do arquivo ao salvar.",
+        lambda n: f"{n} {_plural(n, 'equação é preservada', 'equações são preservadas')}, "
+                  f"mas não {_plural(n, 'pode ser editada', 'podem ser editadas')} nesta versão.",
+        False),
+    "OBJETO_PERDIDO": (
+        lambda n: f"{n} {_plural(n, 'caixa de texto, forma ou objeto não pôde ser preservado', 'caixas de texto, formas ou objetos não puderam ser preservados')} "
+                  "(referência quebrada no arquivo ou acima dos limites do EditDoc) e "
+                  f"{_plural(n, 'sai', 'saem')} do arquivo ao salvar.",
+        True),
+    "LISTA_EM_CAIXA": (
+        lambda n: f"{n} {_plural(n, 'parágrafo numerado dentro de caixa de texto perde', 'parágrafos numerados dentro de caixas de texto perdem')} "
+                  "a numeração ao salvar.",
         True),
     "CAMPO": (
         lambda n: f"{n} {_plural(n, 'campo que não é número de página (data, sumário, referência ou outro) ficou', 'campos que não são número de página (data, sumário, referência ou outros) ficaram')} "

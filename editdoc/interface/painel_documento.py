@@ -42,6 +42,7 @@ from editdoc.modelo.folhas import escala_do_zoom
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import campos as pq_campos
 from editdoc.ponte_qt import imagens as pq_imagens
+from editdoc.ponte_qt import opacos as pq_opacos
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
 
 Mover = QTextCursor.MoveMode.MoveAnchor
@@ -60,6 +61,8 @@ _PROPS_IMAGEM = (QTextFormat.Property.ObjectType, QTextFormat.Property.ImageName
 _IMG_HTML = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 #: Lado da alca de redimensionar imagem, em pixels de tela.
 ALCA_PX = 8.0
+#: Marca na area de transferencia: quantos objetos opacos ficaram fora da copia (0.1.2).
+MIME_OPACOS_OMITIDOS = "application/x-editdoc-objetos-omitidos"
 
 
 def html_sem_imagens_de_fora(html: str) -> str:
@@ -168,6 +171,13 @@ class PainelDocumento(VistaPaginas):
         frag = QTextDocumentFragment(self._cursor)
         md = QMimeData()
         md.setHtml(frag.toHtml())
+        # O HTML do Qt nao leva o objeto opaco (caixa de texto, forma...): ele fica fora do
+        # que se cola. A marca deixa o colar avisar, em vez de sumir calado.
+        inicio, fim = self._cursor.selectionStart(), self._cursor.selectionEnd()
+        omitidos = sum(1 for pos in pq_opacos.posicoes_de_opacos(self.document())
+                       if inicio <= pos < fim)
+        if omitidos:
+            md.setData(MIME_OPACOS_OMITIDOS, str(omitidos).encode("ascii"))
         md.setText(frag.toPlainText().replace(chr(0xFFFC), ""))
         pos = ed_imagens.imagem_selecionada(self)
         if pos is not None:
@@ -215,6 +225,9 @@ class PainelDocumento(VistaPaginas):
         ed_tabelas.ajustar_tabelas_coladas(self)
         self._cursor.endEditBlock()
         self._depois_de_mover()
+        if md.hasFormat(MIME_OPACOS_OMITIDOS):
+            self.mensagem.emit("Caixas de texto, formas e outros objetos preservados não são "
+                               "copiados nesta versão: o texto foi colado sem eles.")
 
     def _colar_imagem(self, md: QMimeData) -> None:
         try:
@@ -495,11 +508,12 @@ class PainelDocumento(VistaPaginas):
             self._cursor.removeSelectedText()
         self._limpar_estrutural()
         formato = self._cursor.charFormat()
-        if formato.isImageFormat() or pq_campos.eh_campo(formato):
-            # Digitar logo depois de uma imagem ou de um campo: o texto nao herda o
-            # formato de objeto (cada letra viraria outra imagem ou outro campo).
+        if formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato):
+            # Digitar logo depois de uma imagem, de um campo ou de um objeto opaco: o texto
+            # nao herda o formato de objeto (cada letra viraria outro objeto).
             limpo = QTextCharFormat(formato)
-            for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO):
+            for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO,
+                                *pq_opacos.PROPS_DE_OPACO):
                 limpo.clearProperty(propriedade)
             self._cursor.insertText(texto, limpo)
         else:

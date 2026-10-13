@@ -28,6 +28,12 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   diferentes) com os campos de número de página e total de páginas, e os estilos do
   arquivo. A gravação é atômica: o arquivo novo é escrito ao lado, relido, conferido e
   só então troca o original.
+- **Caixas de texto, formas, gráficos, SmartArt, objetos OLE, equações e imagens
+  flutuantes** são preservados: o EditDoc não os edita, mas eles voltam ao arquivo
+  exatamente como vieram (o XML, as imagens, as planilhas dos gráficos e a posição na
+  página). Na tela cada um aparece como um quadro com o nome ("Caixa de texto: …",
+  "Gráfico", "Equação: …") no lugar dele no texto; Delete ou Backspace apagam o objeto
+  inteiro, e Ctrl+Z o traz de volta.
 - **Páginas**: A4, Carta e Ofício, retrato e paisagem, margens predefinidas ou
   personalizadas, zoom de 25% a 300% (o teto depende da escala da tela), uma página,
   várias páginas lado a lado ou largura da página.
@@ -58,7 +64,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.1-win64.zip` da página
+1. Baixe `EditDoc-0.1.2-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -117,14 +123,28 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 
 - **Política de perda ao abrir `.docx`**: tudo o que o arquivo tem e o EditDoc não edita
   gera um aviso na barra amarela, com o botão Detalhes. Se salvar apagaria alguma coisa
-  (equação, caixa de texto, forma, comentário, revisão, nota de rodapé, imagem em formato
-  que o EditDoc não mostra, seções com cabeçalhos diferentes...), o primeiro Salvar pede
-  confirmação e oferece "Salvar cópia". Nada é perdido em silêncio. O que o EditDoc não
-  altera (estilos não usados, tema, propriedades do Word) volta ao arquivo como veio.
+  (comentário, revisão, nota de rodapé, hiperlink, campo que não é número de página,
+  controle de conteúdo, seções com cabeçalhos diferentes, formatação que o EditDoc não
+  conhece...), o primeiro Salvar pede confirmação e oferece "Salvar cópia". Caixas de
+  texto, formas, gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em
+  formato que a tela não mostra (EMF, WMF, SVG, vinculadas) **não** se perdem desde a
+  0.1.2: o aviso diz que são preservados e o Salvar não pede confirmação por eles. Só o
+  objeto que não pode ser preservado inteiro (referência quebrada no arquivo, ou acima
+  dos limites: 2000 objetos, 4 MB de XML por objeto, 64 partes por objeto) sai do arquivo,
+  com aviso e confirmação. Os estilos que o EditDoc não altera e o tema voltam ao arquivo
+  como vieram.
+- Partes que o EditDoc ainda não regrava e que hoje saem **sem aviso**: as propriedades
+  personalizadas do documento (`docProps/custom.xml`), os dados anexados por SharePoint e
+  similares (`customXml`), a tabela de fontes, as configurações da Web e as do Word
+  (`settings.xml` é refeito). O texto e a aparência não dependem delas.
+- Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
+  objeto (a barra de status avisa); uma nota de rodapé, um comentário ou uma lista
+  numerada **dentro** de uma caixa de texto perdem a referência ou a numeração ao salvar
+  (com aviso), porque essas partes não voltam ao arquivo.
 - Fora desta versão: revisão com controle de alterações, comentários, notas de rodapé,
-  sumário e índices, mala direta, equações, formas, caixas de texto, colunas, várias
-  seções editáveis, imagem flutuante (vira imagem na linha, com aviso), ortografia,
-  `.doc`, RTF, ODT e macros (nunca).
+  sumário e índices, mala direta, editar equações, formas e caixas de texto (elas são
+  preservadas, não editadas), colunas, várias seções editáveis, ortografia, `.doc`, RTF,
+  ODT e macros (nunca).
 - Numeração de listas: só marcadores e numeração simples (um nível).
 - Tabelas: digitar numa tabela muito grande fica lento (o Qt refaz a tabela a cada tecla;
   acima de 5000 células a tabela abre como parágrafos, com aviso); a altura de linha do
@@ -160,7 +180,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.1-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.2-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em
