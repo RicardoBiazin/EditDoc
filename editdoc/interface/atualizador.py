@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QComboBox, QFontComboBox, QTextEdit
 from editdoc.edicao import imagens, tabelas
 from editdoc.edicao.estado import ler
 from editdoc.interface.comandos import (ALINHAMENTOS, EDICAO_DE_FAIXA, ESPACAMENTOS, LINK,
-                                        TABELA, Comandos)
+                                        LISTA_NUMERADA, TABELA, Comandos)
 from editdoc.ponte_qt import links
 
 
@@ -87,6 +87,9 @@ class AtualizadorDeEstado(QObject):
         no_link = links.link_no_cursor(self._editor.document(), cursor) is not None
         for id_ in LINK:
             c.acao(id_).setEnabled(no_link)
+        # Listas (0.1.4): reiniciar, continuar e definir valor so' num item numerado.
+        for id_ in LISTA_NUMERADA:
+            c.acao(id_).setEnabled(estado.numeracao)
         # Cabecalho e rodape (M5): fechar e ir para so' na edicao.
         editando = getattr(self._editor, "editando_faixa", lambda: None)() is not None
         for id_ in EDICAO_DE_FAIXA:

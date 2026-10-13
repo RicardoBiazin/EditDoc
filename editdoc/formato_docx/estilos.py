@@ -7,12 +7,13 @@ deles so' os atributos que mudaram. Assim um estilo que o editor nao usa, o
 latentStyles, o docDefaults, os estilos de tabela e as extensoes do Word (w14, w15...)
 voltam como vieram.
 
-Duas coisas nunca voltam iguais, de proposito:
-- `w:numPr` dentro de um estilo aponta para o numbering.xml de origem, que o EditDoc
-  regrava do zero. O leitor passa a numeracao do estilo para o paragrafo (formatacao
-  direta), e o escritor tira o numPr do estilo.
-- Filho de pPr ou rPr que o validador de ordem nao conhece (w:rPrChange...) sai, com o
-  aviso FORMATACAO; os conhecidos sao postos na ordem do esquema.
+O `w:numPr` dentro de um estilo (Titulo numerado, List Bullet) fica no estilo desde a
+0.1.4: o numbering.xml de origem volta inteiro, e o paragrafo do estilo herda a lista. So'
+sai o numPr cujo numId o numbering.xml nao define (aviso LISTA). Antes da 0.1.4 o numPr
+saia de todo estilo e a lista passava ao paragrafo.
+
+Nunca volta igual, de proposito: filho de pPr ou rPr que o validador de ordem nao conhece
+(w:rPrChange...) sai, com o aviso FORMATACAO; os conhecidos sao postos na ordem do esquema.
 """
 
 from __future__ import annotations
@@ -174,12 +175,31 @@ def props_de_ppr(ppr) -> dict:
     return {k: v for k, v in out.items() if v is not None}
 
 
-def ler_estilos(raiz, dados: bytes, fontes_tema: dict, numeracao: dict,
-                tema: bytes | None = None) -> tuple[Estilos, int]:
+def _lista_do_estilo(ppr, numeracao, coletor) -> tuple[int | None, int | None, str | None]:
+    """(numId, ilvl, tipo) do w:numPr de um estilo. numId que nao existe: sem lista (LISTA)."""
+    num = ppr.find(q("numPr")) if ppr is not None else None
+    if num is None:
+        return None, None, None
+    nid = _inteiro(_atr(num.find(q("numId")), "val"))
+    ilvl = _inteiro(_atr(num.find(q("ilvl")), "val"))
+    if ilvl is not None and not 0 <= ilvl <= 8:
+        ilvl = min(max(ilvl, 0), 8)
+        if coletor is not None:
+            coletor.somar("LISTA_NIVEL")
+    if nid is not None and nid != 0 and (numeracao is None or nid not in numeracao.instancias):
+        if coletor is not None:
+            coletor.somar("LISTA")
+        return None, ilvl, None
+    tipo = numeracao.tipo_de(nid, ilvl or 0) if numeracao is not None and nid else None
+    return nid, ilvl, tipo
+
+
+def ler_estilos(raiz, dados: bytes, fontes_tema: dict, numeracao=None,
+                tema: bytes | None = None, coletor=None) -> tuple[Estilos, int]:
     """w:styles -> (catalogo, filhos de pPr/rPr que nao voltam ao arquivo).
 
-    `numeracao` e' o mapa numId -> formato do nivel 0 (do numbering.xml), para passar
-    a lista do estilo ao paragrafo.
+    `numeracao` e' o catalogo do numbering.xml (0.1.4): o numPr do estilo vira
+    `Estilo.lista` e `Estilo.lista_nivel`, e volta ao arquivo.
     """
     est = Estilos(itens={}, xml_original=dados, tema_original=tema, fontes_tema=dict(fontes_tema))
     dd = raiz.find(q("docDefaults"))
@@ -216,16 +236,15 @@ def ler_estilos(raiz, dados: bytes, fontes_tema: dict, numeracao: dict,
             e.paragrafo = par
             e.caractere = props_de_rpr(el.find(q("rPr")), fontes_tema)
             if ppr is not None:
-                num = ppr.find(q("numPr"))
-                if num is not None:
-                    nid = _atr(num.find(q("numId")), "val")
-                    if nid not in (None, "0"):
-                        e.numeracao = "marcadores" if numeracao.get(nid) == "bullet" else "numeracao"
+                e.lista, e.lista_nivel, e.numeracao = _lista_do_estilo(ppr, numeracao, coletor)
             if e.nivel is None and tipo == "paragrafo":
                 # Titulo sem outlineLvl (arquivo de outro programa): o nome diz o nivel.
                 e.nivel = nivel_de_titulo(nome)
+        elif tipo == "numeracao":
+            # Estilo de numeracao (w:numStyleLink de uma abstrata aponta para ele).
+            e.lista, e.lista_nivel, _tipo = _lista_do_estilo(el.find(q("pPr")), numeracao, None)
         e.originais = {"paragrafo": dict(e.paragrafo), "caractere": dict(e.caractere),
-                       "nivel": e.nivel}
+                       "nivel": e.nivel, "lista": [e.lista, e.lista_nivel]}
         est.itens[sid] = e
     removidos = sanear(copy.deepcopy(raiz))
     return est, removidos
@@ -233,19 +252,22 @@ def ler_estilos(raiz, dados: bytes, fontes_tema: dict, numeracao: dict,
 
 # -- saneamento ------------------------------------------------------------------------
 
-def sanear(raiz) -> int:
+def sanear(raiz, listas: set | None = None) -> int:
     """Deixa pPr/rPr/tblPr/tcPr/bordas na ordem do esquema e tira o que o validador nao aceita.
 
     Filho de outro namespace (w14, w15) fica: o Word o grava e o declara em
-    mc:Ignorable. Tira tambem o numPr de dentro dos estilos (ver o topo do modulo).
+    mc:Ignorable. `listas`: os numIds que o numbering.xml gravado define; o numPr de estilo
+    que cita outro numId sai (o validador recusaria). None = nao mexe no numPr.
     Devolve quantos filhos foram tirados (fora o numPr).
     """
     removidos = 0
     for estilo in raiz.iter(q("style")):
         ppr = estilo.find(q("pPr"))
-        if ppr is not None:
+        if ppr is not None and listas is not None:
             for num in ppr.findall(q("numPr")):
-                ppr.remove(num)
+                nid = _inteiro(_atr(num.find(q("numId")), "val"))
+                if nid is not None and nid != 0 and nid not in listas:
+                    ppr.remove(num)
     for nome, lista in ordem.ORDENS.items():  # pPr, rPr, tblPr, tcPr e bordas
         for el in raiz.iter(q(nome)):
             conhecidos = []
@@ -437,13 +459,24 @@ def _escrever_estilo(el, e: Estilo) -> None:
     mudar_par = {k for k in (*CAMPOS_PARAGRAFO, "nivel")
                  if par.get(k) != (orig.get("nivel") if k == "nivel" else par_orig.get(k))}
     mudar_car = {k for k in CAMPOS_CARACTERE if e.caractere.get(k) != car_orig.get(k)}
-    if e.tipo == "paragrafo" and (mudar_par or (e.extras and not e.no_arquivo)):
+    lista_orig = tuple(orig.get("lista") or (None, None))
+    mudar_lista = (e.lista, e.lista_nivel) != lista_orig
+    if e.tipo == "paragrafo" and (mudar_par or mudar_lista or (e.extras and not e.no_arquivo)):
         ppr = _filho(el, "pPr", ORDEM_ESTILO)
         if not e.no_arquivo:
             for extra in e.extras:
                 if extra in ordem.ORDEM_PPR and ppr.find(q(extra)) is None:
                     _filho(ppr, extra, ordem.ORDEM_PPR)
         aplicar_ppr(ppr, par, mudar_par)
+        if mudar_lista:
+            # Lista do estilo (0.1.4): a lista de titulos numerados liga Titulo 1 a 9.
+            _remover(ppr, "numPr")
+            if e.lista is not None or e.lista_nivel is not None:
+                num = _filho(ppr, "numPr", ordem.ORDEM_PPR)
+                if e.lista_nivel is not None:
+                    etree.SubElement(num, q("ilvl")).set(q("val"), str(int(e.lista_nivel)))
+                if e.lista is not None:
+                    etree.SubElement(num, q("numId")).set(q("val"), str(int(e.lista)))
         if _vazio(ppr):
             el.remove(ppr)
     if mudar_car:
@@ -542,8 +575,10 @@ def _parse_seguro(dados: bytes):
     return etree.fromstring(dados, parser)
 
 
-def escrever_estilos(est: Estilos | None) -> bytes:
-    """O styles.xml do catalogo: o original com os estilos alterados e novos reescritos."""
+def escrever_estilos(est: Estilos | None, listas: set | None = None) -> bytes:
+    """O styles.xml do catalogo: o original com os estilos alterados e novos reescritos.
+
+    `listas`: os numIds do numbering.xml gravado (o numPr de estilo que cita outro sai)."""
     est = est if est is not None else catalogo_padrao()
     if est.xml_original:
         raiz = _parse_seguro(est.xml_original)
@@ -551,7 +586,7 @@ def escrever_estilos(est: Estilos | None) -> bytes:
         # Documento novo: o docDefaults e' o do catalogo (a fonte da preferencia, M8).
         raiz = xml_base(est.padrao_caractere.get("fonte") or FONTE_PADRAO,
                         est.padrao_caractere.get("tamanho_meio_pt") or TAMANHO_PADRAO_MEIO_PT)
-    sanear(raiz)
+    sanear(raiz, listas)
     por_id = {_atr(el, "styleId"): el for el in raiz.findall(q("style"))}
     for e in est.itens.values():
         el = por_id.get(e.id)

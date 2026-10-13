@@ -41,6 +41,7 @@ from editdoc.interface.layout_paginado import LayoutPaginado
 from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
+from editdoc.ponte_qt import listas as pq_listas
 from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
                                    VAO_ENTRE_FOLHAS_PX, Mapa, alinhar_ao_dispositivo,
                                    limitar_zoom, passo_de_zoom, teto_de_zoom)
@@ -198,6 +199,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         sel.format = fmt
         ctx.selections = [sel]
     layout.doc.documentLayout().draw(painter, ctx)
+    # Numeros e marcadores das listas (0.1.4): pintados aqui, na funcao unica da folha.
+    pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
     if marcas:
         desenhar_marcas(painter, layout.doc, ctx.clip)
     painter.restore()
@@ -255,6 +258,7 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             sel.format = fmt
             ctx.selections = [sel]
         faixa.doc.documentLayout().draw(painter, ctx)
+        pq_listas.desenhar_rotulos(painter, faixa.doc, None)
         if marcas:
             desenhar_marcas(painter, faixa.doc, None)
         painter.restore()
@@ -580,7 +584,8 @@ class VistaPaginas(QAbstractScrollArea):
         Mesma conta da pintura: se os campos mudaram, o cache de tiles sai junto, senao a
         tela ficaria com o numero velho depois que a impressao refez o layout.
         """
-        if self.layout_pag.atualizar_campos():
+        listas_mudaram = pq_listas.numerador_de(self.layout_pag.doc).atualizar()
+        if self.layout_pag.atualizar_campos() or listas_mudaram:
             self._limpar_cache()
             self._altura_doc_anterior = None
             self.viewport().update()
@@ -588,6 +593,10 @@ class VistaPaginas(QAbstractScrollArea):
     def paintEvent(self, ev) -> None:
         if self.layout_pag.atualizar_campos():
             # Total de paginas mudou e o corpo tem campo: o numero na tela muda.
+            self._limpar_cache()
+            self._altura_doc_anterior = None
+        if pq_listas.numerador_de(self.layout_pag.doc).atualizar():
+            # Um numero de lista mudou longe da edicao (Tab num item renumera os de baixo).
             self._limpar_cache()
             self._altura_doc_anterior = None
         self._aplicar_pendencias()

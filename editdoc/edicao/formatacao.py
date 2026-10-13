@@ -136,12 +136,13 @@ def alinhar(editor: QTextEdit, alinhamento: Qt.AlignmentFlag) -> None:
     cursor.endEditBlock()
 
 
-def alterar_recuo(editor: QTextEdit, delta_px: float) -> None:
+def alterar_recuo(editor: QTextEdit, delta_tw: float) -> None:
+    """Soma `delta_tw` twips ao recuo esquerdo (a unidade do recuo no bloco, 0.1.4)."""
     cursor = editor.textCursor()
     cursor.beginEditBlock()
     for bloco in _blocos_da_selecao(editor):
         formato = bloco.blockFormat()
-        formato.setLeftMargin(max(0.0, formato.leftMargin() + delta_px))
+        formato.setLeftMargin(max(0.0, formato.leftMargin() + delta_tw))
         QTextCursor(bloco).setBlockFormat(formato)
     cursor.endEditBlock()
 
@@ -154,19 +155,28 @@ def definir_paragrafo(editor: QTextEdit, *, antes_tw: int | None = None,
     So' muda o que vier. Um passo de desfazer. Valores em twips.
     """
     formato = QTextBlockFormat()
+    # Espaco antes e depois em px96 (o Qt escala); recuos em twips (o Qt nao escala, 0.1.4).
     if antes_tw is not None:
         formato.setTopMargin(max(0, antes_tw) / 15.0)
     if depois_tw is not None:
         formato.setBottomMargin(max(0, depois_tw) / 15.0)
     if esquerdo_tw is not None:
-        formato.setLeftMargin(esquerdo_tw / 15.0)
+        formato.setLeftMargin(float(esquerdo_tw))
     if direito_tw is not None:
-        formato.setRightMargin(direito_tw / 15.0)
+        formato.setRightMargin(float(direito_tw))
     if primeira_tw is not None:
-        formato.setTextIndent(primeira_tw / 15.0)
+        formato.setTextIndent(float(primeira_tw))
     cursor = editor.textCursor()
     cursor.beginEditBlock()
     cursor.mergeBlockFormat(formato)
+    if primeira_tw is not None:
+        # Item de lista: o recuo pedido e' o de verdade; o visual volta no ajuste da lista.
+        from editdoc.ponte_qt.listas import PROP_RECUO_REAL
+        for bloco in _blocos_da_selecao(editor):
+            bf = bloco.blockFormat()
+            if bf.hasProperty(PROP_RECUO_REAL):
+                bf.clearProperty(PROP_RECUO_REAL)
+                QTextCursor(bloco).setBlockFormat(bf)
     cursor.endEditBlock()
     if hasattr(editor, "_depois_de_formato"):
         editor._depois_de_formato()
@@ -181,25 +191,36 @@ def definir_espacamento(editor: QTextEdit, percentual: int) -> None:
     cursor.endEditBlock()
 
 
-def alternar_lista(editor: QTextEdit, estilo: QTextListFormat.Style) -> None:
-    """Liga a lista do estilo dado, ou desliga se a selecao ja esta nela.
+_MARCAS = (QTextListFormat.Style.ListDisc, QTextListFormat.Style.ListCircle,
+           QTextListFormat.Style.ListSquare)
 
-    Se a selecao esta numa lista de outro estilo, troca o estilo da lista.
+
+def alternar_lista(editor: QTextEdit, estilo: QTextListFormat.Style) -> None:
+    """Liga a lista do estilo dado, ou desliga se a selecao ja esta nela (um passo de desfazer).
+
+    Desde a 0.1.4 a lista nao e' mais um QTextList: o estilo do Qt so' escolhe entre marcadores
+    (disco, circulo, quadrado) e numeracao, e quem faz e' `edicao/listas.py`.
     """
-    blocos = _blocos_da_selecao(editor)
-    lista = blocos[0].textList()
-    cursor = editor.textCursor()
-    cursor.beginEditBlock()
-    if lista is None:
-        formato = QTextListFormat()
-        formato.setStyle(estilo)
-        cursor.createList(formato)
-    elif lista.format().style() == estilo:
-        for bloco in blocos:
-            if bloco.textList() is not None:
-                lista.remove(bloco)
+    from editdoc.edicao import listas
+    if estilo in _MARCAS:
+        chave = {QTextListFormat.Style.ListCircle: "vazado",
+                 QTextListFormat.Style.ListSquare: "quadrado"}.get(estilo, "redondo")
+        listas.alternar_marcadores(editor, chave)
     else:
-        formato = lista.format()
-        formato.setStyle(estilo)
-        lista.setFormat(formato)
-    cursor.endEditBlock()
+        chave = {QTextListFormat.Style.ListLowerAlpha: "letra_minuscula",
+                 QTextListFormat.Style.ListUpperAlpha: "letra_maiuscula",
+                 QTextListFormat.Style.ListLowerRoman: "romano_minusculo",
+                 QTextListFormat.Style.ListUpperRoman: "romano_maiusculo"}.get(estilo, "decimal_ponto")
+        listas.alternar_numeracao(editor, chave)
+
+
+def alterar_recuo_ou_nivel(editor: QTextEdit, aumentar: bool) -> None:
+    """Aumentar/Diminuir recuo: num item de lista muda o nivel (0.1.4), como no Word;
+    fora de lista soma ou tira 720 twips do recuo esquerdo."""
+    from editdoc.edicao import listas
+    from editdoc.modelo.unidades import RECUO_PADRAO_TW
+    blocos = _blocos_da_selecao(editor)
+    if blocos and all(listas.eh_item(editor, b) for b in blocos):
+        listas.mudar_nivel(editor, 1 if aumentar else -1)
+        return
+    alterar_recuo(editor, RECUO_PADRAO_TW if aumentar else -RECUO_PADRAO_TW)

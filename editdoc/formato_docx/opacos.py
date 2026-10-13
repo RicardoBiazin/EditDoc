@@ -10,10 +10,11 @@ que ele usa (imagens de dentro da forma, grafico e planilha, partes do SmartArt,
 embeddings), cada uma com as suas relacoes e o seu tipo de conteudo. Referencia quebrada,
 parte proibida ou limite estourado: o objeto nao e' preservado (aviso com perda).
 
-Duas mudancas no XML guardado, as duas com aviso: referencia a nota de rodape, nota de
-fim e comentario dentro da caixa sai (essas partes nao voltam ao arquivo: a referencia
-ficaria pendurada); `w:numPr` dentro da caixa sai (o numbering.xml de origem nao volta,
-e o numId passaria a apontar para outra lista).
+Mudancas no XML guardado, com aviso: referencia a nota de rodape, nota de fim e
+comentario dentro da caixa sai (essas partes nao voltam ao arquivo: a referencia ficaria
+pendurada). Desde a 0.1.4 o `w:numPr` dentro da caixa fica, porque o numbering.xml de
+origem volta inteiro; so' sai (aviso LISTA_EM_CAIXA) quando o arquivo nao tem numeracao
+que possa ser lida.
 
 Escrita (`GravadorOpacos`): o XML volta igual, com os rIds da parte hospedeira
 renumerados. Cada parte ganha um nome livre (o de origem, se ninguem usa), as relacoes
@@ -299,6 +300,8 @@ class Capturador:
         self.contagem = 0
         self.bytes_total = 0
         self._rels: dict[str, dict] = {}
+        #: numIds do numbering.xml lido (0.1.4); None = sem numeracao (o numPr da caixa sai)
+        self.listas_validas: set | None = None
 
     def _relacoes(self, parte: str) -> dict:
         if parte not in self._rels:
@@ -355,11 +358,15 @@ class Capturador:
             if codigo:
                 self.coletor.somar(codigo)
             x.getparent().remove(x)
-        listas = list(el.iter(q("numPr")))
-        for x in listas:
-            x.getparent().remove(x)
-        if listas:
-            self.coletor.somar("LISTA_EM_CAIXA", len(listas))
+        if self.listas_validas is None:
+            # Sem numeracao lida (o arquivo nao tem, ou passou dos limites): o numId da caixa
+            # apontaria para lista que nao volta ao arquivo. Desde a 0.1.4, com a numeracao
+            # lida, o numPr fica (o numbering.xml de origem volta inteiro).
+            listas = list(el.iter(q("numPr")))
+            for x in listas:
+                x.getparent().remove(x)
+            if listas:
+                self.coletor.somar("LISTA_EM_CAIXA", len(listas))
         xml = etree.tostring(el)
         if len(xml) > self.lim["opaco_bytes"] or \
                 self.bytes_total + len(xml) > self.lim["opacos_bytes"]:
@@ -563,6 +570,10 @@ class GravadorOpacos:
                 if (chave.startswith(_PREFIXO_R) or chave == _RELID_O) and valor in mapa:
                     x.set(chave, mapa[valor])
         self._ids_unicos(el)
+        self._gravar_pendentes(pendentes, partes, memo, mapa)
+        return el
+
+    def _gravar_pendentes(self, pendentes, partes, memo, mapa) -> None:
         for origem, novo in pendentes:
             parte = partes[origem]
             dados = parte.dados
@@ -578,7 +589,22 @@ class GravadorOpacos:
             if itens:
                 self.partes.append((self._caminho_dos_rels(novo), self._rels_xml(itens)))
             self.tipos.append(("/" + novo, parte.tipo_conteudo))
-        return el
+
+    def gravar_fecho(self, relacoes, partes_tuple, pasta_host: str = "word") -> list[tuple]:
+        """As partes que uma parte do EditDoc cita (as imagens dos marcadores de figura do
+        numbering.xml, 0.1.4), com o Id de origem mantido. Devolve os itens do .rels."""
+        partes = {p.nome: p for p in partes_tuple}
+        memo: dict[str, str] = {}
+        pendentes: list[tuple[str, str]] = []
+        itens = []
+        for rid, tipo, alvo, externo in relacoes:
+            if externo:
+                itens.append((rid, tipo, alvo, "External"))
+            elif alvo in partes:
+                novo = self._alocar(alvo, partes, memo, pendentes)
+                itens.append((rid, tipo, relativo(novo, pasta_host)))
+        self._gravar_pendentes(pendentes, partes, memo, {})
+        return itens
 
 
 def relativo(alvo: str, pasta: str) -> str:

@@ -5,9 +5,12 @@ styles, numbering, settings, core e app. A saida e' determinista (datas de zip
 fixas), e cada gravacao passa pelo validador de `ordem` antes de sair: um
 arquivo que o validador reprova nao e' devolvido.
 
-Listas: marcadores usam sempre o numero 1. Cada grupo contiguo de numeracao
-ganha um numero proprio, com reinicio em 1, para que duas listas separadas
-nao continuem a contagem uma da outra.
+Listas (0.1.4): o paragrafo grava o w:numPr que tem (`Paragrafo.lista` e `lista_nivel`), e
+o numbering.xml sai do catalogo (`formato_docx/numeracao.py`): o original do arquivo, com as
+definicoes que o EditDoc acrescentou no fim, e as imagens dos marcadores de figura com as
+relacoes do numbering.xml. Paragrafo montado em codigo so' com o tipo (`numeracao`) ganha
+numId por `modelo.numeracao.materializar`: um para os marcadores, um por grupo contiguo de
+numeracao, reiniciando em 1 (o que o escritor fazia antes da 0.1.4).
 
 Tabelas (M4): todas usam o estilo "Table Grid" (espacamento zero dentro da
 celula, como o Word faz) e gravam os seis lados da borda de forma explicita, de
@@ -57,6 +60,7 @@ import zipfile
 from lxml import etree
 
 from editdoc.formato_docx import estilos as fx_estilos
+from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos, ordem
 from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.avisos import Aviso, Coletor
@@ -73,6 +77,7 @@ from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celul
                                       Imagem, Link, MarcaCampo, Marcador, Paragrafo, Run, Tabela,
                                       bordas_padrao, objetos_de)
 from editdoc.modelo.estilos import catalogo_padrao
+from editdoc.modelo.numeracao import materializado
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
 _JC_TABELA = {"esquerda": "left", "centro": "center", "direita": "right"}
@@ -105,30 +110,6 @@ def _agora_iso() -> str:
 
 def _xml(raiz) -> bytes:
     return etree.tostring(raiz, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-
-class _Listas:
-    """Numeros de lista: 1 para marcadores; um novo por grupo de numeracao."""
-
-    def __init__(self) -> None:
-        self._proximo = 2
-        self._ultimo: str | None = None
-        self._atual = 1
-        self.numeracoes = 0  # quantos numIds de numeracao foram criados
-
-    def numero(self, tipo: str) -> int:
-        if tipo == "marcadores":
-            self._ultimo = None
-            return 1
-        if self._ultimo != "numeracao":
-            self._atual = self._proximo
-            self._proximo += 1
-            self.numeracoes += 1
-        self._ultimo = "numeracao"
-        return self._atual
-
-    def encerrar(self) -> None:
-        self._ultimo = None
 
 
 def texto_gravavel(texto: str) -> tuple[str, int]:
@@ -264,7 +245,6 @@ _PARTES_FIXAS = {"[Content_Types].xml", "_rels/.rels", "word/document.xml",
 class _Ctx:
     def __init__(self, coletor: Coletor, estilos=None, pacote=None) -> None:
         self.coletor = coletor
-        self.listas = _Listas()
         usados = set(_PARTES_FIXAS)
         if estilos is not None and estilos.tema_original:
             usados.add(PARTE_TEMA)
@@ -333,7 +313,7 @@ def _desenho(r, imagem: Imagem, ctx: _Ctx) -> None:
 
 
 def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
-    listas, coletor = ctx.listas, ctx.coletor
+    coletor = ctx.coletor
     pe = etree.SubElement(body, q("p"))
     ppr = etree.Element(q("pPr"))
     estilo = ctx.estilo_de_paragrafo(p.estilo)
@@ -341,12 +321,13 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
         etree.SubElement(ppr, q("pStyle")).set(q("val"), estilo)
     if p.nivel is not None:
         etree.SubElement(ppr, q("outlineLvl")).set(q("val"), str(min(max(int(p.nivel), 0), 9)))
-    if p.numeracao is not None:
+    if p.lista is not None or p.lista_nivel is not None:
+        # Lista (0.1.4): o numPr direto, como o paragrafo tem. None herda do estilo.
         num = etree.SubElement(ppr, q("numPr"))
-        etree.SubElement(num, q("ilvl")).set(q("val"), "0")
-        etree.SubElement(num, q("numId")).set(q("val"), str(listas.numero(p.numeracao)))
-    else:
-        listas.encerrar()
+        if p.lista_nivel is not None:
+            etree.SubElement(num, q("ilvl")).set(q("val"), str(min(max(int(p.lista_nivel), 0), 8)))
+        if p.lista is not None:
+            etree.SubElement(num, q("numId")).set(q("val"), str(int(p.lista)))
     if p.alinhamento is not None:
         etree.SubElement(ppr, q("jc")).set(q("val"), _JC[p.alinhamento])
     if (p.recuo_esquerdo_tw is not None or p.recuo_primeira_linha_tw is not None
@@ -634,7 +615,6 @@ def _blocos(pai, blocos: list[Bloco], ctx: _Ctx, em_celula: bool) -> None:
     """Paragrafos e tabelas, na ordem. Celula e corpo terminam em paragrafo (o Word exige)."""
     for bloco in blocos:
         if isinstance(bloco, Tabela):
-            ctx.listas.encerrar()
             _tabela(pai, bloco, ctx)
         else:
             _paragrafo(pai, bloco, ctx)
@@ -690,7 +670,6 @@ def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
             n += 1
             nome = f"{prefixo}{n}.xml"
             ctx.relacoes = _Relacoes(1)
-            ctx.listas.encerrar()
             ctx.ids_marcadores = {}
             raiz = _raiz_de_parte(raiz_nome, ctx)
             _blocos(raiz, modelo[tipo], ctx, em_celula=True)  # termina em paragrafo
@@ -701,7 +680,6 @@ def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
             rid = relacoes_doc.adicionar(rt, nome)
             faixas.referencias.append((elemento, _TIPO_FAIXA[tipo], rid))
     ctx.relacoes = relacoes_doc
-    ctx.listas.encerrar()
     return faixas
 
 
@@ -743,43 +721,6 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
         etree.SubElement(sect, q("titlePg"))
     return _xml(raiz), faixas
 
-
-
-def _numbering_xml(numeracoes: int) -> bytes:
-    raiz = etree.Element(q("numbering"), nsmap={"w": W})
-
-    def abstrato(ident: int, formato: str, texto: str) -> None:
-        a = etree.SubElement(raiz, q("abstractNum"))
-        a.set(q("abstractNumId"), str(ident))
-        etree.SubElement(a, q("multiLevelType")).set(q("val"), "singleLevel")
-        lvl = etree.SubElement(a, q("lvl"))
-        lvl.set(q("ilvl"), "0")
-        etree.SubElement(lvl, q("start")).set(q("val"), "1")
-        etree.SubElement(lvl, q("numFmt")).set(q("val"), formato)
-        etree.SubElement(lvl, q("lvlText")).set(q("val"), texto)
-        etree.SubElement(lvl, q("lvlJc")).set(q("val"), "left")
-        ppr = etree.SubElement(lvl, q("pPr"))
-        ind = etree.SubElement(ppr, q("ind"))
-        ind.set(q("left"), "720")
-        ind.set(q("hanging"), "360")
-        rpr = etree.SubElement(lvl, q("rPr"))
-        rf = etree.SubElement(rpr, q("rFonts"))
-        rf.set(q("ascii"), "Calibri")
-        rf.set(q("hAnsi"), "Calibri")
-
-    abstrato(0, "bullet", "•")
-    abstrato(1, "decimal", "%1.")
-    num = etree.SubElement(raiz, q("num"))
-    num.set(q("numId"), "1")
-    etree.SubElement(num, q("abstractNumId")).set(q("val"), "0")
-    for ident in range(2, 2 + numeracoes):
-        num = etree.SubElement(raiz, q("num"))
-        num.set(q("numId"), str(ident))
-        etree.SubElement(num, q("abstractNumId")).set(q("val"), "1")
-        sobre = etree.SubElement(num, q("lvlOverride"))
-        sobre.set(q("ilvl"), "0")
-        etree.SubElement(sobre, q("startOverride")).set(q("val"), "1")
-    return _xml(raiz)
 
 
 def _settings_xml(pares_impares: bool = False) -> bytes:
@@ -874,6 +815,8 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         coletor.somar("CAMPO_INCOMPLETO", desfeitos["campos"])
     if desfeitos["marcadores"]:
         coletor.somar("MARCADOR", desfeitos["marcadores"])
+    # Listas montadas em codigo so' com o tipo: numId e definicao (0.1.4).
+    doc = materializado(doc)
     ctx = _Ctx(coletor, doc.estilos, doc.pacote)
     ctx.opacos.preparar(objetos_de(doc), _NSMAP_PARTE)
     agora = _agora_iso()
@@ -899,6 +842,16 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     ]
     for n, (tipo, alvo, externo) in enumerate(gravador.relacoes_do_pacote(), start=4):
         rels_pacote.append((f"rId{n}", tipo, alvo, "External") if externo else (f"rId{n}", tipo, alvo))
+    # Numeracao (0.1.4): o numbering.xml do catalogo e as imagens dos marcadores de figura,
+    # com as relacoes do proprio numbering.xml (Id mantido: o XML nao muda).
+    numeracao = doc.numeracao
+    numbering_xml = fx_numeracao.escrever(numeracao)
+    rels_numeracao = ctx.opacos.gravar_fecho(numeracao.relacoes, numeracao.partes) \
+        if numeracao is not None and numeracao.relacoes else []
+    partes_numeracao = [("word/_rels/numbering.xml.rels", _rels_xml(rels_numeracao))] \
+        if rels_numeracao else []
+    extras_tipos += [t for t in ctx.opacos.tipos if t not in extras_tipos]
+    listas = set(numeracao.instancias) if numeracao is not None else set()
     configuracoes = gravador.configuracoes(doc.pagina.pares_impares) or \
         _settings_xml(doc.pagina.pares_impares)
     rels_configuracoes = gravador.relacoes_das_configuracoes()
@@ -915,9 +868,10 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
             *ctx.relacoes.itens,
         ])),
         *faixas.partes,
-        ("word/styles.xml", fx_estilos.escrever_estilos(ctx.estilos)),
+        ("word/styles.xml", fx_estilos.escrever_estilos(ctx.estilos, listas)),
         *partes_tema,
-        ("word/numbering.xml", _numbering_xml(ctx.listas.numeracoes)),
+        ("word/numbering.xml", numbering_xml),
+        *partes_numeracao,
         ("word/settings.xml", configuracoes),
         *partes_configuracoes,
         ("docProps/core.xml", gravador.propriedades(doc.titulo, doc.autor, criado, modificado)

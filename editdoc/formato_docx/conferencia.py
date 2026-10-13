@@ -11,6 +11,7 @@ parte referenciada que falta faz o leitor nao preservar o objeto, e a contagem a
 Hiperlinks, campos e marcadores (0.1.3): o destino de cada trecho de link e as marcas de
 campo (com o codigo) e de marcador de cada paragrafo, depois de `marcas.equilibrar`; e o
 conteudo das partes preservadas do pacote (`pacote.assinatura`).
+Listas (0.1.4): o numId e o nivel de cada paragrafo (o numbering.xml passa pelo validador).
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -90,7 +91,8 @@ def _itens(blocos, saida: list, onde: str) -> None:
             saida.append((f"{onde}paragrafo {n_par}", "p", texto_do_paragrafo(bloco),
                           bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
                           bloco.estilo, tuple(sorted({r.estilo for r in bloco.runs if r.estilo})),
-                          _objetos(bloco), _links(bloco), _marcas(bloco)))
+                          _objetos(bloco), _links(bloco), _marcas(bloco),
+                          (bloco.lista, bloco.lista_nivel)))
 
 
 def conferir(dados: bytes, esperado: Documento) -> None:
@@ -135,6 +137,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"hiperlink diferente no {lugar}")
             if x[10] != y[10]:
                 raise FalhaDeConferencia(f"campo ou marcador diferente no {lugar}")
+            if x[11] != y[11]:
+                raise FalhaDeConferencia(f"lista (numeracao) diferente no {lugar}")
             if x[6:8] != y[6:8]:
                 raise FalhaDeConferencia(f"estilo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")

@@ -5,7 +5,9 @@ Tri-state: propriedade ausente no modelo (None) nao e' gravada no Qt, e o
 `NoUnderline`, explicito; texto inserido sem formato herda o vizinho.
 
 Quebra de linha interna: "\n" no modelo vira U+2028 no Qt, e volta a "\n".
-Listas: cada grupo contiguo de marcadores ou de numeracao vira um QTextList.
+Listas (0.1.4): o numId e o ilvl diretos do paragrafo vao para propriedades do bloco, o
+catalogo do numbering.xml para o documento, e o numero e' pintado (`ponte_qt/listas.py`).
+O QTextList nao e' usado: ele so' conta um nivel e nao tem os formatos do Word.
 
 Tabelas (M4): cada `Tabela` vira um QTextTable com borda colapsada, largura fixa
 por coluna e as mesclas do modelo (gridSpan e vMerge viram columnSpan e rowSpan).
@@ -40,13 +42,14 @@ from dataclasses import asdict
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QTextBlockFormat, QTextCharFormat,
                            QTextCursor, QTextDocument, QTextFormat, QTextFrameFormat, QTextLength,
-                           QTextListFormat, QTextTable, QTextTableCellFormat, QTextTableFormat)
+                           QTextTable, QTextTableCellFormat, QTextTableFormat)
 
 from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula, Documento,
                                       Paragrafo, Tabela, bordas_padrao)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
-from editdoc.ponte_qt import campos, imagens, links, marcas, opacos
+from editdoc.modelo.numeracao import materializado
+from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
 
 LINHA_SEPARADORA = chr(0x2028)
@@ -288,35 +291,11 @@ def formato_da_tabela(tabela: Tabela) -> QTextTableFormat:
 
 # -- insercao ---------------------------------------------------------------------
 
-class _Listas:
-    """Grupo de lista contiguo, dentro de um mesmo conteiner (corpo ou celula)."""
-
-    def __init__(self) -> None:
-        self.lista = None
-        self.estilo = None
-
-    def encerrar(self) -> None:
-        self.lista = self.estilo = None
-
-    def aplicar(self, cursor: QTextCursor, numeracao: str | None) -> None:
-        if numeracao is None:
-            self.encerrar()
-            return
-        estilo = (QTextListFormat.Style.ListDisc if numeracao == "marcadores"
-                  else QTextListFormat.Style.ListDecimal)
-        if self.lista is None or estilo != self.estilo:
-            formato = QTextListFormat()
-            formato.setStyle(estilo)
-            self.lista = cursor.createList(formato)
-            self.estilo = estilo
-        else:
-            self.lista.add(cursor.block())
-
-
 def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
                       em_tabela: bool = False) -> QTextBlockFormat:
-    """Estilo resolvido + formatacao direta do paragrafo, e o id do estilo."""
-    base, _car = res.paragrafo(p.estilo, em_tabela)
+    """Estilo resolvido (com o recuo do nivel da lista) + formatacao direta do paragrafo, o
+    id do estilo e a lista direta."""
+    base, _car = res.paragrafo(p.estilo, em_tabela, (p.lista, p.lista_nivel))
     proprio = {k: getattr(p, k) for k in CAMPOS_PARAGRAFO if getattr(p, k) is not None}
     efetivo = {**base, **proprio}
     if p.nivel is not None:
@@ -329,6 +308,7 @@ def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
     if p.quebra_antes:
         bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     pq_estilos.marcar_estilo(bf, p.estilo, res.estilos)
+    listas.marcar_lista(bf, p.lista, p.lista_nivel)
     return bf
 
 
@@ -340,8 +320,7 @@ def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QText
     return pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
 
 
-def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas,
-                        res: pq_estilos.Resolvedor) -> None:
+def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resolvedor) -> None:
     cursor.setBlockFormat(_formato_do_bloco(p, res, cursor.currentTable() is not None))
     base = res.caractere(p.estilo, None)
     if base:
@@ -363,11 +342,9 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas,
         elif r.texto:
             cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA),
                               links.com_link(_formato_do_run(r, p.estilo, res), r.link))
-    listas.aplicar(cursor, p.numeracao)
 
 
-def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas,
-                    res: pq_estilos.Resolvedor) -> None:
+def _inserir_blocos(cursor: QTextCursor, blocos: list, res: pq_estilos.Resolvedor) -> None:
     """Escreve os blocos a partir do cursor, que esta' num bloco vazio, o primeiro do conteiner.
 
     O Qt poe a tabela depois do bloco do cursor, e cria um bloco vazio depois dela. O
@@ -379,7 +356,6 @@ def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas,
         if isinstance(bloco, Tabela):
             if primeiro or depois_de_tabela:
                 cursor.setBlockFormat(formato_estrutural())
-            listas.encerrar()
             tabela = inserir_tabela_modelo(cursor, bloco, res)
             cursor.setPosition(tabela.lastPosition() + 1)
             cursor.setBlockFormat(QTextBlockFormat())
@@ -388,7 +364,7 @@ def _inserir_blocos(cursor: QTextCursor, blocos: list, listas: _Listas,
         else:
             if not primeiro and not depois_de_tabela:
                 cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
-            _escrever_paragrafo(cursor, bloco, listas, res)
+            _escrever_paragrafo(cursor, bloco, res)
             depois_de_tabela = False
         primeiro = False
     if depois_de_tabela:
@@ -434,15 +410,13 @@ def inserir_tabela_modelo(cursor: QTextCursor, tabela: Tabela,
             mesclas.append((r, c, altura, span))
     for r, c, altura, span in mesclas:
         qt.mergeCells(r, c, altura, span)
-    listas = _Listas()
     for (r, c), (celula, span) in sorted(inicio.items()):
         if (r, c) in consumidas:
             continue
         cel_qt = qt.cellAt(r, c)
         cel_qt.setFormat(formato_da_celula(celula, tabela.linhas[r]))
         cur = cel_qt.firstCursorPosition()
-        listas.encerrar()
-        _inserir_blocos(cur, celula.blocos, listas, res)
+        _inserir_blocos(cur, celula.blocos, res)
     aplicar_formatos_das_celulas(qt)
     return qt
 
@@ -456,9 +430,8 @@ def preencher_blocos(documento_qt: QTextDocument, blocos: list, estilos=None) ->
     if estilos is None:
         estilos = pq_estilos.catalogo(documento_qt)
     cursor = QTextCursor(documento_qt)
-    _inserir_blocos(cursor, blocos, _Listas(), pq_estilos.Resolvedor(estilos))
-    documento_qt.clearUndoRedoStacks()
-    documento_qt.setModified(False)
+    _inserir_blocos(cursor, blocos, pq_estilos.Resolvedor(estilos))
+    concluir_listas(documento_qt)
 
 
 def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
@@ -467,9 +440,22 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     O catalogo de estilos do modelo (ou o padrao) passa a ser o do documento.
     """
     documento_qt.clear()
+    # Lista dada so' pelo tipo (documento montado em codigo): os numIds do escritor (0.1.4).
+    modelo = materializado(modelo)
+    listas.definir_catalogo_base(documento_qt, modelo.numeracao)
     pq_estilos.definir_catalogo_base(documento_qt, modelo.estilos)
     res = pq_estilos.Resolvedor(pq_estilos.catalogo(documento_qt))
     cursor = QTextCursor(documento_qt)
-    _inserir_blocos(cursor, modelo.paragrafos, _Listas(), res)
+    _inserir_blocos(cursor, modelo.paragrafos, res)
+    concluir_listas(documento_qt)
+
+
+def concluir_listas(documento_qt: QTextDocument) -> None:
+    """Ao abrir (ou depois de trocar a fonte padrao logo apos abrir): o texto dos itens de
+    lista vai para depois do numero, e o documento fica sem desfazer e sem alteracao."""
+    numerador = listas.numerador_de(documento_qt)
+    numerador.marcar_sujo()
+    numerador.larguras.clear()  # mede de novo: a fonte padrao pode ter mudado ao abrir
+    listas.ajustar_recuos(documento_qt)
     documento_qt.clearUndoRedoStacks()
     documento_qt.setModified(False)

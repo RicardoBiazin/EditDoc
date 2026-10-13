@@ -15,6 +15,16 @@ O PySide 6.11 nao exporta QAbstractUndoItem, que seria o outro caminho. O XML or
 o tema nao vao para o JSON: ficam no catalogo-base, guardado no proprio objeto do documento.
 
 Cabecalho e rodape usam o catalogo do corpo (`_doc_estilos`).
+
+Unidades (0.1.4): o layout do Qt 6.11, no dispositivo de 1440 dpi, escala as margens
+VERTICAIS do bloco (px96 x 15), mas NAO as horizontais (medido: leftMargin 96 poe a linha
+em x = 96; topMargin 96 desce o bloco 1440). Por isso recuo esquerdo, direito e da primeira
+linha ficam no formato do bloco em twips (a unidade do dispositivo), e espaco antes e
+depois em px96. Antes da 0.1.4 os recuos iam em px96 e apareciam 15 vezes menores.
+
+Listas (0.1.4): o recuo do nivel da lista (w:lvl/w:pPr/w:ind) fica entre o estilo e a
+formatacao direta (`Resolvedor.paragrafo` com a lista); o recuo da primeira linha de um item
+de lista e' o de verdade em PROP_RECUO_REAL (`ponte_qt/listas.py`), nao o textIndent.
 """
 
 from __future__ import annotations
@@ -24,6 +34,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QTextBlockFormat, QTextCharFor
                            QTextDocument, QTextFormat)
 
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, Estilos, catalogo_padrao
+from editdoc.modelo.numeracao import lista_efetiva, recuos_do_nivel
 from editdoc.modelo.unidades import px_de_twips, twips_de_px
 
 _USUARIO = QTextFormat.Property.UserProperty.value
@@ -37,6 +48,14 @@ PROP_ESTILO_CAR = _USUARIO + 5
 PROP_NIVEL = _USUARIO + 6
 #: Quadro raiz: o catalogo em JSON.
 PROP_CATALOGO = _USUARIO + 7
+#: Listas (0.1.4, ponte_qt/listas.py): numId e ilvl diretos e o recuo de verdade do item.
+PROP_LISTA = _USUARIO + 23
+PROP_LISTA_NIVEL = _USUARIO + 24
+PROP_RECUO_REAL = _USUARIO + 25
+
+
+def _inteiro(valor) -> int | None:
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else None
 
 P = QTextFormat.Property
 _PROPORCIONAL = QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
@@ -68,13 +87,18 @@ def catalogo(doc: QTextDocument) -> Estilos:
     if base is None:
         base = catalogo_padrao()
         doc._estilos_base = base
+    from editdoc.ponte_qt import listas  # import tardio: listas usa este modulo
+    numeracao = listas.catalogo(doc)
     bruto = doc.rootFrame().frameFormat().property(PROP_CATALOGO)
     if not isinstance(bruto, str) or not bruto:
+        base.numeracao_doc = numeracao
         return base
     cache = getattr(doc, "_estilos_cache", None)
     if cache is not None and cache[0] == bruto:
+        cache[1].numeracao_doc = numeracao
         return cache[1]
     estilos = Estilos.de_json(bruto, base)
+    estilos.numeracao_doc = numeracao
     doc._estilos_cache = (bruto, estilos)
     return estilos
 
@@ -156,11 +180,16 @@ def props_de_bloco(bf: QTextBlockFormat) -> dict:
     if alinhamento is not None:
         out["alinhamento"] = alinhamento
     if bf.hasProperty(P.BlockLeftMargin):
-        out["recuo_esquerdo_tw"] = twips_de_px(bf.leftMargin())
+        out["recuo_esquerdo_tw"] = round(bf.leftMargin())
     if bf.hasProperty(P.BlockRightMargin):
-        out["recuo_direito_tw"] = twips_de_px(bf.rightMargin())
-    if bf.hasProperty(P.TextIndent):
-        out["recuo_primeira_linha_tw"] = twips_de_px(bf.textIndent())
+        out["recuo_direito_tw"] = round(bf.rightMargin())
+    if bf.hasProperty(PROP_RECUO_REAL):
+        # Item de lista (0.1.4): o textIndent e' o visual (texto depois do numero).
+        real = bf.property(PROP_RECUO_REAL)
+        if isinstance(real, int) and not isinstance(real, bool):
+            out["recuo_primeira_linha_tw"] = real
+    elif bf.hasProperty(P.TextIndent):
+        out["recuo_primeira_linha_tw"] = round(bf.textIndent())
     if bf.hasProperty(P.BlockTopMargin):
         out["espaco_antes_tw"] = twips_de_px(bf.topMargin())
     if bf.hasProperty(P.BlockBottomMargin):
@@ -223,11 +252,11 @@ def aplicar_bloco(bf: QTextBlockFormat, props: dict) -> None:
     if props.get("alinhamento") is not None:
         bf.setAlignment(_ALINHAMENTO[props["alinhamento"]])
     if props.get("recuo_esquerdo_tw") is not None:
-        bf.setLeftMargin(px_de_twips(props["recuo_esquerdo_tw"]))
+        bf.setLeftMargin(float(props["recuo_esquerdo_tw"]))
     if props.get("recuo_direito_tw") is not None:
-        bf.setRightMargin(px_de_twips(props["recuo_direito_tw"]))
+        bf.setRightMargin(float(props["recuo_direito_tw"]))
     if props.get("recuo_primeira_linha_tw") is not None:
-        bf.setTextIndent(px_de_twips(props["recuo_primeira_linha_tw"]))
+        bf.setTextIndent(float(props["recuo_primeira_linha_tw"]))
     if props.get("espaco_antes_tw") is not None:
         bf.setTopMargin(px_de_twips(props["espaco_antes_tw"]))
     if props.get("espaco_depois_tw") is not None:
@@ -292,6 +321,8 @@ def recompor_bloco(bf: QTextBlockFormat, base_velha: dict, base_nova: dict,
     for prop in PROPS_QT_BLOCO:
         novo.clearProperty(prop)
     novo.clearProperty(PROP_NIVEL)
+    # O recuo da primeira linha passa a ser o de verdade; o visual da lista volta no ajuste.
+    novo.clearProperty(PROP_RECUO_REAL)
     aplicar_bloco(novo, {**base_nova, **proprio})
     marcar_estilo(novo, sid, estilos)
     return novo
@@ -300,18 +331,31 @@ def recompor_bloco(bf: QTextBlockFormat, base_velha: dict, base_nova: dict,
 class Resolvedor:
     """Cache das resolucoes de um catalogo, para recompor muitos blocos de uma vez."""
 
-    def __init__(self, estilos: Estilos) -> None:
+    def __init__(self, estilos: Estilos, numeracao=None) -> None:
         self.estilos = estilos
+        #: catalogo de numeracao (0.1.4): o do documento, que `catalogo(doc)` pendura no estilo
+        self.numeracao = numeracao if numeracao is not None else getattr(estilos, "numeracao_doc", None)
         self._par: dict = {}
         self._car: dict = {}
 
-    def paragrafo(self, sid: str | None, em_tabela: bool = False) -> tuple[dict, dict]:
-        """O estilo resolvido; fora da tabela, com o docDefaults por baixo (M8)."""
+    def paragrafo(self, sid: str | None, em_tabela: bool = False,
+                  lista: tuple = (None, None)) -> tuple[dict, dict]:
+        """O estilo resolvido; fora da tabela, com o docDefaults por baixo (M8). Com a lista
+        do bloco (numId e ilvl diretos), o recuo do nivel fica por cima do estilo (0.1.4)."""
         sid = sid or self.estilos.id_padrao()
         chave = (sid, bool(em_tabela))
         if chave not in self._par:
             self._par[chave] = self.estilos.resolver_paragrafo(sid, com_padrao=not em_tabela)
-        return self._par[chave]
+        if self.numeracao is None:
+            return self._par[chave]
+        chave_lista = (sid, bool(em_tabela), tuple(lista))
+        if chave_lista not in self._par:
+            efetiva = lista_efetiva(lista[0], lista[1], sid, self.estilos, self.numeracao)
+            extra = recuos_do_nivel(self.numeracao.nivel_de(*efetiva, self.estilos)) \
+                if efetiva is not None else {}
+            par, car = self._par[chave]
+            self._par[chave_lista] = ({**par, **extra}, car) if extra else (par, car)
+        return self._par[chave_lista]
 
     def caractere(self, sid_par: str | None, sid_car: str | None) -> dict:
         chave = (sid_par or self.estilos.id_padrao(), sid_car)
@@ -353,8 +397,9 @@ def recompor_blocos(doc: QTextDocument, blocos, velho: Resolvedor, novo: Resolve
         sid = sid_velho if sid_novo is ... else sid_novo
         if mexer_no_bloco and (filtro is None or filtro(sid_velho, None)):
             em_tabela = QTextCursor(bloco).currentTable() is not None
-            par_velho, _ = velho.paragrafo(sid_velho, em_tabela)
-            par_novo, _ = novo.paragrafo(sid, em_tabela)
+            lista = (_inteiro(bf.property(PROP_LISTA)), _inteiro(bf.property(PROP_LISTA_NIVEL)))
+            par_velho, _ = velho.paragrafo(sid_velho, em_tabela, lista)
+            par_novo, _ = novo.paragrafo(sid, em_tabela, lista)
             nbf = recompor_bloco(bf, par_velho, par_novo, sid, novo.estilos, manter_direto_paragrafo)
             if nbf != bf:
                 QTextCursor(bloco).setBlockFormat(nbf)

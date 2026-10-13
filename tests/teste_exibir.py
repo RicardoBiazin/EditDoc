@@ -200,9 +200,10 @@ def testar_layout_paragrafo() -> None:
     c.setPosition(0)
     p.setTextCursor(c)  # o desfazer move o cursor
     f.recuo_esquerdo.setValue(1.0)
-    checa_igual(round(bloco.blockFormat().leftMargin() * 15), round(TWIPS_POR_CM), "recuo esquerdo de 1 cm")
+    # 0.1.4: o recuo horizontal fica em twips no bloco (o Qt nao escala margem horizontal).
+    checa_igual(round(bloco.blockFormat().leftMargin()), round(TWIPS_POR_CM), "recuo esquerdo de 1 cm")
     f.recuo_direito.setValue(2.0)
-    checa_igual(round(bloco.blockFormat().rightMargin() * 15), round(2 * TWIPS_POR_CM), "recuo direito de 2 cm")
+    checa_igual(round(bloco.blockFormat().rightMargin()), round(2 * TWIPS_POR_CM), "recuo direito de 2 cm")
     c = p.textCursor()
     c.setPosition(p.documento_corpo().lastBlock().position())
     p.setTextCursor(c)

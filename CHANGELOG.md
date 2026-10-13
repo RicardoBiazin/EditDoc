@@ -1,3 +1,86 @@
+## 0.1.4 - 2026-10-13
+
+Numeração de listas completa: o `numbering.xml` volta inteiro, os números aparecem como no
+Word e as listas se editam como no Word.
+
+Defeito: o EditDoc regravava o `numbering.xml` do zero com duas listas (marcador e
+"1, 2, 3"). Lista de vários níveis, título numerado ("1.1.1"), letra, romano, marcador da
+fonte Symbol ou Wingdings, marcador de figura, início diferente de 1 e recuos do nível se
+perdiam ao salvar (avisos LISTA e LISTA_NIVEL, com perda), a lista do estilo virava lista
+direta do parágrafo, e a lista dentro de caixa de texto perdia a numeração
+(LISTA_EM_CAIXA). Na tela a lista era um QTextList: um nível só, numeração reiniciada a
+cada grupo, disco no lugar do símbolo, número colado no texto. Causa: o modelo só sabia
+"marcadores" ou "numeração"; o resto do arquivo não tinha onde ficar.
+
+Achado no caminho: o layout do Qt 6.11 no dispositivo de 1440 dpi escala as margens
+verticais do bloco (px96 × 15), mas não as horizontais. Os recuos (esquerdo, direito e da
+primeira linha) iam em px96 e apareciam 15 vezes menores na tela, no PDF e na impressão
+(medido: `leftMargin` 96 põe a linha em x = 96 twips; `topMargin` 96 desce o bloco 1440).
+Desde a 0.1.4 os recuos horizontais ficam em twips no formato do bloco; o arquivo não
+mudava (a conversão era simétrica), só a aparência.
+
+- Catálogo de numeração (`modelo/numeracao.py`, `formato_docx/numeracao.py`): cada
+  `w:abstractNum` (os 9 `w:lvl`: início, formato, texto com %1..%9, alinhamento, recuos e
+  tabulações do pPr, fonte e tamanho do símbolo, sufixo, `isLgl`, `lvlRestart`, estilo
+  ligado, marcador de figura; `nsid`, `tmpl`, `multiLevelType`, `styleLink`,
+  `numStyleLink`), cada `w:num` (com `lvlOverride`, `startOverride` e `lvl`) e cada
+  `w:numPicBullet` (com a imagem e as relações do `numbering.xml`). Sem mudança, o
+  `numbering.xml` volta byte a byte; com mudança, as definições novas vão para o fim e o
+  resto volta igual (c14n). Formatos calculados: decimal, decimalZero, letras, romanos,
+  ordinal, cardinalText e ordinalText (português), círculo, parênteses, ponto, largura
+  total, hex, chicago, none e bullet; os outros voltam ao arquivo e aparecem em decimal.
+- Parágrafo: `Paragrafo.lista` (numId) e `lista_nivel` (ilvl), diretos; o tipo
+  (`numeracao`) passa a ser só informativo e fica fora da comparação. A lista do estilo
+  (Título numerado, List Bullet) volta a ficar no estilo e o parágrafo herda: a decisão do
+  M6 (passar o numPr do estilo ao parágrafo) foi revertida. numId 0 desliga a lista do
+  estilo.
+- Cálculo como o Word (`Contador`): contadores da abstrata, compartilhados entre
+  instâncias sem sobrescrita (a numeração continua depois de parágrafos comuns e em outra
+  lista da mesma definição); `startOverride` reinicia na primeira vez; o nível de cima
+  reinicia os de baixo (`lvlRestart` muda a regra); nível pulado mostra 0 ("1.0.1");
+  `isLgl` mostra os níveis em decimal.
+- Tela: o número é pintado pela mesma função da folha (tela, PDF e impressão), na fonte
+  do parágrafo com o rPr do nível (Symbol e Wingdings com a fonte; sem ela, o caractere
+  Unicode parecido), ou a imagem do marcador de figura. O texto da primeira linha começa
+  onde o Word o põe: no recuo deslocado, na próxima tabulação, depois de um espaço ou
+  colado ao número (`w:suff`). O `.txt` leva o número e o sufixo. Decisão e alternativa
+  (QTextList com prefixo, que não faz "1.1.1") em docs/ARQUITETURA.md.
+- Edição (`edicao/listas.py`), cada comando um passo de desfazer: Marcadores e Numeração
+  ligam e desligam; a seta abre a galeria (•, ○, ▪; 1., 1), a., A., i., I.) e a Lista de
+  vários níveis (1/1.1/1.1.1, Capítulo/Seção, títulos numerados ligados a Título 1 a 3,
+  com o numPr nos estilos); Reiniciar em 1, Continuar numeração e Definir valor de
+  numeração (na galeria e no menu do botão direito); Tab e Shift+Tab no começo do item
+  mudam o nível (no título numerado pelo estilo, troca Título 1 por Título 2); Enter num
+  item vazio sobe um nível ou sai da lista; Backspace no começo tira o número sem mover o
+  texto e, de novo, tira o recuo; Aumentar e Diminuir recuo num item mudam o nível.
+  Copiar e colar no EditDoc mantém a lista (também entre janelas: a definição vai junto);
+  `<ol>` e `<ul>` colados de outro programa viram lista do EditDoc.
+- Avisos: LISTA e LISTA_NIVEL deixam de aparecer para o que é preservado; ficam para numId
+  que não existe, nível fora de 0 a 8 e numeração acima dos limites. LISTA_EM_CAIXA só
+  aparece quando a numeração do arquivo não pode ser lida: com ela lida, o numPr dentro da
+  caixa de texto fica.
+- Validador e conferência: numId citado existe (corpo, cabeçalho, rodapé e estilos),
+  abstractNumId existe, ilvl de 0 a 8, ids únicos, `lvlPicBulletId` com `numPicBullet`;
+  a conferência compara o numId e o nível de cada parágrafo. Limites contra arquivo hostil:
+  2000 abstratas, 10.000 instâncias, 512 marcadores de figura, 32 níveis e 32 sobrescritas
+  por definição, texto do número com 256 caracteres; acima disso a numeração não é lida
+  (aviso LISTA).
+- Testado com um manual real (não incluído no repositório), aberto e salvo como outra
+  cópia pela janela: o `numbering.xml` (16 abstratas, 16 instâncias, marcadores Symbol,
+  Wingdings e Courier New) volta igual em c14n; o numPr dos 19 parágrafos numerados e dos
+  3 estilos com lista volta igual; a cópia passa no validador e na conferência. Avisos ao
+  abrir: na 0.1.3, LISTA 10 (com perda); na 0.1.4, nenhum aviso de lista (ficam
+  CONTEUDO_CONTROLADO 1 e FORMATACAO 157, com perda, e CAIXA_DE_TEXTO 6 e
+  IMAGEM_FLUTUANTE 2, preservados).
+- Suíte nova `tests/teste_listas.py` (100 verificações), com fixtures em código e os
+  números esperados escritos à mão. Checagens reescritas, porque testavam a decisão antiga
+  ou o QTextList: `teste_docx_qt.py` (listas: as mesmas verificações pela propriedade do
+  bloco e pelo número pintado), `teste_formatacao.py` e `teste_estilos.py` (o item está na
+  lista pela propriedade do bloco, não pelo `textList()`; o numPr fica no estilo e o
+  parágrafo herda; o documento de comparação leva os catálogos), `teste_objetos_opacos.py`
+  (o numPr da caixa fica; sai só com a numeração ilegível) e `teste_exibir.py` (o recuo
+  esquerdo de 1 cm é 567 twips no bloco, não 567/15).
+
 ## 0.1.3 - 2026-10-13
 
 Partes do pacote, hiperlinks e campos deixam de sair do arquivo ao salvar.

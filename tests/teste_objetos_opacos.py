@@ -354,10 +354,17 @@ def testar_limites() -> None:
           "nota e comentario dentro da caixa: a referencia sai (com aviso), a caixa fica")
     lista = fx.caixa_de_texto(extra='<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/>'
                                     '</w:numPr></w:pPr>')
-    modelo, avisos = ler(fx.docx_com_corpo_de_objetos("<w:p>" + lista + "</w:p>", [fx.RELACOES_OBJETOS[-1]]))
+    com_lista = fx.docx_com_corpo_de_objetos("<w:p>" + lista + "</w:p>", [fx.RELACOES_OBJETOS[-1]])
+    modelo, avisos = ler(com_lista)
+    obj = next(objetos_de(modelo), None)
+    checa(obj is not None and b"numPr" in obj.xml and "LISTA_EM_CAIXA" not in codigos(avisos),
+          "numPr dentro da caixa (0.1.4: o numbering.xml de origem volta inteiro): fica, sem aviso")
+    # Reescrita na 0.1.4: antes o numPr sempre saia. Agora so' sai quando a numeracao do
+    # arquivo nao pode ser lida (aqui, acima do limite de definicoes).
+    modelo, avisos = ler(com_lista, limites={"listas_abstratas": -1})
     obj = next(objetos_de(modelo), None)
     checa(obj is not None and b"numPr" not in obj.xml and codigos(avisos).get("LISTA_EM_CAIXA", (0,))[0] == 2,
-          "numPr dentro da caixa (o numbering.xml de origem nao volta): sai, com aviso")
+          "numPr dentro da caixa com a numeracao ilegivel (limite): sai, com aviso")
 
     estrangeiro = fx.caixa_de_texto().replace(
         "<w:rPr><w:noProof/></w:rPr><mc:AlternateContent",

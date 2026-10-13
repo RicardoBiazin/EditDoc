@@ -161,6 +161,31 @@ def _menu_numero_de_pagina(comandos: Comandos) -> QToolButton:
     return botao
 
 
+def _botao_de_lista(comandos: Comandos, id_: str) -> BotaoAcao:
+    """Marcadores ou Numeracao (0.1.4): o clique liga e desliga, a seta abre a galeria, como no
+    Word. A Numeracao traz tambem a lista de varios niveis e o valor do numero."""
+    c = comandos
+    botao = _botao(c, id_)
+    menu = QMenu(botao)
+    if id_ == "marcadores":
+        for i in ("marcador_redondo", "marcador_vazado", "marcador_quadrado"):
+            menu.addAction(c.acao(i))
+    else:
+        for i in ("numero_decimal_ponto", "numero_decimal_parentese", "numero_letra_minuscula",
+                  "numero_letra_maiuscula", "numero_romano_minusculo", "numero_romano_maiusculo"):
+            menu.addAction(c.acao(i))
+        varios = menu.addMenu("Lista de vários níveis")
+        for i in ("multinivel_decimal", "multinivel_capitulo", "multinivel_titulos"):
+            varios.addAction(c.acao(i))
+        menu.addSeparator()
+        for i in ("reiniciar_numeracao", "continuar_numeracao", "definir_valor_numeracao"):
+            menu.addAction(c.acao(i))
+    botao.setMenu(menu)
+    botao.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+    botao.setAccessibleDescription(f"{botao.accessibleDescription()}. A seta abre a galeria.")
+    return botao
+
+
 def _linha(widgets: list[QWidget]) -> QWidget:
     corpo = QWidget()
     linha = QHBoxLayout(corpo)
@@ -395,8 +420,9 @@ class Faixa(QFrame):
                                     "sobrescrito")])
         espacos = [c.acao(i) for i in ("espaco_1", "espaco_115", "espaco_15", "espaco_2")]
         paragrafo_corpo = _duas_linhas(
-            [_botao(c, i) for i in ("marcadores", "numeracao", "diminuir_recuo",
-                                    "aumentar_recuo")] + [_menu("Espaçamento", espacos)],
+            [_botao_de_lista(c, "marcadores"), _botao_de_lista(c, "numeracao")]
+            + [_botao(c, i) for i in ("diminuir_recuo", "aumentar_recuo")]
+            + [_menu("Espaçamento", espacos)],
             [_botao(c, i) for i in ("alinhar_esquerda", "centralizar", "alinhar_direita",
                                     "justificar", "marcas_formatacao")])
         clipboard = GrupoFaixa(

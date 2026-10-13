@@ -22,7 +22,7 @@ brancas sobre um fundo cinza, com as margens, o cabeçalho e o rodapé de cada p
 barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 - **Abrir e salvar `.docx`**: texto, negrito, itálico, sublinhado, tachado, subscrito,
-  sobrescrito, fonte, tamanho, cor, alinhamento, recuos, espaçamento, listas simples,
+  sobrescrito, fonte, tamanho, cor, alinhamento, recuos, espaçamento, listas (ver abaixo),
   quebras de página, tabelas (com mesclas, bordas e sombreamento), imagens na linha do
   texto (PNG, JPEG, GIF e BMP), cabeçalhos e rodapés (primeira página e páginas pares
   diferentes) com os campos de número de página e total de páginas, e os estilos do
@@ -49,6 +49,22 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
   comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
   e o total de páginas, como antes).
+- **Listas e numeração** (desde a 0.1.4): marcadores e numeração do Word como o Word mostra:
+  vários níveis ("1.", "1.1.", "1.1.1."), títulos numerados pelo estilo (Título 1, 2 e 3 com
+  "1", "1.1", "1.1.1"), letras, romanos, números por extenso, o marcador na fonte Symbol ou
+  Wingdings, o marcador de figura, numeração que continua entre listas separadas por texto
+  e a que reinicia ou começa num número escolhido. O número aparece no recuo do arquivo,
+  com o texto depois da tabulação, e sai igual no PDF, na impressão e no `.txt`. A
+  numeração do arquivo (`numbering.xml`) volta inteira: o que você não mexeu sai idêntico.
+  Na Página Inicial, **Marcadores** e **Numeração** ligam e desligam a lista; a seta ao lado
+  abre a galeria (•, ○, ▪; 1., 1), a., A., i., I.), a **Lista de vários níveis** (1/1.1/1.1.1,
+  Capítulo/Seção e títulos numerados) e **Reiniciar em 1**, **Continuar numeração** e
+  **Definir valor de numeração** (também no menu do botão direito). No item: **Tab** e
+  **Shift+Tab** no começo mudam o nível; **Enter** num item vazio sobe um nível ou sai da
+  lista; **Backspace** no começo tira o número (o texto fica onde estava) e, de novo, tira o
+  recuo. **Aumentar e Diminuir recuo** num item mudam o nível. Copiar e colar dentro do
+  EditDoc (inclusive entre janelas) mantém a lista; a lista colada de outro programa vira
+  lista do EditDoc.
 - **Partes que o EditDoc não edita** voltam ao arquivo como vieram (desde a 0.1.3): as
   propriedades personalizadas, os dados do SharePoint (`customXml`), a tabela de fontes
   (com as fontes embutidas), as configurações da Web e as configurações do Word
@@ -84,7 +100,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.3-win64.zip` da página
+1. Baixe `EditDoc-0.1.4-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -118,7 +134,8 @@ Requer Windows 10 ou 11, 64 bits.
 | Aumentar e diminuir a fonte | Ctrl+], Ctrl+[ |
 | Limpar formatação de caractere | Ctrl+Espaço |
 | Marcadores | Ctrl+Shift+L |
-| Aumentar e diminuir recuo | Ctrl+M, Ctrl+Shift+M |
+| Aumentar e diminuir recuo (no item de lista: o nível) | Ctrl+M, Ctrl+Shift+M |
+| Item de lista: descer e subir o nível | Tab e Shift+Tab no começo do item |
 | Alinhar à esquerda, centro, à direita, justificar | Ctrl+L, Ctrl+E, Ctrl+R, Ctrl+J |
 | Espaçamento 1,0, 1,5 e 2,0 | Ctrl+1, Ctrl+5, Ctrl+2 |
 | Quebra de página | Ctrl+Enter |
@@ -150,12 +167,15 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   confirmação e oferece "Salvar cópia". **Não** se perdem: caixas de texto, formas,
   gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em formato que a tela
   não mostra (desde a 0.1.2); hiperlinks, marcadores, campos de qualquer tipo (sumário,
-  referências, data...) e as partes do arquivo que o EditDoc não edita (desde a 0.1.3).
+  referências, data...) e as partes do arquivo que o EditDoc não edita (desde a 0.1.3);
+  a numeração de listas inteira, com os níveis, os formatos, os símbolos e a lista ligada
+  ao estilo (desde a 0.1.4).
   Os estilos que o EditDoc não altera e o tema voltam como vieram. Ainda avisam, com
   confirmação, só o que não pode voltar inteiro: objeto, link ou campo com referência
   quebrada no arquivo, ou acima dos limites (2000 objetos; 20.000 campos, links ou
   marcadores; instrução de campo com mais de 4096 caracteres; 8 campos um dentro do
-  outro), parte do arquivo com conteúdo inválido, as macros, a assinatura digital (que
+  outro; 2000 definições de lista ou 10.000 listas, texto de número com mais de 256
+  caracteres), item de lista que cita numeração que não existe ou nível fora de 1 a 9, parte do arquivo com conteúdo inválido, as macros, a assinatura digital (que
   deixaria de valer) e o campo que perdeu o começo ou o fim na edição. A miniatura de
   pré-visualização do arquivo não é mantida (mostraria o conteúdo antigo), com aviso sem
   confirmação.
@@ -165,14 +185,19 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   atualize (F9) se o texto mudou. O controle de conteúdo que envolve o sumário no Word
   (o quadro "Sumário") é achatado, com aviso; o sumário continua sendo campo.
 - Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
-  objeto (a barra de status avisa); uma nota de rodapé, um comentário ou uma lista
-  numerada **dentro** de uma caixa de texto perdem a referência ou a numeração ao salvar
-  (com aviso), porque essas partes não voltam ao arquivo.
+  objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
+  caixa de texto perdem a referência ao salvar (com aviso), porque essas partes não voltam
+  ao arquivo. A lista numerada dentro da caixa volta (desde a 0.1.4).
 - Fora desta versão: revisão com controle de alterações, comentários, notas de rodapé,
   gerar ou atualizar sumário e índices, mala direta, editar equações, formas e caixas de texto (elas são
   preservadas, não editadas), colunas, várias seções editáveis, ortografia, `.doc`, RTF,
   ODT e macros (nunca).
-- Numeração de listas: só marcadores e numeração simples (um nível).
+- Numeração de listas: o EditDoc não edita a definição de uma lista do arquivo (fonte,
+  recuo ou texto do número de um nível); a galeria cria definições novas. O número dentro
+  de caixa de texto não aparece na tela (a caixa é um quadro). A tabulação depois do número
+  usa as paradas do nível e a padrão do documento, não as tabulações próprias do parágrafo.
+  Num documento com milhares de itens, Enter e Backspace entre parágrafos levam mais
+  (medido: 50 ms com 3000 itens), porque a numeração é recalculada.
 - Tabelas: digitar numa tabela muito grande fica lento (o Qt refaz a tabela a cada tecla;
   acima de 5000 células a tabela abre como parágrafos, com aviso); a altura de linha do
   arquivo é guardada, mas a tela não a aplica; "Dividir células" só desfaz mescla.
@@ -207,7 +232,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.3-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.4-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

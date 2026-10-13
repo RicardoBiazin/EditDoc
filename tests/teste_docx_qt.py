@@ -2,7 +2,8 @@
 
 Cobre o que o Qt faz diferente do modelo: sublinhado (NoUnderline limpa; texto
 inserido sem formato herda o sublinhado do vizinho, e a ponte nunca insere sem
-formato), listas em QTextList, quebra de linha como U+2028, e idempotencia.
+formato), listas (numId no bloco, desde a 0.1.4), quebra de linha como U+2028, e
+idempotencia.
 Tem contraprova: um modelo alterado e' acusado.
 """
 
@@ -19,7 +20,8 @@ if not preparar_qt():
 from PySide6.QtGui import QTextCharFormat, QTextCursor, QTextDocument, QTextListFormat  # noqa: E402
 
 from editdoc.modelo.documento import Documento, Paragrafo, Run, normalizar  # noqa: E402
-from editdoc.ponte_qt import de_qt, para_qt  # noqa: E402
+from editdoc.modelo.numeracao import texto_visivel  # noqa: E402
+from editdoc.ponte_qt import de_qt, listas, para_qt  # noqa: E402
 
 FIM_DE_LINHA_QT = " "
 
@@ -79,31 +81,37 @@ def testar_sublinhado() -> None:
 
 
 def testar_listas() -> None:
-    secao("listas: marcadores e numeracao viram QTextList com o estilo certo")
+    # Reescrita na 0.1.4: a lista deixou de ser QTextList (que so' conta um nivel e so' tem
+    # disco, circulo, quadrado e 1, 2, 3). As mesmas verificacoes, pela propriedade do bloco
+    # (numId) e pelo numero que a tela pinta.
+    secao("listas: marcadores e numeracao viram lista no bloco, com o numero calculado")
     doc = fx.documento_completo()
     qdoc = QTextDocument()
     para_qt.preencher(qdoc, doc)
+    rotulos = listas.numerador_de(qdoc).rotulos()
     blocos = [qdoc.findBlockByNumber(i) for i in range(len(doc.paragrafos))]
-    marcas = [b.textList() for b in blocos]
+    nums = [listas.lista_do_bloco(b.blockFormat())[0] for b in blocos]
     indices_marcadores = [i for i, p in enumerate(doc.paragrafos) if p.numeracao == "marcadores"]
     indices_numeracao = [i for i, p in enumerate(doc.paragrafos) if p.numeracao == "numeracao"]
-    checa(all(marcas[i] is not None for i in indices_marcadores), "marcadores estao em QTextList")
-    checa(all(marcas[i].format().style() == QTextListFormat.Style.ListDisc
-              for i in indices_marcadores), "marcadores usam ListDisc")
-    checa(all(marcas[i].format().style() == QTextListFormat.Style.ListDecimal
-              for i in indices_numeracao), "numeracao usa ListDecimal")
-    checa(marcas[indices_marcadores[0]] is marcas[indices_marcadores[1]],
+    checa(all(i in rotulos for i in indices_marcadores), "marcadores sao itens de lista")
+    checa(all(texto_visivel(rotulos[i].texto) == "•" for i in indices_marcadores),
+          "marcadores mostram o ponto redondo")
+    checa_igual([rotulos[i].texto for i in indices_numeracao], ["1.", "2.", "1."],
+                "numeracao mostra 1., 2. e recomeca em 1. depois do texto")
+    checa(nums[indices_marcadores[0]] == nums[indices_marcadores[1]],
           "dois marcadores seguidos formam uma so' lista")
-    checa(marcas[indices_numeracao[0]] is not marcas[indices_marcadores[0]],
+    checa(nums[indices_numeracao[0]] != nums[indices_marcadores[0]],
           "marcador e numeracao nao se misturam")
     separado = fx.documento_com_numeracao_separada()
     qdoc2 = QTextDocument()
     para_qt.preencher(qdoc2, separado)
-    primeira = qdoc2.findBlockByNumber(0).textList()
-    segunda = qdoc2.findBlockByNumber(3).textList()
-    checa(primeira is not None and segunda is not None and primeira is not segunda,
-          "duas numeracoes separadas por texto sao listas diferentes")
-    checa(qdoc2.findBlockByNumber(2).textList() is None, "paragrafo do meio nao e' lista")
+    rot2 = listas.numerador_de(qdoc2).rotulos()
+    primeira = listas.lista_do_bloco(qdoc2.findBlockByNumber(0).blockFormat())[0]
+    segunda = listas.lista_do_bloco(qdoc2.findBlockByNumber(3).blockFormat())[0]
+    checa(primeira is not None and segunda is not None and primeira != segunda
+          and rot2[3].texto == "1.", "duas numeracoes separadas por texto sao listas diferentes")
+    checa(2 not in rot2, "paragrafo do meio nao e' lista")
+    checa(qdoc2.findBlockByNumber(0).textList() is None, "contraprova: o Qt nao ve QTextList")
 
 
 def testar_quebra_de_linha() -> None:

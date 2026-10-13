@@ -431,7 +431,10 @@ def validar_partes_xml(partes: dict[str, bytes]) -> list[str]:
     for nome in nomes:
         if nome in partes:
             raiz = etree.fromstring(partes[nome])
-            problemas += [f"{nome}: {p}" for p in validar_ordem(raiz, nome == "word/styles.xml")]
+            # styles.xml e numbering.xml voltam do arquivo de origem (0.1.4: o numbering tambem),
+            # com filhos de outro namespace (w14...) que o Word declara em mc:Ignorable.
+            problemas += [f"{nome}: {p}" for p in validar_ordem(
+                raiz, nome in ("word/styles.xml", "word/numbering.xml"))]
             problemas += [f"{nome}: {p}" for p in validar_xml_space(raiz)]
             if nome == "word/document.xml" or eh_faixa(nome):
                 problemas += [f"{nome}: {p}" for p in validar_estrutura(raiz)]
@@ -495,4 +498,6 @@ def validar_estilos(partes: dict[str, bytes]) -> list[str]:
 
 def validar(partes: dict[str, bytes]) -> list[str]:
     """Tudo: pacote e partes. Lista vazia quando o arquivo esta' de acordo."""
-    return validar_pacote(partes) + validar_partes_xml(partes) + validar_estilos(partes)
+    from editdoc.formato_docx import numeracao  # import tardio: numeracao usa as ordens daqui
+    return (validar_pacote(partes) + validar_partes_xml(partes) + validar_estilos(partes)
+            + numeracao.validar(partes))

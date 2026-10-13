@@ -91,8 +91,12 @@ class Estilo:
     caractere: dict = field(default_factory=dict)
     #: w:outlineLvl proprio (0 = Titulo 1). None = herda.
     nivel: int | None = None
-    #: Numeracao que o estilo liga (numPr): "marcadores" ou "numeracao". So' leitura.
+    #: Numeracao que o estilo liga (numPr): "marcadores" ou "numeracao". So' informativo.
     numeracao: str | None = None
+    #: Lista do estilo (0.1.4): o numId e o ilvl do numPr dentro do estilo. Volta ao arquivo
+    #: (o numbering.xml de origem tambem volta); o paragrafo do estilo herda a lista.
+    lista: int | None = None
+    lista_nivel: int | None = None
     #: Elementos on/off de pPr sem lugar no modelo, para o estilo gerado pelo EditDoc
     #: (keepNext, keepLines, contextualSpacing). O estilo lido do arquivo os guarda no XML.
     extras: tuple = ()

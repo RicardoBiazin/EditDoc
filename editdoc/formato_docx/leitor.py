@@ -24,9 +24,15 @@ mais um, de tamanho (`cabecalho_bytes`). Campo aninhado fundo demais
 
 Estilos (M6): o styles.xml vira o catalogo (`formato_docx/estilos.py`), guardado no
 Documento com o XML original. w:pStyle e w:rStyle viram `Paragrafo.estilo` e
-`Run.estilo`; a formatacao lida no paragrafo e no run continua sendo so' a direta. A
-lista que vem do estilo (numPr dentro do estilo) passa para o paragrafo. Referencia a
-estilo que nao existe vira o aviso ESTILO.
+`Run.estilo`; a formatacao lida no paragrafo e no run continua sendo so' a direta.
+Referencia a estilo que nao existe vira o aviso ESTILO.
+
+Listas (0.1.4): o numbering.xml vira o catalogo de numeracao (`formato_docx/numeracao.py`),
+que volta inteiro ao arquivo. O w:numPr do paragrafo vira `Paragrafo.lista` (numId) e
+`Paragrafo.lista_nivel` (ilvl); o do estilo fica no estilo, e o paragrafo herda (antes da
+0.1.4 a lista do estilo passava ao paragrafo, porque o numbering.xml de origem nao voltava).
+numId que nao existe vira "sem lista" (aviso LISTA); ilvl fora de 0 a 8, o nivel mais
+proximo (aviso LISTA_NIVEL).
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ from dataclasses import replace
 from lxml import etree
 
 from editdoc.formato_docx import estilos as fx_estilos
+from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos
 from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.avisos import Aviso, Coletor
@@ -57,6 +64,7 @@ from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, 
                                       Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
+from editdoc.modelo import numeracao as mod_numeracao
 from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
 from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
@@ -90,6 +98,8 @@ LIMITES_PADRAO = {
     **opacos.LIMITES,
     # Partes do pacote preservadas (0.1.3).
     **fx_pacote.LIMITES,
+    # Numeracao de listas (0.1.4): definicoes, niveis e tamanho do texto do numero.
+    **mod_numeracao.LIMITES,
 }
 
 #: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
@@ -198,10 +208,9 @@ def _parse(dados: bytes, nome: str, profundidade: int):
 
 
 class _Contexto:
-    def __init__(self, coletor: Coletor, numeracao: dict[str, str | None],
-                 lim: dict | None = None) -> None:
+    def __init__(self, coletor: Coletor, numeracao=None, lim: dict | None = None) -> None:
         self.coletor = coletor
-        #: numId -> formato do nivel 0 ("bullet", "decimal", outro ou None)
+        #: catalogo de numeracao (0.1.4), ou None se o arquivo nao tem (ou nao pode ser lido)
         self.numeracao = numeracao
         #: sectPr contados: os de dentro de paragrafo mais o do fim do corpo
         self.secoes = 0
@@ -393,24 +402,30 @@ def _escolha(alternativa):
 
 
 def _ler_numpr(numpr, out: dict, ctx: _Contexto) -> None:
+    """w:numPr do paragrafo -> `lista` (numId) e `lista_nivel` (ilvl), os dois diretos (0.1.4).
+
+    numId 0 desliga a lista que viria do estilo (fica 0). numId que o numbering.xml nao
+    define (ou numeracao que nao pode ser lida): o Word nao numera, e o paragrafo fica sem
+    lista, com aviso LISTA. ilvl fora de 0 a 8: o nivel mais proximo, com aviso LISTA_NIVEL.
+    """
     c = ctx.coletor
     nid_el = numpr.find(q("numId"))
-    nid = nid_el.get(q("val")) if nid_el is not None else None
-    ilvl_el = numpr.find(q("ilvl"))
-    ilvl = _inteiro(ilvl_el.get(q("val"))) if ilvl_el is not None else 0
-    if nid in (None, "0"):
-        if nid == "0":
-            out["_sem_lista"] = True  # numId 0 desliga a lista que viria do estilo
-        return
-    if ilvl and ilvl > 0:
-        c.somar("LISTA_NIVEL")
-    fmt = ctx.numeracao.get(nid)
-    if fmt == "bullet":
-        out["numeracao"] = "marcadores"
-    else:
-        out["numeracao"] = "numeracao"
-        if fmt != "decimal":
+    if nid_el is not None:
+        nid = _inteiro(nid_el.get(q("val")))
+        if nid == 0:
+            out["lista"] = 0
+        elif nid is not None and ctx.numeracao is not None and nid in ctx.numeracao.instancias:
+            out["lista"] = nid
+        else:
+            out["lista"] = 0
             c.somar("LISTA")
+    ilvl_el = numpr.find(q("ilvl"))
+    if ilvl_el is not None:
+        ilvl = _inteiro(ilvl_el.get(q("val")))
+        if ilvl is None or not 0 <= ilvl < mod_numeracao.NIVEIS:
+            c.somar("LISTA_NIVEL")
+            ilvl = 0 if ilvl is None else min(max(ilvl, 0), mod_numeracao.NIVEIS - 1)
+        out["lista_nivel"] = ilvl
 
 
 #: Destino do texto que esta' no codigo de um campo (entre o begin e o separate): nao
@@ -924,13 +939,8 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
         ns, loc = _local(f)
         if ns == W and loc == "pPr":
             props = _ler_ppr(f, ctx)
-    sem_lista = props.pop("_sem_lista", False)
-    if "numeracao" not in props and not sem_lista:
-        # Lista ligada pelo estilo (List Bullet...): vira lista do paragrafo, porque o
-        # numbering.xml de origem nao volta ao arquivo.
-        lista = ctx.estilos.numeracao_de(props.get("estilo") or ctx.estilos.id_padrao())
-        if lista is not None:
-            props["numeracao"] = lista
+    # A lista ligada pelo estilo (List Bullet, Titulo numerado) fica no estilo: o paragrafo
+    # herda (0.1.4). O numbering.xml de origem volta inteiro.
     # Marcadores que estavam entre paragrafos (no corpo ou na celula) entram no comeco deste.
     runs: list[Run] = ctx.marcas_pendentes
     ctx.marcas_pendentes = []
@@ -1436,22 +1446,54 @@ def _pagina_de(sect) -> Pagina | None:
     return pagina if pagina.valida() else None
 
 
-def _numeracao(raiz_num) -> dict[str, str | None]:
-    formatos: dict[str, str | None] = {}
-    for a in raiz_num.findall(q("abstractNum")):
-        fmt = None
-        for lvl in a.findall(q("lvl")):
-            if lvl.get(q("ilvl")) == "0":
-                nf = lvl.find(q("numFmt"))
-                fmt = _atr(nf, "val") if nf is not None else None
-                break
-        formatos[a.get(q("abstractNumId")) or ""] = fmt
-    saida: dict[str, str | None] = {}
-    for n in raiz_num.findall(q("num")):
-        ab = n.find(q("abstractNumId"))
-        alvo = _atr(ab, "val") if ab is not None else None
-        saida[n.get(q("numId")) or ""] = formatos.get(alvo or "")
-    return saida
+def _numeracao(dados: bytes, nome: str, ctx_lim: dict, coletor: Coletor, relacoes: dict,
+               capturador) -> "mod_numeracao.Numeracao | None":
+    """O catalogo do numbering.xml (0.1.4), com o fecho das imagens dos marcadores de figura.
+
+    None (aviso LISTA nos itens que citam a numeracao) se a parte passa dos limites.
+    """
+    raiz = _parse(dados, nome, ctx_lim["profundidade"])
+    if _profundidade(raiz) > ctx_lim["profundidade"]:
+        raise ErroDocx("XML_PROFUNDIDADE_EXCEDIDA", nome)
+    partes: dict = {}
+    for _rid, (_tipo, alvo, externo) in relacoes.items():
+        if not externo and capturador is not None:
+            capturador._fechar(alvo, partes, 1)
+    partes = {k: v for k, v in partes.items() if v is not None}
+    try:
+        cat = fx_numeracao.ler(dados, raiz, ctx_lim, relacoes, partes, coletor)
+    except fx_numeracao.NumeracaoInvalida:
+        return None
+    usados = set()
+    for el in etree.fromstring(cat.xml_original, etree.XMLParser(
+            resolve_entities=False, no_network=True, load_dtd=False)).iter():
+        for chave, valor in el.attrib.items():
+            if chave.startswith("{%s}" % R_NS):
+                usados.add(valor)
+    cat.relacoes = tuple((rid, tipo, alvo, externo) for rid, (tipo, alvo, externo)
+                         in sorted(relacoes.items()) if rid in usados)
+    alcancadas: dict = {}
+    for _rid, _tipo, alvo, externo in cat.relacoes:
+        if not externo:
+            _alcance(alvo, partes, alcancadas)
+    cat.partes = tuple(alcancadas[n] for n in sorted(alcancadas))
+    return cat
+
+
+def _alcance(nome: str, partes: dict, saida: dict) -> None:
+    if nome in saida or nome not in partes:
+        return
+    saida[nome] = partes[nome]
+    for _rid, _tipo, alvo, externo in partes[nome].relacoes:
+        if not externo:
+            _alcance(alvo, partes, saida)
+
+
+def _tab_padrao(config) -> int:
+    """w:defaultTabStop do settings.xml (twips). Sem ele, 720, como o esquema."""
+    el = config.find(q("defaultTabStop")) if config is not None else None
+    valor = _inteiro(_atr(el, "val")) if el is not None else None
+    return valor if valor is not None and 0 < valor <= 31680 else 720
 
 
 def _tema_preservavel(raiz) -> bool:
@@ -1610,7 +1652,9 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             return z.getinfo(parte).file_size
 
         # Partes ligadas ao documento principal: numeracao, estilos, tema e configuracoes.
-        numeracao: dict[str, str | None] = {}
+        numeracao = None
+        dados_numeracao: tuple | None = None
+        tab_padrao = 720
         estilos = None
         dados_estilos = b""
         fontes_tema: dict = {}
@@ -1622,7 +1666,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                 continue
             if tipo.endswith("/numbering"):
                 _validar_nome(alvo)
-                numeracao = _numeracao(_parse(ler_parte(alvo), alvo, profundidade))
+                dados_numeracao = (ler_parte(alvo), alvo)
             elif tipo.endswith("/styles"):
                 _validar_nome(alvo)
                 dados_estilos = ler_parte(alvo)
@@ -1639,20 +1683,30 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             elif tipo.endswith("/settings"):
                 _validar_nome(alvo)
                 config = _parse(ler_parte(alvo), alvo, profundidade)
+                tab_padrao = _tab_padrao(config)
                 pares = config.find(q("evenAndOddHeaders"))
                 pares_impares = pares is not None and _onoff(pares)
 
-        ctx = _Contexto(coletor, numeracao, lim)
+        ctx = _Contexto(coletor, None, lim)
         ctx.relacoes = relacoes
         ctx.ler_parte = ler_parte
         ctx.nomes = nomes
         ctx.capturador = opacos.Capturador(
             ctx.lim, coletor, nomes, ler_parte, relacoes_de, tipo_de,
             lambda dados, nome: _parse(dados, nome, profundidade), ctx.midias)
+        if dados_numeracao is not None:
+            numeracao = _numeracao(dados_numeracao[0], dados_numeracao[1], ctx.lim, coletor,
+                                   relacoes_de(dados_numeracao[1]), ctx.capturador)
+            if numeracao is not None:
+                numeracao.tab_padrao_tw = tab_padrao
+        ctx.numeracao = numeracao
+        # Lista dentro de caixa de texto: o numId continua valendo se a numeracao foi lida.
+        ctx.capturador.listas_validas = None if numeracao is None else \
+            set(numeracao.instancias)
         ctx.ignoraveis = opacos.ignoraveis_da_raiz(raiz)
         if estilos is not None:
             ctx.estilos, removidos = fx_estilos.ler_estilos(estilos, dados_estilos, fontes_tema,
-                                                            numeracao, tema)
+                                                            numeracao, tema, coletor)
             if removidos:
                 coletor.somar("FORMATACAO", removidos)
             for estilo in estilos.findall(q("style")):
@@ -1707,7 +1761,9 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             tema_tratado=tema is not None, proibidos=reescritas)
 
     doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
-                               rodapes=rodapes, estilos=ctx.estilos, pacote=pacote, **meta))
+                               rodapes=rodapes, estilos=ctx.estilos, pacote=pacote,
+                               numeracao=ctx.numeracao, **meta))
+    mod_numeracao.tipos_dos_paragrafos(doc)
     return doc, coletor.avisos()
 
 

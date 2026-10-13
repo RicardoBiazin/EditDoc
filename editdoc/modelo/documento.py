@@ -40,6 +40,10 @@ as duas e' o ultimo resultado, editavel. O campo pode comecar num paragrafo e te
 outro (o sumario), como no Word. `Marcador` marca o inicio ou o fim de um w:bookmark.
 `marcas.equilibrar` deixa as marcas em pares antes de gravar.
 
+Listas (0.1.4): `Paragrafo.lista` (numId) e `lista_nivel` (ilvl) sao o w:numPr direto; o
+catalogo do numbering.xml fica em `Documento.numeracao` (modelo/numeracao.py), fora da
+comparacao, como os estilos. `Paragrafo.numeracao` virou so' o tipo, informativo.
+
 `normalizar` funde runs vizinhos de mesma formatacao e descarta runs vazios.
 Dois documentos com o mesmo texto e a mesma formatacao so' sao iguais depois de
 normalizados: o Qt e o XML podem dividir o mesmo texto em runs diferentes. Ela
@@ -256,7 +260,10 @@ class Paragrafo:
     recuo_primeira_linha_tw: int | None = None
     espaco_antes_tw: int | None = None
     espaco_depois_tw: int | None = None
-    numeracao: Numeracao | None = None
+    # Tipo da lista ("marcadores" ou "numeracao"), so' informativo desde a 0.1.4: o leitor e a
+    # ponte preenchem pela lista efetiva, e fica fora da comparacao. Documento montado em
+    # codigo pode dar so' o tipo (sem `lista`): `numeracao.materializar` cria a definicao.
+    numeracao: Numeracao | None = field(default=None, compare=False)
     # Porcentagem (100 = simples). Ausente no plano original; entrou no M2 porque
     # o editor ja aplica o espacamento e salvar sem ele perderia a formatacao.
     espacamento_linha_pct: int | None = None
@@ -269,6 +276,10 @@ class Paragrafo:
     recuo_direito_tw: int | None = None
     # Nivel de estrutura direto (w:outlineLvl): 0 = como Titulo 1; 9 = corpo de texto.
     nivel: int | None = None
+    # Lista (0.1.4): w:numPr direto. `lista` e' o numId (0 = sem lista, mesmo que o estilo
+    # tenha); `lista_nivel` e' o ilvl (0 a 8). None = herda do estilo (modelo/numeracao.py).
+    lista: int | None = None
+    lista_nivel: int | None = None
 
 
 @dataclass
@@ -352,6 +363,9 @@ class Documento:
     estilos: object = field(default=None, compare=False, repr=False)
     # Partes do pacote de origem que voltam ao arquivo (0.1.3): PacoteOriginal ou None.
     pacote: object = field(default=None, compare=False, repr=False)
+    # Numeracao de listas (0.1.4): o catalogo do numbering.xml (modelo/numeracao.py) ou None.
+    # Fora da comparacao, como os estilos: o paragrafo compara o numId e o nivel.
+    numeracao: object = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -438,6 +452,9 @@ def normalizar(documento: Documento) -> Documento:
     """Copia do documento com runs vizinhos fundidos, runs vazios descartados e as
     tabelas na forma canonica (celula e corpo terminam em paragrafo)."""
     saida = copy.deepcopy(documento)
+    # Lista dada so' pelo tipo (documento montado em codigo): os mesmos numIds do escritor.
+    from editdoc.modelo.numeracao import materializar
+    materializar(saida)
     _normalizar_blocos(saida.paragrafos, em_celula=False)
     # Cabecalho e rodape terminam em paragrafo, como a celula (o Word exige ao menos um).
     for faixas in (saida.cabecalhos, saida.rodapes):

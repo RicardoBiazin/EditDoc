@@ -16,6 +16,8 @@ if not preparar_qt():
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QTextCursor, QTextListFormat  # noqa: E402
 
+from editdoc.edicao import listas as ed_listas  # noqa: E402
+
 from editdoc.edicao import formatacao  # noqa: E402
 from editdoc.edicao.estado import ler  # noqa: E402
 from editdoc.interface.painel_documento import PainelDocumento  # noqa: E402
@@ -159,12 +161,13 @@ def testar_listas() -> None:
              "ligar marcadores e' um passo de desfazer")
     selecionar_tudo(painel)
     formatacao.alternar_lista(painel, QTextListFormat.Style.ListDisc)
-    checa(all(b.textList() is not None for b in _blocos(painel)),
+    # 0.1.4: a lista e' a propriedade do bloco (numId), nao mais o QTextList.
+    checa(all(ed_listas.eh_item(painel, b) for b in _blocos(painel)),
           "marcadores nos dois paragrafos")
     checa(ler(painel).marcadores, "a faixa enxerga o marcador")
 
     formatacao.alternar_lista(painel, QTextListFormat.Style.ListDisc)
-    checa(all(b.textList() is None for b in _blocos(painel)),
+    checa(not any(ed_listas.eh_item(painel, b) for b in _blocos(painel)),
           "o mesmo comando desliga os marcadores")
 
     selecionar_tudo(painel)

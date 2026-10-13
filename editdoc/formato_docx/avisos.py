@@ -12,6 +12,10 @@ flutuante e imagem em formato que a tela nao mostra sao preservados como objetos
 (`formato_docx/opacos.py`): os avisos deles sao sem perda. O que nao pode ser preservado
 (referencia quebrada, limite) cai em OBJETO_PERDIDO ou IMAGEM, com perda.
 
+Desde a 0.1.4 a numeracao de listas (numbering.xml inteiro, niveis, formatos, simbolos,
+marcadores de figura, lista ligada ao estilo) volta ao arquivo: LISTA e LISTA_NIVEL so'
+aparecem para referencia quebrada, nivel fora de 0 a 8 ou numeracao acima dos limites.
+
 Desde a 0.1.3, hiperlinks, campos (DATE, REF, TOC...), marcadores e as partes do pacote
 que o EditDoc nao edita (custom.xml, customXml, fontTable, webSettings, settings.xml) voltam
 ao arquivo: HIPERLINK, CAMPO e PARTE_PERDIDA so' aparecem para o que nao pode voltar
@@ -90,7 +94,7 @@ CATALOGO: dict[str, tuple] = {
         True),
     "LISTA_EM_CAIXA": (
         lambda n: f"{n} {_plural(n, 'parágrafo numerado dentro de caixa de texto perde', 'parágrafos numerados dentro de caixas de texto perdem')} "
-                  "a numeração ao salvar.",
+                  "a numeração ao salvar, porque a numeração do arquivo não pôde ser lida.",
         True),
     "CAMPO": (
         lambda n: f"{n} {_plural(n, 'campo não pôde ser preservado', 'campos não puderam ser preservados')} "
@@ -186,12 +190,13 @@ CATALOGO: dict[str, tuple] = {
                   "(Calibri 11). O texto sem formatação própria muda de aparência ao salvar.",
         True),
     "LISTA": (
-        lambda n: f"{n} {_plural(n, 'lista tem formato de número que não é preservado', 'listas têm formato de número que não é preservado')}: "
-                  "vira numeração simples.",
+        lambda n: f"{n} {_plural(n, 'item ou definição de lista cita', 'itens ou definições de lista citam')} "
+                  "numeração que não existe no arquivo ou que não pôde ser lida (danificada ou "
+                  "acima dos limites do EditDoc). Esses itens ficam sem número ao salvar.",
         True),
     "LISTA_NIVEL": (
-        lambda n: f"{n} {_plural(n, 'item de lista está em nível abaixo do primeiro', 'itens de lista estão em níveis abaixo do primeiro')}. "
-                  "O nível se perde ao salvar.",
+        lambda n: f"{n} {_plural(n, 'item de lista tem nível', 'itens de lista têm nível')} fora "
+                  "de 1 a 9 e passa ao nível mais próximo ao salvar.",
         True),
     "ESPACAMENTO_LINHA": (
         lambda n: f"{n} {_plural(n, 'parágrafo tem espaçamento exato ou mínimo entre linhas', 'parágrafos têm espaçamento exato ou mínimo entre linhas')}. "

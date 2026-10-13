@@ -92,6 +92,8 @@ SUITES = [
      "cabecalho e rodape: .docx, oraculo, limites, tela, edicao no lugar, desfazer e faixa"),
     ("teste_estilos.py",
      "estilos: heranca, styles.xml do Word ida e volta, Qt, aplicar, modificar, next, atalhos"),
+    ("teste_listas.py",
+     "listas: numbering.xml c14n, numeros do oraculo, validador, limites, tela, PDF, teclado e desfazer"),
     ("teste_galeria.py",
      "galeria e painel de estilos acompanham o cursor; faixa final sem corte em todas as abas"),
     ("teste_exibir.py",

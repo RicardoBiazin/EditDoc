@@ -22,6 +22,11 @@ variante tem o proprio desfazer.
 Hiperlinks (0.1.3): Ctrl+clique abre o link (`abrir_link`, com `abrir_url` e
 `confirmar_link` trocaveis nos testes); digitar logo depois de um link nao o estende; as
 setas, o Backspace e o Delete pulam a marca (sem largura) dos marcadores.
+
+Listas (0.1.4, edicao/listas.py): Tab e Shift+Tab no inicio de um item mudam o nivel; Enter
+num item vazio sobe um nivel ou sai da lista; Backspace no inicio do item tira o numero (e,
+de novo, o recuo). Copiar leva as listas dos blocos numa marca propria da area de
+transferencia (MIME_LISTAS), e colar no EditDoc devolve os blocos as listas.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao import links as ed_links
+from editdoc.edicao import listas as ed_listas
 from editdoc.edicao import tabelas as ed_tabelas
 from editdoc.interface.cabecalhos import FaixaQt
 from editdoc.interface.vista_paginas import VistaPaginas, origem_da_faixa
@@ -49,6 +55,7 @@ from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import campos as pq_campos
 from editdoc.ponte_qt import imagens as pq_imagens
 from editdoc.ponte_qt import links as pq_links
+from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import marcas as pq_marcas
 from editdoc.ponte_qt import opacos as pq_opacos
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
@@ -71,6 +78,8 @@ _IMG_HTML = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 ALCA_PX = 8.0
 #: Marca na area de transferencia: quantos objetos opacos ficaram fora da copia (0.1.2).
 MIME_OPACOS_OMITIDOS = "application/x-editdoc-objetos-omitidos"
+#: Marca na area de transferencia: as listas dos blocos copiados, em JSON (0.1.4).
+MIME_LISTAS = "application/x-editdoc-listas"
 #: Esquemas de endereco que o Ctrl+clique nunca abre (o link pode rodar codigo).
 ESQUEMAS_PROIBIDOS = ("javascript", "vbscript", "data")
 
@@ -193,6 +202,10 @@ class PainelDocumento(VistaPaginas):
                        if inicio <= pos < fim)
         if omitidos:
             md.setData(MIME_OPACOS_OMITIDOS, str(omitidos).encode("ascii"))
+        listas = ed_listas.dados_para_copiar(self.document(), inicio, fim)
+        if listas is not None:
+            import json
+            md.setData(MIME_LISTAS, json.dumps(listas).encode("utf-8"))
         md.setText(frag.toPlainText().replace(chr(0xFFFC), ""))
         pos = ed_imagens.imagem_selecionada(self)
         if pos is not None:
@@ -232,12 +245,27 @@ class PainelDocumento(VistaPaginas):
         if self._cursor.hasSelection():
             self._cursor.removeSelectedText()
         self._limpar_estrutural()
+        inicio_colado = self._cursor.position()
+        no_inicio_vazio = self._cursor.block().length() <= 1
         self._cursor.insertFragment(frag)
         self._cursor.endEditBlock()
         # A tabela colada so' aparece em childFrames() depois do endEditBlock (medido). O
         # ajuste entra no mesmo passo de desfazer pelo joinPreviousEditBlock.
         self._cursor.joinPreviousEditBlock()
         ed_tabelas.ajustar_tabelas_coladas(self)
+        if not md.hasFormat(MIME_LISTAS):
+            # HTML de outro programa com <ol>/<ul>: vira lista do EditDoc (0.1.4).
+            ed_listas.converter_listas_coladas(self, inicio_colado, self._cursor.position())
+        if md.hasFormat(MIME_LISTAS):
+            # Listas (0.1.4): os blocos colados voltam para as listas que tinham.
+            import json
+            try:
+                dado = json.loads(bytes(md.data(MIME_LISTAS)).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                dado = None
+            if isinstance(dado, dict):
+                ed_listas.aplicar_colado(self, dado, inicio_colado, self._cursor.position(),
+                                         no_inicio_vazio)
         self._cursor.endEditBlock()
         self._depois_de_mover()
         if md.hasFormat(MIME_OPACOS_OMITIDOS):
@@ -450,17 +478,23 @@ class PainelDocumento(VistaPaginas):
         self.setFocus()
 
     def recuos_do_paragrafo(self) -> tuple[int, int]:
-        """(recuo esquerdo, recuo da primeira linha) do paragrafo do caret, em twips."""
+        """(recuo esquerdo, recuo da primeira linha) do paragrafo do caret, em twips.
+
+        Os recuos horizontais ficam em twips no formato do bloco (0.1.4, ponte_qt/estilos.py);
+        no item de lista, a primeira linha e' a de verdade, nao a que poe o texto depois do numero.
+        """
         bf = self._cursor.block().blockFormat()
-        return round(bf.leftMargin() * 15), round(bf.textIndent() * 15)
+        real = pq_listas.recuo_real(bf)
+        return round(bf.leftMargin()), real if real is not None else 0
 
     def definir_recuos_do_paragrafo(self, esquerdo_tw: int, primeira_tw: int) -> None:
         """Um passo de desfazer: recuos do paragrafo do caret."""
-        bf = QTextBlockFormat()
-        bf.setLeftMargin(max(0.0, esquerdo_tw / 15.0))
-        bf.setTextIndent(primeira_tw / 15.0)
+        bf = QTextBlockFormat(self._cursor.blockFormat())
+        bf.setLeftMargin(max(0.0, float(esquerdo_tw)))
+        bf.setTextIndent(float(primeira_tw))
+        bf.clearProperty(pq_listas.PROP_RECUO_REAL)  # o item de lista ajusta o visual depois
         self._cursor.beginEditBlock()
-        self._cursor.mergeBlockFormat(bf)
+        self._cursor.setBlockFormat(bf)
         self._cursor.endEditBlock()
         self._depois_de_formato()
 
@@ -544,6 +578,9 @@ class PainelDocumento(VistaPaginas):
         self._depois_de_mover()
 
     def _quebrar(self, quebra: bool) -> None:
+        if not quebra and ed_listas.enter_em_item_vazio(self):
+            # Enter num item de lista vazio: sobe um nivel ou sai da lista, como no Word.
+            return
         self._cursor.beginEditBlock()
         if self._cursor.hasSelection():
             self._cursor.removeSelectedText()
@@ -552,6 +589,7 @@ class PainelDocumento(VistaPaginas):
         no_fim = self._cursor.atBlockEnd() and self._cursor.currentTable() is None
         bf = QTextBlockFormat(self._cursor.blockFormat())
         bf.setPageBreakPolicy(_QUEBRA if quebra else _SEM_QUEBRA)
+        bf.clearProperty(pq_listas.PROP_SAIU_DA_LISTA)  # a marca do Backspace nao passa adiante
         proximo = ed_estilos.formatos_do_proximo(self.document(), bf) if no_fim else None
         self._cursor.insertBlock(bf)
         if proximo is not None:
@@ -579,6 +617,23 @@ class PainelDocumento(VistaPaginas):
             self._cursor.setPosition(fim, Selecionar)
         self._depois_de_mover()
 
+    def _tab_na_lista(self, para_tras: bool) -> bool:
+        """Tab (ou Shift+Tab) no inicio de um item de lista, ou com varios itens
+        selecionados: muda o nivel (0.1.4). False se nao e' o caso (a tecla segue)."""
+        c = self._cursor
+        doc = self.document()
+        if c.hasSelection():
+            primeiro = doc.findBlock(c.selectionStart())
+            ultimo = doc.findBlock(c.selectionEnd())
+            if primeiro == ultimo:
+                return False
+        elif not c.atBlockStart():
+            return False
+        if not ed_listas.eh_item(self, c.block() if not c.hasSelection()
+                                 else doc.findBlock(c.selectionStart())):
+            return False
+        return ed_listas.mudar_nivel(self, -1 if para_tras else 1)
+
     def _marcador_em(self, pos: int) -> bool:
         """O caractere em `pos` e' a marca (sem largura) de um marcador (0.1.3)."""
         cf = pq_links.formato_em(self.document(), pos)
@@ -603,6 +658,9 @@ class PainelDocumento(VistaPaginas):
         elif palavra:
             self._cursor.movePosition(M.WordLeft if anterior else M.WordRight, Selecionar)
             self._cursor.removeSelectedText()
+        elif anterior and ed_listas.backspace_no_inicio(self):
+            # Lista (0.1.4): no inicio do item, tira o numero (e de novo o recuo).
+            pass
         elif anterior:
             # Backspace e Delete pulam a marca de marcador (invisivel) e apagam o caractere
             # que se ve: o link que aponta para o marcador continua valendo (0.1.3).
@@ -692,6 +750,9 @@ class PainelDocumento(VistaPaginas):
             self._apagar(anterior=True)
         elif k == Key.Key_Delete:
             self._apagar(anterior=False)
+        elif k in (Key.Key_Tab, Key.Key_Backtab) and self._tab_na_lista(
+                para_tras=(k == Key.Key_Backtab or shift)):
+            pass
         elif k in (Key.Key_Tab, Key.Key_Backtab) and self._cursor.currentTable() is not None:
             self._tab_na_tabela(para_tras=(k == Key.Key_Backtab or shift))
         elif k == Key.Key_Tab:

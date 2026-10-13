@@ -51,7 +51,7 @@ from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
-from editdoc.interface.comandos import LINK, TABELA, Comandos
+from editdoc.interface.comandos import LINK, LISTA_NUMERADA, TABELA, Comandos
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import BotaoAcao, Faixa
 from editdoc.interface.guarda_recuperacao import GuardaRecuperacao
@@ -155,6 +155,7 @@ class JanelaPrincipal(QMainWindow):
                                      "link": self._inserir_link,
                                      "remover_link": self._remover_link,
                                      "abrir_link": self._abrir_link,
+                                     "valor_numeracao": self._definir_valor_numeracao,
                                  }, ao_exibir={
                                      "criar_estilo": self.criar_estilo,
                                      "modificar_estilo": self.modificar_estilo,
@@ -204,7 +205,7 @@ class JanelaPrincipal(QMainWindow):
                                                ao_atualizar=self._sintonizar)
         self.painel.registrar_atalhos(self.comandos.todas())
         self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
-            *TABELA, "tamanho_imagem", "inserir_link", *LINK)])
+            *TABELA, "tamanho_imagem", "inserir_link", *LINK, *LISTA_NUMERADA)])
         self.painel.mensagem.connect(lambda texto: self.statusBar().showMessage(texto, 6000))
         # Sem isto o atalho so' funciona quando o foco esta no painel.
         for acao in self.comandos.todas():
@@ -331,7 +332,8 @@ class JanelaPrincipal(QMainWindow):
         if self.dock_estilos.isVisible():
             self.painel_estilos.marcar(atual)
         bf = self.painel.textCursor().block().blockFormat()
-        self.faixa.mostrar_paragrafo(round(bf.leftMargin() * 15), round(bf.rightMargin() * 15),
+        # Recuos em twips no bloco (0.1.4); espacos em px96.
+        self.faixa.mostrar_paragrafo(round(bf.leftMargin()), round(bf.rightMargin()),
                                      round(bf.topMargin() * 15), round(bf.bottomMargin() * 15))
         c = self.comandos
         c.acao("marcas_formatacao").setChecked(self.painel.marcas_visiveis())
@@ -449,6 +451,20 @@ class JanelaPrincipal(QMainWindow):
         ok, valor = dialogos_modais.pedir_numero_inicial(self, atual.numero_inicial)
         if ok:
             self._alterar_pagina(replace(atual, numero_inicial=valor))
+        self.painel.setFocus()
+
+    def _definir_valor_numeracao(self) -> None:
+        """Definir valor de numeracao (0.1.4): o numero do item do cursor."""
+        from editdoc.edicao import listas as ed_listas
+        from editdoc.ponte_qt import listas as pq_listas
+        doc = self.painel.document()
+        rotulo = pq_listas.numerador_de(doc).rotulos().get(self.painel.textCursor().block().blockNumber())
+        if rotulo is None:
+            self.painel.setFocus()
+            return
+        valor = dialogos_modais.pedir_valor_numeracao(self, rotulo.valor)
+        if valor is not None:
+            ed_listas.definir_valor(self.painel, valor)
         self.painel.setFocus()
 
     # -- inserir: tabela e imagem -------------------------------------------
@@ -600,6 +616,8 @@ class JanelaPrincipal(QMainWindow):
                                                     else self._fonte_cfg[1])
         self.painel.carregar_faixas(modelo)
         self.painel.definir_configuracao_pagina(modelo.pagina)
+        # Listas (0.1.4): o texto depois do numero, medido com a fonte padrao ja' trocada.
+        para_qt.concluir_listas(self.painel.documento_corpo())
         self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
         self._pacote = modelo.pacote
         self.caminho = caminho

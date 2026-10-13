@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextBlockFormat, QTextCharFormat, QTextCursor, QTextListFormat
+from PySide6.QtGui import QTextBlockFormat, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit
 
 #: O Qt chama de negrito a partir de 600. O Word grava 700.
@@ -52,19 +52,19 @@ def ler(editor: QTextEdit) -> EstadoDoCursor:
         bloco = cursor.block()
 
     bloco_fmt = bloco.blockFormat()
-    lista = bloco.textList()
+    # Lista (0.1.4): o tipo pela lista efetiva do bloco (direta ou do estilo), nao pelo QTextList.
+    from editdoc.edicao.listas import efetiva
+    from editdoc.ponte_qt import estilos as pq_estilos
+    from editdoc.ponte_qt import listas as pq_listas
+    ef = efetiva(doc, bloco)
+    cat = pq_listas.catalogo(doc)
+    tipo = cat.tipo_de(*ef, pq_estilos.catalogo(doc)) if ef is not None and cat is not None else None
     # fontFamilies() devolve None quando nao ha familia. fontFamily() esta
     # depreciado e derruba o processo num formato vazio: nao usar.
     familias = formato.fontFamilies() or []
     tamanho = formato.fontPointSize() or doc.defaultFont().pointSizeF()
     va = formato.verticalAlignment()
 
-    estilo = lista.format().style() if lista is not None else None
-    marcas = {
-        QTextListFormat.Style.ListDisc,
-        QTextListFormat.Style.ListCircle,
-        QTextListFormat.Style.ListSquare,
-    }
 
     flags = bloco_fmt.alignment()
     if flags & Qt.AlignmentFlag.AlignHCenter:
@@ -88,6 +88,6 @@ def ler(editor: QTextEdit) -> EstadoDoCursor:
         alinhamento=alinhamento,
         espacamento=round(bloco_fmt.lineHeight())
         if bloco_fmt.lineHeightType() == _PROPORCIONAL else 100,
-        marcadores=estilo in marcas,
-        numeracao=lista is not None and estilo not in marcas,
+        marcadores=tipo == "marcadores",
+        numeracao=tipo == "numeracao",
     )

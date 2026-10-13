@@ -17,8 +17,8 @@ from PySide6.QtWidgets import QTextEdit
 from editdoc.edicao import cabecalhos as ed_cabecalhos
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import formatacao, tabelas
+from editdoc.edicao import listas as ed_listas
 from editdoc.modelo.folhas import passo_de_zoom
-from editdoc.modelo.unidades import RECUO_PADRAO_PX
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,27 @@ DEFINICOES = (
               dica="O texto volta ao estilo do parágrafo"),
     Definicao("marcadores", "Marcadores", ("Ctrl+Shift+L",), True, "Marcadores"),
     Definicao("numeracao", "Numeração", (), True, "Numeração"),
+    # Listas (0.1.4): galerias, varios niveis e o valor do numero.
+    Definicao("marcador_redondo", "•  Redondo", (), dica="Marcador redondo"),
+    Definicao("marcador_vazado", "○  Vazado", (), dica="Marcador vazado"),
+    Definicao("marcador_quadrado", "▪  Quadrado", (), dica="Marcador quadrado"),
+    Definicao("numero_decimal_ponto", "1.  2.  3.", (), dica="Numeração 1. 2. 3."),
+    Definicao("numero_decimal_parentese", "1)  2)  3)", (), dica="Numeração 1) 2) 3)"),
+    Definicao("numero_letra_minuscula", "a.  b.  c.", (), dica="Numeração a. b. c."),
+    Definicao("numero_letra_maiuscula", "A.  B.  C.", (), dica="Numeração A. B. C."),
+    Definicao("numero_romano_minusculo", "i.  ii.  iii.", (), dica="Numeração i. ii. iii."),
+    Definicao("numero_romano_maiusculo", "I.  II.  III.", (), dica="Numeração I. II. III."),
+    Definicao("multinivel_decimal", "1.  1.1.  1.1.1.", (), dica="Lista de vários níveis 1. 1.1. 1.1.1."),
+    Definicao("multinivel_capitulo", "Capítulo 1 / Seção 1.1", (),
+              dica="Lista de vários níveis Capítulo e Seção"),
+    Definicao("multinivel_titulos", "Títulos numerados (1 / 1.1 / 1.1.1)", (),
+              dica="Numerar os títulos: Título 1, Título 2 e Título 3 ligados à lista"),
+    Definicao("reiniciar_numeracao", "Reiniciar em 1", (),
+              dica="A numeração recomeça neste item"),
+    Definicao("continuar_numeracao", "Continuar numeração", (),
+              dica="Este item continua a numeração da lista anterior"),
+    Definicao("definir_valor_numeracao", "Definir valor de numeração...", (),
+              dica="Escolher o número deste item"),
     Definicao("diminuir_recuo", "Diminuir recuo", ("Ctrl+Shift+M",),
               dica="Diminuir recuo"),
     Definicao("aumentar_recuo", "Aumentar recuo", ("Ctrl+M",), dica="Aumentar recuo"),
@@ -212,6 +233,24 @@ TABELA = ("inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerd
 #: Comandos que so' valem com o cursor num link (o atualizador os habilita).
 LINK = ("remover_link", "abrir_link")
 
+#: Comandos que so' valem com o cursor num item numerado (o atualizador os habilita).
+LISTA_NUMERADA = ("reiniciar_numeracao", "continuar_numeracao", "definir_valor_numeracao")
+#: Galerias de lista (0.1.4): id da acao -> (funcao de edicao/listas, chave da galeria).
+GALERIA_DAS_ACOES = {
+    "marcador_redondo": ("alternar_marcadores", "redondo"),
+    "marcador_vazado": ("alternar_marcadores", "vazado"),
+    "marcador_quadrado": ("alternar_marcadores", "quadrado"),
+    "numero_decimal_ponto": ("alternar_numeracao", "decimal_ponto"),
+    "numero_decimal_parentese": ("alternar_numeracao", "decimal_parentese"),
+    "numero_letra_minuscula": ("alternar_numeracao", "letra_minuscula"),
+    "numero_letra_maiuscula": ("alternar_numeracao", "letra_maiuscula"),
+    "numero_romano_minusculo": ("alternar_numeracao", "romano_minusculo"),
+    "numero_romano_maiusculo": ("alternar_numeracao", "romano_maiusculo"),
+    "multinivel_decimal": ("aplicar_multinivel", "decimal"),
+    "multinivel_capitulo": ("aplicar_multinivel", "capitulo"),
+    "multinivel_titulos": ("aplicar_multinivel", "titulos"),
+}
+
 #: Papel: id da acao -> nome do papel em editdoc/modelo/pagina.py (PAPEIS).
 PAPEL_DAS_ACOES = {"papel_a4": "A4", "papel_carta": "Carta", "papel_oficio": "Ofício"}
 #: Margens: id da acao -> predefinicao. "personalizadas" abre o dialogo.
@@ -243,6 +282,11 @@ def _chamar(ganchos: dict[str, Callable], chave: str, *args) -> None:
     gancho = ganchos.get(chave)
     if gancho is not None:
         gancho(*args)
+
+
+def _continuar(editor) -> None:
+    if not ed_listas.continuar(editor) and hasattr(editor, "mensagem"):
+        editor.mensagem.emit("Não há lista anterior com o mesmo formato para continuar.")
 
 
 def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
@@ -333,9 +377,15 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         "marcas_formatacao": lambda: editor.definir_marcas(not editor.marcas_visiveis()),
         "marcadores": lambda: fmt.alternar_lista(editor, QTextListFormat.Style.ListDisc),
         "numeracao": lambda: fmt.alternar_lista(editor, QTextListFormat.Style.ListDecimal),
-        "diminuir_recuo": lambda: fmt.alterar_recuo(editor, -RECUO_PADRAO_PX),
-        "aumentar_recuo": lambda: fmt.alterar_recuo(editor, RECUO_PADRAO_PX),
+        # Num item de lista, o recuo muda o nivel (0.1.4).
+        "diminuir_recuo": lambda: fmt.alterar_recuo_ou_nivel(editor, False),
+        "aumentar_recuo": lambda: fmt.alterar_recuo_ou_nivel(editor, True),
+        "reiniciar_numeracao": lambda: ed_listas.reiniciar(editor),
+        "continuar_numeracao": lambda: _continuar(editor),
+        "definir_valor_numeracao": lambda: _chamar(inserir, "valor_numeracao"),
     }
+    for id_, (funcao, chave) in GALERIA_DAS_ACOES.items():
+        executores[id_] = lambda f=funcao, c=chave: getattr(ed_listas, f)(editor, c)
     for id_, alinhamento in ALINHAMENTOS.items():
         executores[id_] = lambda a=alinhamento: fmt.alinhar(editor, a)
     for id_, percentual in ESPACAMENTOS.items():

@@ -245,6 +245,22 @@ def pedir_numero_inicial(pai: QWidget | None, atual: int | None,
     return True, (valor.value() if fixo.isChecked() else None)
 
 
+def pedir_valor_numeracao(pai: QWidget | None, atual: int, maximo: int = 32767) -> int | None:
+    """Definir valor de numeracao (0.1.4): o numero deste item. None se cancelar."""
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"Definir valor de numeração - {APP}")
+    grade = QFormLayout(dialogo)
+    valor = QSpinBox()
+    valor.setRange(0, maximo)
+    valor.setValue(max(0, min(int(atual), maximo)))
+    valor.setAccessibleName("Definir valor como")
+    grade.addRow("Definir valor como:", valor)
+    grade.addRow(_botoes_ok(dialogo))
+    if dialogo.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return valor.value()
+
+
 # -- impressao e PDF (M7) -------------------------------------------------------------
 
 FILTRO_PDF = "Documento PDF (*.pdf)"

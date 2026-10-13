@@ -14,6 +14,10 @@ formatacao que volta ao modelo e' so' a direta, o efetivo menos o estilo resolvi
 
 Hiperlinks e marcas (0.1.3): o link de cada fragmento (`links.link_de`) e as marcas de
 campo e de marcador (`marcas.marca_de`), uma por caractere de objeto.
+
+Listas (0.1.4): o numId e o ilvl diretos saem das propriedades do bloco (`listas.py`), e o
+recuo que o nivel da lista da' nao vira formatacao direta. Um QTextList (HTML colado de
+outro programa) vira o tipo simples (`Paragrafo.numeracao`), que o escritor materializa.
 """
 
 from __future__ import annotations
@@ -29,7 +33,8 @@ from editdoc.modelo.documento import (CARACTERE_OBJETO, Celula, Documento, Image
                                       Paragrafo, Run, Tabela)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
-from editdoc.ponte_qt import campos, imagens, links, marcas, opacos
+from editdoc.modelo.numeracao import tipos_dos_paragrafos
+from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
@@ -136,7 +141,11 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
     sid = pq_estilos.estilo_do_bloco(bf)
     if sid is not None and sid != res.estilos.id_padrao() and res.estilos.obter(sid) is not None:
         p.estilo = sid
-    base, _car = res.paragrafo(p.estilo, em_celula)
+    p.lista, p.lista_nivel = listas.lista_do_bloco(bf)
+    if p.lista is not None and p.lista != 0 and (
+            res.numeracao is None or p.lista not in res.numeracao.instancias):
+        p.lista = None  # numId que o catalogo nao tem (formato montado a mao): sem lista
+    base, _car = res.paragrafo(p.estilo, em_celula, (p.lista, p.lista_nivel))
     efetivo = pq_estilos.props_de_bloco(bf)
     for k in CAMPOS_PARAGRAFO:
         valor = efetivo.get(k)
@@ -147,7 +156,8 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
         p.nivel = NIVEL_CORPO if nivel is None else nivel
     p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     lista = bloco.textList()
-    if lista is not None:
+    if lista is not None and p.lista is None:
+        # QTextList de HTML colado de outro programa: o tipo simples (0.1.4).
         p.numeracao = ("marcadores" if lista.format().style() in _MARCAS
                        else "numeracao")
     doc = bloco.document()
@@ -321,7 +331,10 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
 def extrair_blocos(documento_qt: QTextDocument, largura_corpo_tw: int = _CORPO_PADRAO_TW) -> list:
     """Blocos de um documento de cabecalho ou rodape."""
     res = pq_estilos.Resolvedor(pq_estilos.catalogo(documento_qt))
-    return _blocos(documento_qt.rootFrame().begin(), largura_corpo_tw, res=res)
+    blocos = _blocos(documento_qt.rootFrame().begin(), largura_corpo_tw, res=res)
+    tipos_dos_paragrafos(Documento(paragrafos=blocos, estilos=res.estilos,
+                                   numeracao=listas.catalogo(documento_qt)))
+    return blocos
 
 
 def extrair(documento_qt: QTextDocument) -> Documento:
@@ -331,4 +344,6 @@ def extrair(documento_qt: QTextDocument) -> Documento:
     estilos = pq_estilos.catalogo(documento_qt)
     paragrafos = _blocos(documento_qt.rootFrame().begin(), largura_corpo,
                          res=pq_estilos.Resolvedor(estilos))
-    return Documento(paragrafos=paragrafos, estilos=estilos)
+    doc = Documento(paragrafos=paragrafos, estilos=estilos, numeracao=listas.catalogo(documento_qt))
+    tipos_dos_paragrafos(doc)
+    return doc

@@ -38,7 +38,11 @@ Implementada no M3 (0.0.6). Ficou assim:
   (o PDF e a impressora usam a mesma, desde o M7).
 - `editdoc/interface/layout_paginado.py` guarda o `QTextDocument` com `pageSize` igual ao corpo
   da página e `documentMargin` zero. O layout roda num dispositivo de 1440 dpi: uma unidade vira
-  um twip, a unidade do `.docx`.
+  um twip, a unidade do `.docx`. Medido na 0.1.4 (Qt 6.11.2): o layout escala as margens
+  verticais do bloco (`topMargin` e `bottomMargin` em px96, × 15), mas não as horizontais
+  (`leftMargin`, `rightMargin` e `textIndent` ficam na unidade do dispositivo). Por isso o
+  espaço antes e depois vai em px96 e os recuos em twips (`ponte_qt/estilos.py`). Até a
+  0.1.3 os recuos iam em px96 e apareciam 15 vezes menores.
 - `editdoc/modelo/folhas.py` faz o mapeamento entre documento (twips) e tela (pixels lógicos) sem
   Qt: é testável sem janela.
 - `editdoc/interface/painel_documento.py` é o editor. Mantém a API do `QTextEdit` (nomes e sinais)
@@ -157,8 +161,9 @@ Implementados no M6 (0.0.9).
   `Documento.estilos` leva o catálogo, fora da comparação de documentos.
 - Arquivo: `formato_docx/estilos.py`. O catálogo guarda o `styles.xml` original; ao gravar,
   o estilo não alterado volta byte a byte, e o alterado só tem reescritos os atributos que
-  mudaram. O `numPr` sai dos estilos (o `numbering.xml` de origem não volta): a lista do
-  estilo passa ao parágrafo na leitura. O tema volta igual, para as fontes de tema.
+  mudaram. O `numPr` do estilo fica no estilo desde a 0.1.4 (até a 0.1.3 ele saía e a lista
+  passava ao parágrafo, porque o `numbering.xml` de origem não voltava; ver "Listas e
+  numeração"). O tema volta igual, para as fontes de tema.
 - Desfazer: o catálogo vigente fica em JSON no formato do quadro raiz do documento. Trocar
   esse formato entra no desfazer do Qt, no mesmo passo do bloco de edição aberto (medido no
   Qt 6.11); o PySide 6.11 não exporta `QAbstractUndoItem`. O XML original fica no
@@ -275,8 +280,10 @@ vinculada) e equação.
   segue os `r:*` e o `o:relid` do XML e as relações de cada parte, com o tipo de conteúdo
   do Override ou do Default. Falha (relação quebrada, parte de tipo proibido, nome que o
   escritor usa, limite) = o objeto não é preservado e vira `OBJETO_PERDIDO` (ou `IMAGEM`),
-  com perda. Referência a nota, nota de fim e comentário e `w:numPr` saem de dentro do
-  objeto, com aviso: essas partes não voltam, e a referência ficaria pendurada.
+  com perda. Referência a nota, nota de fim e comentário saem de dentro do objeto, com
+  aviso: essas partes não voltam, e a referência ficaria pendurada. O `w:numPr` fica desde
+  a 0.1.4 (o `numbering.xml` volta inteiro); só sai, com LISTA_EM_CAIXA, quando a
+  numeração do arquivo não pôde ser lida.
 - Escrita (`GravadorOpacos`): o XML volta igual, com os `r:*` e `o:relid` trocados pelos
   rIds novos da parte hospedeira; cada parte ganha o nome de origem se livre (senão um
   sufixo), as relações dela (Id mantido, alvo recalculado: o XML da parte não muda) e um
@@ -390,11 +397,77 @@ Limite: o controle de conteúdo (`w:sdt`) continua achatado com aviso. O do sum�
 envolve parágrafos inteiros (bloco), e as marcas no fluxo ficam dentro dos parágrafos: o
 escritor teria de subir o `w:sdt` para fora deles, o que não cai no mesmo mecanismo.
 
+## Listas e numeração
+
+Implementadas na 0.1.4.
+
+- Modelo (`modelo/numeracao.py`, sem Qt): `Numeracao` é o catálogo do `numbering.xml`
+  (`Documento.numeracao`, fora da comparação, como os estilos): `Abstrata` (os 9 `Nivel`),
+  `Instancia` (numId, a abstrata e as `Sobrescrita`, startOverride e/ou `w:lvl`) e
+  `ImagemMarcador`. O parágrafo guarda só a referência direta: `Paragrafo.lista` (numId; 0
+  desliga a lista do estilo) e `lista_nivel` (ilvl); None herda. O estilo guarda o numPr
+  dele (`Estilo.lista`, `lista_nivel`). `lista_efetiva` resolve: o direto, senão o da cadeia
+  de estilos; sem ilvl, o do estilo, depois o nível cujo `w:pStyle` é o estilo do
+  parágrafo, depois 0. O `w:numStyleLink` leva à abstrata do estilo de numeração.
+- Cálculo (`Contador`), como o Word, e o que o oráculo de `tests/teste_listas.py` fixa: os
+  contadores são da abstrata (instâncias sem sobrescrita continuam umas das outras, com
+  parágrafos comuns no meio); a instância com sobrescrita reinicia o nível na primeira vez
+  que aparece, e o nível passa a começar no valor dela; um item no nível L reinicia os
+  níveis abaixo (`w:lvlRestart` r: só quando aparece um nível acima de r; 0: nunca); o
+  nível não usado desde o último reinício mostra o início menos 1 ("1.0.1"); `w:isLgl`
+  mostra os níveis em decimal. O mesmo `Contador` serve a tela, o PDF, a impressão e o `.txt`.
+- Arquivo (`formato_docx/numeracao.py`): leitura de tudo, com o XML guardado
+  (`xml_original`) e as relações do `numbering.xml` (imagens dos marcadores de figura), cujo
+  fecho é capturado como o de um objeto opaco. O que o Word não aceitaria sai na leitura,
+  com aviso LISTA: id repetido, `w:num` para abstrata inexistente, `lvlPicBulletId` sem
+  `numPicBullet`, marcador de figura com relação quebrada. Os filhos de pPr e rPr dos níveis
+  vão para a ordem do esquema (como no `styles.xml`). Escrita: sem acréscimo, os bytes
+  originais; com acréscimo, as abstratas novas depois da última abstrata e as instâncias
+  novas depois da última instância, o resto do XML como veio. O EditDoc nunca altera uma
+  definição do arquivo: reiniciar, continuar, definir valor e trocar o formato criam
+  instâncias ou abstratas novas (a mesma abstrata da galeria é reaproveitada).
+- Qt (`ponte_qt/listas.py`). Decisão: o número é pintado pelo EditDoc, não pelo QTextList.
+  O QTextList conta só a posição do bloco na própria lista (um nível), tem só disco,
+  círculo, quadrado e 1/a/A/i/I, e põe o número colado à esquerda do texto. O prefixo e o
+  sufixo do `QTextListFormat` (`numberPrefix`) dariam "1.1." só com um QTextList por item e
+  o prefixo recalculado a cada mudança, e ainda sem a fonte do símbolo, sem marcador de
+  figura, sem o recuo deslocado e sem a tabulação do Word. Assim: o bloco leva o numId e o
+  ilvl diretos em propriedades (`PROP_LISTA`, `PROP_LISTA_NIVEL`); o catálogo do arquivo
+  fica num atributo do documento e os acréscimos em JSON no quadro raiz (entram no
+  desfazer, como os estilos); o `Numerador` do documento recalcula os números só quando a
+  estrutura muda (bloco a mais ou a menos, formato de bloco, catálogo), e `desenhar_rotulos`
+  pinta na função única da folha. O texto da primeira linha começa onde o Word o põe (o Qt
+  só sabe disso pelo `textIndent`): o recuo de verdade fica em `PROP_RECUO_REAL` e o
+  `textIndent` recebe o visual (`ajustar_recuos`), que entra no mesmo passo de desfazer da
+  edição (`joinPreviousEditBlock`) ou antes de o desfazer ser zerado ao abrir. Quem grava
+  um recuo da primeira linha novo tira `PROP_RECUO_REAL`; `props_de_bloco` lê o de verdade.
+  O recuo que o nível dá (`w:lvl/w:pPr/w:ind`) fica entre o estilo e o direto
+  (`Resolvedor.paragrafo` com a lista), e não vira formatação direta ao salvar.
+- Tabulação depois do número (`w:suff` tab): com recuo deslocado e o número antes do recuo
+  esquerdo, o texto vai para o recuo esquerdo (ou para uma tabulação do nível antes dele);
+  senão, para a próxima tabulação do nível ou a padrão do documento (`w:defaultTabStop`).
+  `space`: um espaço; `nothing`: colado.
+- Símbolo: a fonte do rPr do nível (Symbol, Wingdings) quando instalada e com o glifo; senão
+  o caractere Unicode parecido (`texto_visivel`), que é também o do `.txt`.
+- Copiar e colar: o HTML do Qt não leva propriedade de usuário. Copiar põe as listas dos
+  blocos (e as definições) em `application/x-editdoc-listas`; colar devolve os blocos às
+  listas, importando as definições quando o documento é outro. `<ol>` e `<ul>` de outro
+  programa viram lista do EditDoc.
+- Medido (offscreen, 3000 itens numerados): digitar 9 ms (sem lista, 7 ms); Enter 50 ms
+  (recalcular 15 ms e ajustar os recuos 27 ms). As larguras dos números ficam em cache.
+
+Limites: a definição de uma lista do arquivo não é editada (fonte, recuo ou texto de um
+nível); a tabulação depois do número não considera as tabulações próprias do parágrafo
+(`w:tabs` do pPr, que o modelo não guarda); o número dentro de caixa de texto não aparece
+(a caixa é um quadro), mas volta ao arquivo.
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
-0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3) ou descartado com
-aviso. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
+0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3; definições de
+numeração, desde a 0.1.4) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
+LISTA_NIVEL só para referência quebrada, nível fora de 0 a 8 ou numeração acima dos
+limites, e LISTA_EM_CAIXA só quando a numeração do arquivo não pôde ser lida. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
 confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
 não pede confirmação. Comentários, revisões, notas de rodapé de verdade e controles de
 conteúdo entram aqui até as versões que os implementam. Nenhuma parte do pacote sai sem
@@ -421,6 +494,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M6 Estilos e faixa final | 0.0.9 (feito) | galeria, abas Inserir, Layout e Exibir (abas contextuais de tabela e imagem ficaram para depois) |
 | M7 Impressão e PDF | 0.0.10 (feito) | imprimir, pré-visualizar, exportar PDF (e texto `.txt`) |
 | M8 Polimento | 0.1.0 (feito) | recuperação automática, preferências, acessibilidade, documentação final |
+| Listas | 0.1.4 (feito) | numbering.xml inteiro, números como o Word, galeria, vários níveis, teclado |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em

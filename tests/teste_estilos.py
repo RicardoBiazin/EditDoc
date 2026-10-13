@@ -149,10 +149,12 @@ def testar_word_ida_e_volta() -> None:
     checa_igual(_c14n(raiz.find(q("docDefaults"))), _c14n(original.find(q("docDefaults"))),
                 "docDefaults volta igual (com w14:ligatures)")
     checa(partes.get("word/theme/theme1.xml") == fx.TEMA_DO_WORD.encode(), "o tema volta com os mesmos bytes")
-    checa(_estilo_xml(raiz, "Commarcadores").find(q("pPr") + "/" + q("numPr")) is None,
-          "o numPr sai do estilo (o numbering de origem nao volta)")
-    checa(b"<w:numPr>" in partes["word/document.xml"].split(b"item da lista")[0].rsplit(b"<w:p>", 1)[1],
-          "...e o paragrafo da lista leva o numPr direto")
+    # Reescritas na 0.1.4 (decisao do M6 revertida): o numbering.xml de origem volta
+    # inteiro, entao o numPr fica no estilo e o paragrafo herda, sem numPr direto.
+    checa(_estilo_xml(raiz, "Commarcadores").find(q("pPr") + "/" + q("numPr")) is not None,
+          "o numPr fica no estilo (o numbering de origem volta)")
+    checa(b"<w:numPr>" not in partes["word/document.xml"].split(b"item da lista")[0].rsplit(b"<w:p>", 1)[1],
+          "...e o paragrafo da lista herda do estilo, sem numPr direto")
     checa(_estilo_xml(raiz, "ComRevisao").find(".//" + q("rPrChange")) is None,
           "o rPrChange do estilo sai (o aviso FORMATACAO disse)")
     checa_igual(ordem.validar(partes), [], "o pacote gravado passa no validador")
@@ -224,7 +226,10 @@ def testar_ponte_qt() -> None:
     checa_igual(pq.estilo_do_bloco(titulo.blockFormat()), "Ttulo1", "o id do estilo fica no bloco")
     checa_igual(pq.nivel_do_bloco(titulo.next()), None, "contraprova: paragrafo Normal sem nivel")
     volta = de_qt.extrair(qdoc)
-    checa(normalizar(volta) == normalizar(Documento(paragrafos=doc.paragrafos)),
+    # 0.1.4: o documento de comparacao leva os catalogos (estilos e numeracao): sem eles o tipo
+    # da lista herdada do estilo pareceria uma lista a criar.
+    checa(normalizar(volta) == normalizar(Documento(paragrafos=doc.paragrafos, estilos=doc.estilos,
+                                                    numeracao=doc.numeracao)),
           "Qt -> modelo devolve o mesmo modelo (estilos e formatacao direta)")
     checa_igual(volta.paragrafos[0].runs[0].tamanho_meio_pt, None,
                 "o tamanho do estilo nao vira formatacao direta na volta")
@@ -302,7 +307,8 @@ def testar_lista_com_estilo() -> None:
     _por(p, 0)
     ed.aplicar_estilo(p, "heading 2")
     bloco = p.document().firstBlock()
-    checa(bloco.textList() is not None, "o paragrafo continua na lista")
+    from editdoc.edicao import listas as ed_listas
+    checa(ed_listas.eh_item(p, bloco), "o paragrafo continua na lista")  # 0.1.4: sem QTextList
     m = de_qt.extrair(p.document()).paragrafos[0]
     checa_igual((m.estilo, m.numeracao), ("Heading2", "marcadores"), "modelo: estilo e lista juntos")
 

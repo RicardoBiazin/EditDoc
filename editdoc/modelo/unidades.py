@@ -14,6 +14,8 @@ EMU_POR_CM = 360000
 
 #: Passo do botao "aumentar recuo": 0,5 polegada a 96 dpi, o mesmo do Word.
 RECUO_PADRAO_PX = 48
+#: O mesmo passo em twips: e' nessa unidade que o recuo fica no formato do bloco (0.1.4).
+RECUO_PADRAO_TW = 720
 
 
 def px_de_twips(twips: float) -> float:
