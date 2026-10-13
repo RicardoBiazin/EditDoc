@@ -180,8 +180,12 @@ def testar_leitura() -> None:
         checa("preservad" in texto and "sai do arquivo" not in texto and "perde" not in texto
               and not mod_avisos.construir(codigo, 6).perde_ao_salvar,
               f"{codigo}: o texto diz preservado e nao pede confirmacao de perda")
+    # 0.1.5: o texto da caixa passou a ser editavel; o aviso diz isso (reescrita do texto
+    # esperado da 0.1.2, "mas nao podem ser editadas nesta versao", que ficou falso).
     checa_igual(mod_avisos.construir("CAIXA_DE_TEXTO", 6).texto,
-                "6 caixas de texto ou formas são preservadas, mas não podem ser editadas nesta versão.",
+                "6 caixas de texto ou formas são preservadas. O texto de uma caixa de texto pode "
+                "ser editado (duplo clique na caixa); a forma em si (posição, tamanho, cor) e as "
+                "formas sem texto não são editáveis nesta versão.",
                 "o texto do aviso das caixas de texto")
     checa(mod_avisos.construir("OBJETO_PERDIDO", 1).perde_ao_salvar,
           "contraprova: o objeto que nao pode ser preservado continua pedindo confirmacao")
@@ -374,9 +378,15 @@ def testar_limites() -> None:
     partes = fx.partes_de(escrever(modelo))
     checa(obj is not None and b"ligatures" in obj.xml and ordem.validar(partes) == [],
           "rPr do run do objeto com filho w14: volta como veio, e o validador aceita")
+    # 0.1.5: o run comum tambem guarda as extensoes do Word (w14, w15...) nos extras, entao o
+    # validador as aceita fora do objeto; a contraprova da 0.1.4 passa a usar um namespace
+    # que nao e' extensao do Word, que continua recusado.
+    checa(not ordem.validar_ordem(
+        etree.fromstring(f'<w:r xmlns:w="{W}" xmlns:w14="{W14}"><w:rPr><w14:ligatures/></w:rPr></w:r>')),
+          "o mesmo rPr num run comum do EditDoc e' aceito desde a 0.1.5 (extensao do Word)")
     checa(any("filho desconhecido" in p for p in ordem.validar_ordem(
-        etree.fromstring(f'<w:r xmlns:w="{W}" xmlns:w14="{W14}"><w:rPr><w14:ligatures/></w:rPr></w:r>'))),
-          "contraprova: o mesmo rPr num run comum do EditDoc e' recusado")
+        etree.fromstring(f'<w:r xmlns:w="{W}" xmlns:x="urn:outro"><w:rPr><x:coisa/></w:rPr></w:r>'))),
+          "contraprova: filho de namespace que nao e' extensao do Word num run comum e' recusado")
 
     muitos = "".join(f"<w:p>{fx.caixa_de_texto(ident=1000 + i)}</w:p>" for i in range(300))
     dados = fx.docx_com_corpo_de_objetos(muitos, [fx.RELACOES_OBJETOS[-1]])
@@ -551,7 +561,8 @@ def testar_janela() -> None:
         with dialogos(avisar=proibido("avisar")):
             janela = gerente.abrir(str(arquivo))
         texto = janela.barra_aviso.texto_completo()
-        checa("4 caixas de texto ou formas são preservadas, mas não podem ser editadas nesta versão."
+        # 0.1.5: texto novo do aviso (o da caixa e' editavel); a checagem continua a mesma.
+        checa("4 caixas de texto ou formas são preservadas. O texto de uma caixa de texto pode"
               in texto and "sai do arquivo" not in texto,
               "a barra diz que as caixas sao preservadas, e nao que saem do arquivo")
         painel = janela.painel

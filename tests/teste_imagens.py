@@ -248,9 +248,16 @@ def testar_leitura_do_word() -> None:
         b'Target="http://exemplo.invalid/x.png"', b'Target="http://exemplo.invalid/x.png" TargetMode="External"'))
     checa(not imagens_de(modelo) and any(a.codigo == "IMAGEM" for a in avisos),
           "imagem vinculada a endereco externo: aviso IMAGEM, nada e' baixado")
+    # 0.1.5: o recorte e' guardado (Imagem.recorte) e volta ao arquivo; reescrita da checagem
+    # da 0.1.4 ("com aviso de formatacao, o recorte se perde"), que passou a ser falsa.
     modelo, avisos = ler(docx_com_desenho(desenho(extra='<a:srcRect l="10000"/>')))
-    checa(len(imagens_de(modelo)) == 1 and any(a.codigo == "FORMATACAO" for a in avisos),
-          "imagem recortada fica, com aviso de formatacao (o recorte se perde)")
+    checa(len(imagens_de(modelo)) == 1 and imagens_de(modelo)[0].recorte == (10000, 0, 0, 0)
+          and not any(a.codigo == "FORMATACAO" for a in avisos),
+          "imagem recortada fica, com o recorte guardado e sem aviso (0.1.5)")
+    modelo, avisos = ler(docx_com_desenho(desenho(extra='<a:srcRect l="dez"/>')))
+    checa(len(imagens_de(modelo)) == 1 and imagens_de(modelo)[0].recorte is None
+          and any(a.codigo == "FORMATACAO" for a in avisos),
+          "contraprova: recorte ilegivel fica de fora, com aviso de formatacao")
 
 
 # -- Qt -----------------------------------------------------------------------

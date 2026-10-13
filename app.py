@@ -34,6 +34,7 @@ OBRIGATORIOS = (
     "PySide6.QtWidgets",
     "PySide6.QtNetwork",
     "PySide6.QtPrintSupport",
+    "PySide6.QtSvg",
     "lxml.etree",
     "editdoc.configuracao",
     "editdoc.idioma",
@@ -55,6 +56,9 @@ OBRIGATORIOS = (
     "editdoc.modelo.folhas",
     "editdoc.modelo.imagem",
     "editdoc.ponte_qt.imagens",
+    "editdoc.ponte_qt.vetoriais",
+    "editdoc.ponte_qt.propriedades",
+    "editdoc.formato_docx.propriedades",
     "editdoc.edicao.tabelas",
     "editdoc.edicao.imagens",
     "editdoc.interface.seletor_grade",
@@ -70,9 +74,10 @@ OBRIGATORIOS = (
     "editdoc.interface.tema",
 )
 
-#: Formatos de imagem que o .docx traz e o Qt precisa decodificar. JPEG e GIF vem de
-#: plugins (imageformats/qjpeg.dll, qgif.dll): sem eles a imagem vira quadro cinza.
-FORMATOS_DE_IMAGEM = ("png", "jpeg", "gif", "bmp")
+#: Formatos de imagem que o .docx traz e o Qt precisa decodificar. JPEG, GIF e TIFF vem de
+#: plugins (imageformats/qjpeg.dll, qgif.dll, qtiff.dll): sem eles a imagem vira quadro cinza.
+#: O SVG (0.1.5) vem do QtSvg (Qt6Svg.dll), conferido renderizando um.
+FORMATOS_DE_IMAGEM = ("png", "jpeg", "gif", "bmp", "tiff")
 
 AUMID = "RicardoBiazin.EditDoc"
 
@@ -119,6 +124,35 @@ def _formatos_de_imagem(falhas: list[str]) -> None:
     for formato in FORMATOS_DE_IMAGEM:
         if formato not in suportados:
             falhas.append(f"o Qt nao decodifica {formato}: falta o plugin de imagem no pacote")
+    _previas_vetoriais(falhas)
+
+
+def _previas_vetoriais(falhas: list[str]) -> None:
+    """0.1.5: TIFF (plugin), SVG (QtSvg) e, no Windows, EMF e WMF (GDI) viram previa."""
+    try:
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        from PySide6.QtGui import QColor, QImage
+
+        from editdoc.ponte_qt import vetoriais
+        amostra = QImage(24, 12, QImage.Format.Format_RGB32)
+        amostra.fill(QColor("#204080"))
+        dados = QByteArray()
+        buffer = QBuffer(dados)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        amostra.save(buffer, "TIFF")
+        buffer.close()
+        casos = [("TIFF", bytes(dados.data()), "#204080"),
+                 ("SVG", b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">'
+                         b'<rect width="20" height="10" fill="#00a000"/></svg>', "#00a000")]
+        if sys.platform == "win32":
+            casos += [("EMF", vetoriais.metafile_de_exemplo("emf"), "#e00000"),
+                      ("WMF", vetoriais.metafile_de_exemplo("wmf"), "#e00000")]
+        for nome, bruto, cor in casos:
+            img = vetoriais.renderizar(bruto)
+            if img.isNull() or vetoriais.cor_dominante(img).name() != cor:
+                falhas.append(f"a previa de {nome} nao foi renderizada (plugin ou modulo faltando)")
+    except Exception as erro:  # noqa: BLE001 - interessa o motivo, qualquer um
+        falhas.append(f"previa de imagem vetorial falhou: {erro}")
 
 
 def _pdf_e_impressao(falhas: list[str]) -> None:

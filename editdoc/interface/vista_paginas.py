@@ -42,6 +42,7 @@ from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import listas as pq_listas
+from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
                                    VAO_ENTRE_FOLHAS_PX, Mapa, alinhar_ao_dispositivo,
                                    limitar_zoom, passo_de_zoom, teto_de_zoom)
@@ -201,6 +202,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     layout.doc.documentLayout().draw(painter, ctx)
     # Numeros e marcadores das listas (0.1.4): pintados aqui, na funcao unica da folha.
     pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
+    # Bordas de paragrafo e de trecho e preenchimento das tabulacoes (0.1.5).
+    pq_props.desenhar(painter, layout.doc, ctx.clip)
     if marcas:
         desenhar_marcas(painter, layout.doc, ctx.clip)
     painter.restore()
@@ -259,6 +262,7 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             ctx.selections = [sel]
         faixa.doc.documentLayout().draw(painter, ctx)
         pq_listas.desenhar_rotulos(painter, faixa.doc, None)
+        pq_props.desenhar(painter, faixa.doc, None)
         if marcas:
             desenhar_marcas(painter, faixa.doc, None)
         painter.restore()

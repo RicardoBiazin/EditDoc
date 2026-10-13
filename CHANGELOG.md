@@ -1,3 +1,77 @@
+## 0.1.5 - 2026-10-13
+
+Formatação sem perda, texto das caixas de texto editável e imagens EMF, WMF, TIFF e SVG na
+tela.
+
+Defeito: num `.docx` real o EditDoc avisava "formatação não é preservada" (1, 43 e 157
+ocorrências em três arquivos de uso real), "caixas de texto não podem ser editadas" e "imagem
+em formato que o EditDoc não mostra". Causas: o leitor só guardava as propriedades de run e
+de parágrafo que o modelo tinha campo; o resto (tabulações, bordas, sombreamento, realce,
+maiúsculas, espaçamento, recorte de imagem...) saía ao salvar, com aviso, ou sem aviso
+nenhum ("neutras": idioma, noProof, keepNext, a marca de parágrafo). O controle de conteúdo
+(o quadro "Sumário" do Word) era achatado. A caixa de texto era um objeto opaco sem caminho
+de edição. EMF, WMF, TIFF e SVG não tinham decodificador.
+
+- Propriedades preservadas (`formato_docx/propriedades.py`, `Run.extras`,
+  `Paragrafo.extras`, e desde esta versão também `Tabela`, `Linha` e `Celula`): o XML
+  original do que o modelo não representa vai para os extras, em forma canônica (c14n), e
+  volta ao arquivo junto com o que o escritor gera, na ordem do esquema. Os "detalhes" de
+  propriedades representadas (`w:u` duplo, `w:dstrike`, `w:color` com tema, `w:rFonts` com
+  fonte de tema, `w:jc start`, `w:ind` com `leftChars`, `w:spacing` com entrelinha exata) só
+  voltam enquanto o campo do modelo continua com o valor que eles dão: mudar o sublinhado,
+  a cor ou o alinhamento troca só aquilo. `w:szCs` diferente do `w:sz` fica. Extensões do
+  Word (`w14:ligatures`, `w14:shadow`...) ficam, e a raiz declara o prefixo no
+  `mc:Ignorable`. Só sai, com aviso, o que o esquema não tem (FORMATACAO) e a revisão de
+  formatação (REVISAO). Num arquivo real de 58 páginas, as 157 formatações perdidas
+  (124 `w:bdr`, 17 recortes de imagem, 12 `w:tabs`, 2 `w:shd`, 1 `w:spacing`, 1 `w:pBdr`)
+  voltam todas; noutro, os 41 realces, a maiúscula e o versalete.
+- Na tela (`ponte_qt/propriedades.py`): realce e sombreamento como fundo, maiúsculas,
+  versalete, espaçamento entre letras e escala; tabulações próprias do parágrafo (com o
+  pontilhado pintado), fundo e bordas do parágrafo (vizinhos de mesma borda formam um
+  quadro, como no Word), borda de trecho e entrelinha exata ou mínima. Recorte de imagem
+  (`Imagem.recorte`, `a:srcRect`) guardado, gravado e aplicado na prévia. Digitar herda o
+  rPr do vizinho, Enter copia o pPr para o parágrafo novo, copiar e colar leva os extras
+  (`application/x-editdoc-propriedades`), Limpar formatação os tira.
+- Medido no Qt 6.11.2, dispositivo de 1440 dpi: o espaçamento absoluto entre letras, a
+  posição da tabulação e a altura fixa da linha são escalados como px96 (× 15); vão em
+  twips / 15. A tabulação do Qt conta da posição da linha; a do Word, da margem: o
+  EditDoc desconta o recuo esquerdo.
+- Controles de conteúdo (`MarcaConteudo`): o de bloco (sumário, `docPartObj`) e o de
+  parágrafo viram marcas de início (com o `sdtPr` e o `sdtEndPr`) e de fim no fluxo, como os
+  campos da 0.1.3; o escritor grava o `w:sdt` por fora dos parágrafos que o de bloco envolve.
+  `marcas.equilibrar` tira o par cruzado ou sem ponta (aviso CONTEUDO_INCOMPLETO, com
+  perda: o texto fica) e troca `w:id` repetido. O de linha ou célula de tabela continua
+  achatado (CONTEUDO_CONTROLADO). O validador aceita a célula, o cabeçalho e o rodapé que
+  terminam num controle cujo conteúdo termina em parágrafo.
+- Caixa de texto editável (`formato_docx/caixas.py`, `interface/dialogo_caixa.py`): duplo
+  clique na caixa, Enter com ela selecionada ou "Editar texto da caixa" no menu de contexto
+  abrem o editor do próprio EditDoc (o `PainelDocumento` numa página da largura da caixa,
+  com negrito, itálico e sublinhado). OK regrava o `w:txbxContent` dentro do XML do objeto,
+  no Choice (`wps:txbx`) e no Fallback (`v:textbox`); o resto da forma fica idêntico, e o
+  link ganha relação nova. Um passo de desfazer. Só é editável o que volta sem perda
+  (conferido regravando e relendo na hora); a caixa com tabela, imagem, forma, campo,
+  controle de conteúdo, marcador, nota, comentário, equação ou revisão abre só para
+  leitura, com o motivo. Na tela, a caixa editável aparece do tamanho do `wp:extent` (a
+  flutuante também, no ponto da âncora) com o texto composto dentro.
+- Imagens (`ponte_qt/vetoriais.py`, `modelo/imagem.previa_possivel`): TIFF pelo plugin
+  `qtiff`, SVG pelo `QtSvg` (recusado se tiver DOCTYPE ou referência de fora), EMF e WMF
+  pelo GDI do Windows por ctypes, registro a registro, com teto de registros e de tempo, num
+  bitmap do tamanho da tela (nunca do que o arquivo declara) e com transparência (duas
+  passadas, fundo branco e preto). O leitor confere o cabeçalho e a estrutura dos
+  registros antes (arquivo cortado, registro de tamanho impossível, dimensões absurdas: o
+  quadro). A imagem que aparece não dá mais aviso; IMAGEM_FORMATO fica para a vinculada a
+  arquivo externo (nunca lida; o quadro mostra o nome), a danificada e a enorme. Os bytes
+  originais voltam iguais. A autoverificação do `.exe` renderiza um TIFF, um SVG, um EMF e
+  um WMF.
+- Avisos: CAIXA_DE_TEXTO diz que o texto da caixa se edita; ESPACAMENTO_LINHA não aparece
+  mais (a entrelinha exata volta); CONTEUDO_INCOMPLETO é novo.
+- Testes: `teste_formatacao_preservada.py`, `teste_caixas_texto.py` e
+  `teste_imagens_vetoriais.py`. Checagens reescritas, com o motivo no próprio teste: o
+  recorte de imagem deixou de ser perda (`teste_imagens`); a extensão `w14` no rPr de um
+  run comum passou a ser aceita, e a contraprova usa um namespace que não é do Word
+  (`teste_objetos_opacos`); o texto do aviso das caixas (`teste_objetos_opacos`, dois
+  lugares).
+
 ## 0.1.4 - 2026-10-13
 
 Numeração de listas completa: o `numbering.xml` volta inteiro, os números aparecem como no

@@ -11,6 +11,10 @@ para o zoom maximo numa pagina A4), e um quadro cinza para imagem acima do teto
 de pixels (modelo/imagem.py). Uma foto de 48 megapixels nao ocupa 190 MB so'
 para aparecer com 16 cm na pagina.
 
+Recorte (0.1.5, a:srcRect): a imagem recortada usa outro nome de recurso, o do registro com
+"#recorte=l,t,r,b" no fim. A previa desse nome e' a previa recortada; os bytes continuam os
+mesmos (o nome sem o sufixo acha o registro). O recorte volta do nome, inclusive no HTML colado.
+
 `DocumentoQt` e' o QTextDocument do editor: quando falta o recurso (imagem colada
 de outra janela, ou depois de desfazer), ele o busca no registro.
 """
@@ -44,8 +48,47 @@ def registrar(dados: bytes, formato: str) -> str:
     return nome
 
 
+_SUFIXO_RECORTE = "#recorte="
+
+
+def nome_recortado(nome: str, recorte) -> str:
+    """O nome do recurso da imagem com o recorte (0.1.5). Sem recorte, o proprio nome."""
+    if not recorte or not any(recorte):
+        return nome
+    return nome + _SUFIXO_RECORTE + ",".join(str(int(v)) for v in recorte)
+
+
+def separar_recorte(nome: str) -> tuple[str, tuple | None]:
+    """(nome do registro, recorte) de um nome de recurso."""
+    base, sep, resto = nome.partition(_SUFIXO_RECORTE)
+    if not sep:
+        return nome, None
+    try:
+        valores = tuple(int(x) for x in resto.split(","))
+    except ValueError:
+        return base, None
+    if len(valores) != 4 or not all(-1000000 <= v <= 100000 for v in valores):
+        return base, None
+    return base, valores
+
+
+def recortar(img: QImage, recorte) -> QImage:
+    """A previa com o recorte aplicado. Recorte negativo (margem a mais) ou que nao deixa
+    nada: a imagem inteira."""
+    if not recorte or img.isNull():
+        return img
+    l, t, r, b = (max(0, v) for v in recorte)
+    if l + r >= 100000 or t + b >= 100000:
+        return img
+    w, h = img.width(), img.height()
+    x0, y0 = round(w * l / 100000), round(h * t / 100000)
+    largura = max(1, round(w * (100000 - l - r) / 100000))
+    altura = max(1, round(h * (100000 - t - b) / 100000))
+    return img.copy(x0, y0, min(largura, w - x0), min(altura, h - y0))
+
+
 def dados_de(nome: str) -> tuple[bytes, str] | None:
-    return _REGISTRO.get(nome)
+    return _REGISTRO.get(separar_recorte(nome)[0])
 
 
 def eh_nosso(nome: str) -> bool:
@@ -86,10 +129,12 @@ def previa(dados: bytes) -> QImage:
 
 def adicionar_recurso(doc: QTextDocument, nome: str) -> bool:
     """Poe a previa da imagem `nome` como recurso de `doc`. False se o nome nao e' conhecido."""
-    registro = _REGISTRO.get(nome)
+    base, recorte = separar_recorte(nome)
+    registro = _REGISTRO.get(base)
     if registro is None:
         return False
-    doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(nome), previa(registro[0]))
+    doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(nome),
+                    recortar(previa(registro[0]), recorte))
     return True
 
 
@@ -137,8 +182,9 @@ class DocumentoQt(QTextDocument):
         """
         if tipo in (QTextDocument.ResourceType.ImageResource,
                     QTextDocument.ResourceType.ImageResource.value):
-            registro = _REGISTRO.get(url.toString())
+            base, recorte = separar_recorte(url.toString())
+            registro = _REGISTRO.get(base)
             if registro is not None:
-                return previa(registro[0])
+                return recortar(previa(registro[0]), recorte)
             return quadro_cinza()
         return None

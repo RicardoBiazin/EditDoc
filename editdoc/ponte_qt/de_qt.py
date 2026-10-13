@@ -36,6 +36,7 @@ from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
 from editdoc.modelo.numeracao import tipos_dos_paragrafos
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
+from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
                                       ler_json)
@@ -92,6 +93,8 @@ def _run(frag_texto: str, cf: QTextCharFormat) -> Run:
         run.fonte = fams[0] if fams else None
     if cf.hasProperty(P.ForegroundBrush):
         run.cor_hex = cf.foreground().color().name()[1:].upper()
+    # Propriedades preservadas (0.1.5): o XML dos extras volta como veio.
+    run.extras = pq_props.extras_de_rpr(cf)
     return run
 
 
@@ -99,6 +102,7 @@ def imagem_do_formato(doc: QTextDocument, cf: QTextCharFormat) -> Imagem | None:
     """O run de imagem de um fragmento com QTextImageFormat. None se a imagem nao e' conhecida."""
     fmt = cf.toImageFormat()
     nome = fmt.name()
+    recorte = imagens.separar_recorte(nome)[1]
     registro = imagens.dados_de(nome)
     if registro is None:
         # Imagem que nao veio do EditDoc: so' se o recurso estiver no documento.
@@ -118,7 +122,7 @@ def imagem_do_formato(doc: QTextDocument, cf: QTextCharFormat) -> Imagem | None:
     return Imagem(dados=dados, formato=formato,
                   largura_emu=max(1, round(largura * EMU_POR_PX)),
                   altura_emu=max(1, round(altura * EMU_POR_PX)),
-                  descricao=fmt.toolTip() or "")
+                  descricao=fmt.toolTip() or "", recorte=recorte)
 
 
 def _run_direto(texto: str, cf: QTextCharFormat, sid_par, res) -> Run:
@@ -155,6 +159,7 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
     if nivel != base.get("nivel"):
         p.nivel = NIVEL_CORPO if nivel is None else nivel
     p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+    p.extras = pq_props.extras_de_ppr(bf)
     lista = bloco.textList()
     if lista is not None and p.lista is None:
         # QTextList de HTML colado de outro programa: o tipo simples (0.1.4).
@@ -208,7 +213,8 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                         continue
                     imagem = imagem_do_formato(doc, cf)
                     if imagem is not None:
-                        p.runs.append(Run(texto=CARACTERE_OBJETO, imagem=imagem, link=link))
+                        p.runs.append(Run(texto=CARACTERE_OBJETO, imagem=imagem, link=link,
+                                          extras=pq_props.extras_de_rpr(cf)))
             else:
                 run = _run_direto(frag.text(), cf, p.estilo, res)
                 run.link = link
@@ -275,6 +281,8 @@ def _celula_de_formato(celula: Celula, fmt) -> dict:
     celula.sombreamento_hex = sombra if isinstance(sombra, str) else None
     valign = dado.get("alinhamento_vertical")
     celula.alinhamento_vertical = valign if valign in _VALIGN else None
+    extras = dado.get("extras")
+    celula.extras = extras if isinstance(extras, str) and extras else None
     return dado
 
 
@@ -295,6 +303,8 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
     margens = dado.get("margens_celula_tw")
     if isinstance(margens, list) and len(margens) == 4:
         tabela.margens_celula_tw = tuple(int(m) for m in margens)
+    extras = dado.get("extras")
+    tabela.extras = extras if isinstance(extras, str) and extras else None
     cabecalho = tf.headerRowCount()
     linhas, colunas = qt.rows(), qt.columns()
     for r in range(linhas):
@@ -324,6 +334,8 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
             altura = dado_linha.get("altura_tw")
             linha.altura_tw = altura if isinstance(altura, int) else None
             linha.altura_exata = bool(dado_linha.get("altura_exata"))
+            extras = dado_linha.get("extras_linha")
+            linha.extras = extras if isinstance(extras, str) and extras else None
         tabela.linhas.append(linha)
     return tabela
 

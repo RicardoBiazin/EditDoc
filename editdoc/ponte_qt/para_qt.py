@@ -29,6 +29,10 @@ Objetos opacos (0.1.2): o run de objeto vira o caractere de objeto com o formato
 Hiperlinks e marcas (0.1.3): o link vai no formato de caractere de cada run (`links.py`);
 a marca de campo ou de marcador vira o caractere de objeto de `marcas.py`.
 
+Propriedades preservadas (0.1.5): os extras do run e do paragrafo (o XML que o modelo nao
+representa) vao em propriedades de usuario do formato, com a aparencia que a tela mostra
+(`ponte_qt/propriedades.py`).
+
 Estilos (M6): o formato do Qt recebe o efetivo, estilo resolvido (cadeia basedOn) mais a
 formatacao direta do modelo, e o id do estilo numa propriedade de usuario
 (`ponte_qt/estilos.py`). O catalogo vai para o documento (`definir_catalogo_base`).
@@ -51,6 +55,7 @@ from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
 from editdoc.modelo.numeracao import materializado
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
+from editdoc.ponte_qt import propriedades as pq_props
 
 LINHA_SEPARADORA = chr(0x2028)
 
@@ -111,6 +116,7 @@ def _formato_de_run(r) -> QTextCharFormat:
         cf.setFontFamilies([r.fonte])
     if r.cor_hex is not None:
         cf.setForeground(QBrush(QColor("#" + r.cor_hex)))
+    pq_props.aplicar_rpr(cf, getattr(r, "extras", None))
     return cf
 
 
@@ -122,9 +128,10 @@ def formato_estrutural() -> QTextBlockFormat:
 
 # -- imagens --------------------------------------------------------------------
 
-def inserir_imagem(cursor: QTextCursor, imagem, link=None) -> None:
+def inserir_imagem(cursor: QTextCursor, imagem, link=None, extras=None) -> None:
     """Insere o run de imagem do modelo no cursor, com o recurso no documento."""
-    nome = imagens.registrar(imagem.dados, imagem.formato)
+    nome = imagens.nome_recortado(imagens.registrar(imagem.dados, imagem.formato),
+                                  getattr(imagem, "recorte", None))
     imagens.adicionar_recurso(cursor.document(), nome)
     fmt = imagens.formato_de_imagem(
         nome, px_de_emu(imagem.largura_emu), px_de_emu(imagem.altura_emu), imagem.descricao)
@@ -133,6 +140,9 @@ def inserir_imagem(cursor: QTextCursor, imagem, link=None) -> None:
         fmt.setAnchorHref(link.href())
         fmt.setProperty(links.PROP_LINK, links.com_link(QTextCharFormat(), link).property(
             links.PROP_LINK))
+    if extras:
+        # rPr preservado do run da imagem (0.1.5): a borda em volta, por exemplo.
+        fmt.setProperty(pq_props.PROP_RPR_EXTRA, extras)
     cursor.insertImage(fmt)
 
 
@@ -157,6 +167,7 @@ def json_da_tabela(tabela: Tabela) -> str:
         "layout_fixo": tabela.layout_fixo,
         "margens_celula_tw": list(tabela.margens_celula_tw)
         if tabela.margens_celula_tw is not None else None,
+        "extras": tabela.extras,
     }, sort_keys=True)
 
 
@@ -166,10 +177,12 @@ def json_da_celula(celula: Celula, linha=None) -> str:
         {c: _json_borda(getattr(celula.bordas, c)) for c in ("sup", "inf", "esq", "dir")},
         "sombreamento_hex": celula.sombreamento_hex,
         "alinhamento_vertical": celula.alinhamento_vertical,
+        "extras": celula.extras,
     }
     if linha is not None:
         dado["altura_tw"] = linha.altura_tw
         dado["altura_exata"] = linha.altura_exata
+        dado["extras_linha"] = linha.extras
     return json.dumps(dado, sort_keys=True)
 
 
@@ -309,6 +322,8 @@ def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
         bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     pq_estilos.marcar_estilo(bf, p.estilo, res.estilos)
     listas.marcar_lista(bf, p.lista, p.lista_nivel)
+    # Extras (0.1.5): depois do recuo, de que as tabulacoes contam.
+    pq_props.aplicar_ppr(bf, p.extras, p.espacamento_linha_pct is not None)
     return bf
 
 
@@ -317,7 +332,9 @@ def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QText
     if not base and not r.estilo:
         return _formato_de_run(r)
     proprio = {k: getattr(r, k) for k in CAMPOS_CARACTERE if getattr(r, k) is not None}
-    return pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
+    cf = pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
+    pq_props.aplicar_rpr(cf, r.extras)
+    return cf
 
 
 def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resolvedor) -> None:
@@ -328,7 +345,7 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
         cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
     for r in p.runs:
         if r.imagem is not None:
-            inserir_imagem(cursor, r.imagem, r.link)
+            inserir_imagem(cursor, r.imagem, r.link, r.extras)
         elif r.marca is not None:
             # Campo ou marcador (0.1.3): a marca leva a formatacao do run (o codigo do campo
             # e o resultado recalculado pelo Word saem com ela).

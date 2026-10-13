@@ -27,6 +27,13 @@ Listas (0.1.4, edicao/listas.py): Tab e Shift+Tab no inicio de um item mudam o n
 num item vazio sobe um nivel ou sai da lista; Backspace no inicio do item tira o numero (e,
 de novo, o recuo). Copiar leva as listas dos blocos numa marca propria da area de
 transferencia (MIME_LISTAS), e colar no EditDoc devolve os blocos as listas.
+
+Caixa de texto (0.1.5, interface/dialogo_caixa.py): duplo clique na caixa, Enter com a caixa
+selecionada ou "Editar texto da caixa" no menu de contexto abrem o editor do texto dela.
+
+Propriedades preservadas (0.1.5, ponte_qt/propriedades.py): copiar leva os extras dos trechos
+e dos blocos (realce, tabulacoes, bordas...) em MIME_PROPRIEDADES, e colar no EditDoc os
+devolve. Digitar herda o formato do vizinho e o Enter copia o do bloco, com os extras juntos.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ from editdoc.ponte_qt import links as pq_links
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import marcas as pq_marcas
 from editdoc.ponte_qt import opacos as pq_opacos
+from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
 
 Mover = QTextCursor.MoveMode.MoveAnchor
@@ -80,6 +88,8 @@ ALCA_PX = 8.0
 MIME_OPACOS_OMITIDOS = "application/x-editdoc-objetos-omitidos"
 #: Marca na area de transferencia: as listas dos blocos copiados, em JSON (0.1.4).
 MIME_LISTAS = "application/x-editdoc-listas"
+#: Marca na area de transferencia: os extras de run e de paragrafo copiados, em JSON (0.1.5).
+MIME_PROPRIEDADES = "application/x-editdoc-propriedades"
 #: Esquemas de endereco que o Ctrl+clique nunca abre (o link pode rodar codigo).
 ESQUEMAS_PROIBIDOS = ("javascript", "vbscript", "data")
 
@@ -206,6 +216,10 @@ class PainelDocumento(VistaPaginas):
         if listas is not None:
             import json
             md.setData(MIME_LISTAS, json.dumps(listas).encode("utf-8"))
+        extras = pq_props.dados_para_copiar(self.document(), inicio, fim)
+        if extras is not None:
+            import json
+            md.setData(MIME_PROPRIEDADES, json.dumps(extras).encode("utf-8"))
         md.setText(frag.toPlainText().replace(chr(0xFFFC), ""))
         pos = ed_imagens.imagem_selecionada(self)
         if pos is not None:
@@ -253,6 +267,16 @@ class PainelDocumento(VistaPaginas):
         # ajuste entra no mesmo passo de desfazer pelo joinPreviousEditBlock.
         self._cursor.joinPreviousEditBlock()
         ed_tabelas.ajustar_tabelas_coladas(self)
+        if md.hasFormat(MIME_PROPRIEDADES):
+            # Extras (0.1.5): realce, tabulacoes, bordas... voltam ao que foi colado.
+            import json
+            try:
+                dado = json.loads(bytes(md.data(MIME_PROPRIEDADES)).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                dado = None
+            if isinstance(dado, dict):
+                pq_props.aplicar_colado(self.document(), dado, inicio_colado,
+                                        self._cursor.position(), no_inicio_vazio)
         if not md.hasFormat(MIME_LISTAS):
             # HTML de outro programa com <ol>/<ul>: vira lista do EditDoc (0.1.4).
             ed_listas.converter_listas_coladas(self, inicio_colado, self._cursor.position())
@@ -577,7 +601,41 @@ class PainelDocumento(VistaPaginas):
             self._cursor.endEditBlock()
         self._depois_de_mover()
 
+    def caixa_selecionada(self) -> int | None:
+        """Posicao da caixa de texto selecionada sozinha, ou ao lado do caret (0.1.5)."""
+        from editdoc.interface import dialogo_caixa
+        doc = self.document()
+        c = self._cursor
+        if c.hasSelection():
+            if c.selectionEnd() - c.selectionStart() == 1 and \
+                    dialogo_caixa.caixa_em(doc, c.selectionStart()) is not None:
+                return c.selectionStart()
+            return None
+        for k in (c.position(), c.position() - 1):
+            if dialogo_caixa.caixa_em(doc, k) is not None:
+                return k
+        return None
+
+    def editar_caixa(self, pos: int | None = None) -> bool:
+        """Abre o editor do texto da caixa de texto (0.1.5). True se o texto mudou."""
+        from editdoc.interface import dialogo_caixa
+        pos = self.caixa_selecionada() if pos is None else pos
+        if pos is None:
+            return False
+        mudou = dialogo_caixa.editar(self, pos)
+        if mudou:
+            self._limpar_cache()
+            self._depois_de_mover()
+            self.viewport().update()
+        return mudou
+
     def _quebrar(self, quebra: bool) -> None:
+        if not quebra and self._cursor.hasSelection() and \
+                self._cursor.selectionEnd() - self._cursor.selectionStart() == 1 and \
+                self.caixa_selecionada() is not None:
+            # Enter com a caixa de texto selecionada: edita o texto dela (0.1.5).
+            self.editar_caixa()
+            return
         if not quebra and ed_listas.enter_em_item_vazio(self):
             # Enter num item de lista vazio: sobe um nivel ou sai da lista, como no Word.
             return
@@ -922,7 +980,19 @@ class PainelDocumento(VistaPaginas):
                 self._depois_de_mover()
                 ev.accept()
                 return
-            self._cursor.setPosition(self.posicao_em(ev.position()))
+            pos = self.posicao_em(ev.position())
+            from editdoc.interface import dialogo_caixa
+            for k in (pos, pos - 1):
+                if dialogo_caixa.caixa_em(self.document(), k) is not None:
+                    # Duplo clique na caixa de texto: edita o texto dela (0.1.5).
+                    self._arrastando = False
+                    self._cursor.setPosition(k)
+                    self._cursor.setPosition(k + 1, Selecionar)
+                    self._depois_de_mover()
+                    self.editar_caixa(k)
+                    ev.accept()
+                    return
+            self._cursor.setPosition(pos)
             self._cursor.select(QTextCursor.SelectionType.WordUnderCursor)
             self._arrastando = False
             self._depois_de_mover()
@@ -964,6 +1034,10 @@ class PainelDocumento(VistaPaginas):
         menu.addAction("Colar", self.paste).setEnabled(QApplication.clipboard().mimeData() is not None)
         menu.addSeparator()
         menu.addAction("Selecionar tudo", self.selectAll)
+        caixa = self.caixa_selecionada()
+        if caixa is not None:
+            menu.addSeparator()
+            menu.addAction("Editar texto da caixa", lambda: self.editar_caixa(caixa))
         extras = [a for a in self._acoes_contexto if a.isEnabled()]
         if extras:
             menu.addSeparator()

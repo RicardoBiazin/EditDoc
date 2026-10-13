@@ -6,6 +6,8 @@ modelo em JSON numa propriedade de usuario:
 - inicio e fim de campo (TIPO_MARCA_CAMPO): o resultado do campo e' o texto comum entre as
   duas, editavel. Na tela, um colchete fino e cinza em cada ponta mostra onde o campo
   comeca e termina (nao sai na impressao nem no PDF);
+- inicio e fim de controle de conteudo (0.1.5, `MarcaConteudo`): o mesmo colchete do campo,
+  em azul-acinzentado; o sdtPr vai no JSON (base64);
 - inicio e fim de marcador (TIPO_MARCADOR): sem largura e sem pintura, como no Word com os
   marcadores ocultos. O painel pula essas marcas nas setas, no Backspace e no Delete, para
   que o usuario nao as apague sem ver.
@@ -26,7 +28,7 @@ from PySide6.QtGui import (QColor, QFontMetricsF, QPen, QPyTextObject, QTextChar
                            QTextCursor, QTextDocument, QTextFormat)
 
 from editdoc import log_interno
-from editdoc.modelo.documento import CARACTERE_OBJETO, Campo, MarcaCampo, Marcador
+from editdoc.modelo.documento import CARACTERE_OBJETO, Campo, MarcaCampo, MarcaConteudo, Marcador
 from editdoc.ponte_qt.campos import fonte_de
 
 log = log_interno.obter(__name__)
@@ -89,6 +91,9 @@ def _campo_de_dict(dado, nivel: int = 0) -> Campo | None:
 def json_da_marca(marca) -> str:
     if isinstance(marca, Marcador):
         return json.dumps({"marcador": marca.tipo, "nome": marca.nome}, ensure_ascii=False)
+    if isinstance(marca, MarcaConteudo):
+        return json.dumps({"conteudo": marca.tipo, "bloco": marca.bloco, "par": marca.par,
+                           "props": base64.b64encode(marca.propriedades).decode("ascii")})
     dado = {"campo": marca.tipo, "par": marca.par}
     if marca.campo is not None:
         dado["codigo"] = _campo_para_dict(marca.campo)
@@ -106,6 +111,13 @@ def marca_de_json(texto):
             and dado["nome"]:
         return Marcador(dado["marcador"], dado["nome"])
     par = dado.get("par") if isinstance(dado.get("par"), int) else 0
+    if dado.get("conteudo") in ("inicio", "fim"):
+        try:
+            props = base64.b64decode(dado.get("props") or "", validate=True)
+        except (ValueError, TypeError):
+            return None
+        return MarcaConteudo(dado["conteudo"], props if dado["conteudo"] == "inicio" else b"",
+                             dado.get("bloco") is True, par)
     if dado.get("campo") == "fim":
         return MarcaCampo("fim", par=par)
     if dado.get("campo") == "inicio":
@@ -193,7 +205,8 @@ class ManipuladorDeMarca(QPyTextObject):
             if marca is None:
                 return
             painter.save()
-            caneta = QPen(QColor(0x9a, 0xa3, 0xad))
+            caneta = QPen(QColor(0x6f, 0x8f, 0xb5) if isinstance(marca, MarcaConteudo)
+                          else QColor(0x9a, 0xa3, 0xad))
             caneta.setWidthF(max(rect.width() * 0.18, 1.0))
             painter.setPen(caneta)
             topo, base = rect.top() + rect.height() * 0.05, rect.bottom() + rect.height() * 0.15

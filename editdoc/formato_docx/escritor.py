@@ -46,6 +46,11 @@ num w:hyperlink (relacao externa nova na parte, sem colisao). As marcas de campo
 begin (com o codigo e os campos de dentro dele), separate e end; as de marcador, como
 bookmarkStart e bookmarkEnd com id unico. `marcas.equilibrar` roda antes: o arquivo nunca
 sai com begin sem end.
+
+Propriedades preservadas (0.1.5): o rPr e o pPr juntam o que o escritor gera do modelo com os
+extras do arquivo de origem (`propriedades.montar_rpr`/`montar_ppr`), na ordem do esquema. O
+controle de conteudo sai como w:sdt com o sdtPr de origem: o de paragrafo dentro do w:p, o de
+bloco por fora dos paragrafos que envolve. Recorte de imagem (a:srcRect) volta ao blipFill.
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos, ordem
 from editdoc.formato_docx import pacote as fx_pacote
+from editdoc.formato_docx import propriedades as fx_props
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFIG, CT_CORE,
@@ -74,10 +80,10 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
 from editdoc.modelo import marcas
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celula, Documento,
-                                      Imagem, Link, MarcaCampo, Marcador, Paragrafo, Run, Tabela,
-                                      bordas_padrao, objetos_de)
+                                      Imagem, Link, MarcaCampo, MarcaConteudo, Marcador, Paragrafo,
+                                      Run, Tabela, bordas_padrao, objetos_de)
 from editdoc.modelo.estilos import catalogo_padrao
-from editdoc.modelo.numeracao import materializado
+from editdoc.modelo.numeracao import lista_efetiva, materializado, recuos_do_nivel
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
 _JC_TABELA = {"esquerda": "left", "centro": "center", "direita": "right"}
@@ -140,49 +146,12 @@ def _conteudo_run(r, texto: str, coletor: Coletor) -> None:
             t.text = parte
 
 
-def _rpr(run: Run, estilo: str | None = None) -> etree._Element | None:
-    rpr = etree.Element(q("rPr"))
-    if estilo:
-        etree.SubElement(rpr, q("rStyle")).set(q("val"), estilo)
-    if run.fonte:
-        rf = etree.SubElement(rpr, q("rFonts"))
-        for atr in ("ascii", "hAnsi", "eastAsia", "cs"):
-            rf.set(q(atr), run.fonte)
-    if run.negrito is not None:
-        b = etree.SubElement(rpr, q("b"))
-        if not run.negrito:
-            b.set(q("val"), "0")
-    if run.italico is not None:
-        i = etree.SubElement(rpr, q("i"))
-        if not run.italico:
-            i.set(q("val"), "0")
-    if run.tachado is not None:
-        s = etree.SubElement(rpr, q("strike"))
-        if not run.tachado:
-            s.set(q("val"), "0")
-    if run.cor_hex is not None:
-        if not _HEX6.fullmatch(run.cor_hex):
-            raise ValueError(f"cor_hex invalida: {run.cor_hex!r}")
-        etree.SubElement(rpr, q("color")).set(q("val"), run.cor_hex.upper())
-    if run.tamanho_meio_pt is not None:
-        valor = str(int(run.tamanho_meio_pt))
-        etree.SubElement(rpr, q("sz")).set(q("val"), valor)
-        etree.SubElement(rpr, q("szCs")).set(q("val"), valor)
-    if run.sublinhado is not None:
-        etree.SubElement(rpr, q("u")).set(q("val"), "single" if run.sublinhado else "none")
-    alinhamento = None
-    if run.subscrito:
-        alinhamento = _VERT["subscrito"]
-    elif run.sobrescrito:
-        alinhamento = _VERT["sobrescrito"]
-    elif run.subscrito is False or run.sobrescrito is False:
-        alinhamento = "baseline"
-    if alinhamento:
-        etree.SubElement(rpr, q("vertAlign")).set(q("val"), alinhamento)
-    if not len(rpr):
-        return None
-    ordem.ordenar_filhos(rpr, ordem.ORDEM_RPR)
-    return rpr
+def _rpr(run: Run, estilo: str | None = None, ctx: "_Ctx | None" = None) -> etree._Element | None:
+    """O w:rPr do run: o que o modelo diz, mais os extras do arquivo de origem (0.1.5)."""
+    if ctx is None:
+        return fx_props.montar_rpr(run, estilo)
+    return fx_props.montar_rpr(run, estilo, ctx.bases_de_caractere(run.estilo),
+                               ctx.estilos.fontes_tema, ctx.estilo_existe)
 
 
 class _Relacoes:
@@ -261,6 +230,33 @@ class _Ctx:
         self.estilos = estilos if estilos is not None else catalogo_padrao()
         self.tipos = {sid: e.tipo for sid, e in self.estilos.itens.items()}
         self.padrao = self.estilos.id_padrao()
+        #: numeracao (0.1.4), para o recuo da lista na base do paragrafo (0.1.5)
+        self.numeracao = None
+        #: estilo do paragrafo que esta' sendo escrito e quantas tabelas por fora (0.1.5)
+        self.estilo_par: str | None = None
+        self.em_tabela = 0
+        self._bases_car: dict = {}
+
+    def estilo_existe(self, sid: str | None, tipo: str) -> bool:
+        return bool(sid) and self.tipos.get(sid) == tipo
+
+    def bases_de_caractere(self, sid_car: str | None) -> dict:
+        """O que o run tem sem formatacao direta (paragrafo e estilo de caractere)."""
+        chave = (self.estilo_par, sid_car)
+        if chave not in self._bases_car:
+            self._bases_car[chave] = self.estilos.base_de_caractere(*chave)
+        return self._bases_car[chave]
+
+    def bases_de_paragrafo(self, p: Paragrafo) -> dict:
+        """O que o paragrafo tem sem formatacao direta: o estilo (com o docDefaults fora da
+        tabela) e o recuo do nivel da lista, como a ponte Qt resolve."""
+        sid = p.estilo or self.padrao
+        par, _car = self.estilos.resolver_paragrafo(sid, com_padrao=not self.em_tabela)
+        if self.numeracao is not None:
+            efetiva = lista_efetiva(p.lista, p.lista_nivel, sid, self.estilos, self.numeracao)
+            if efetiva is not None:
+                par = {**par, **recuos_do_nivel(self.numeracao.nivel_de(*efetiva, self.estilos))}
+        return par
 
     def estilo_de_paragrafo(self, sid: str | None) -> str | None:
         """O id para o w:pStyle, ou None (estilo padrao ou fora do catalogo)."""
@@ -302,6 +298,12 @@ def _desenho(r, imagem: Imagem, ctx: _Ctx) -> None:
     etree.SubElement(nv, pic("cNvPicPr"))
     preenchimento = etree.SubElement(figura, pic("blipFill"))
     etree.SubElement(preenchimento, a("blip")).set("{%s}embed" % R_NS, rid)
+    if imagem.recorte is not None and any(imagem.recorte):
+        # Recorte (0.1.5): a:srcRect entre o blip e o stretch (CT_BlipFillProperties).
+        recorte = etree.SubElement(preenchimento, a("srcRect"))
+        for chave, valor in zip("ltrb", imagem.recorte):
+            if int(valor):
+                recorte.set(chave, str(int(valor)))
     esticar = etree.SubElement(preenchimento, a("stretch"))
     etree.SubElement(esticar, a("fillRect"))
     sp = etree.SubElement(figura, pic("spPr"))
@@ -315,64 +317,48 @@ def _desenho(r, imagem: Imagem, ctx: _Ctx) -> None:
 def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
     coletor = ctx.coletor
     pe = etree.SubElement(body, q("p"))
-    ppr = etree.Element(q("pPr"))
     estilo = ctx.estilo_de_paragrafo(p.estilo)
-    if estilo is not None:
-        etree.SubElement(ppr, q("pStyle")).set(q("val"), estilo)
-    if p.nivel is not None:
-        etree.SubElement(ppr, q("outlineLvl")).set(q("val"), str(min(max(int(p.nivel), 0), 9)))
-    if p.lista is not None or p.lista_nivel is not None:
-        # Lista (0.1.4): o numPr direto, como o paragrafo tem. None herda do estilo.
-        num = etree.SubElement(ppr, q("numPr"))
-        if p.lista_nivel is not None:
-            etree.SubElement(num, q("ilvl")).set(q("val"), str(min(max(int(p.lista_nivel), 0), 8)))
-        if p.lista is not None:
-            etree.SubElement(num, q("numId")).set(q("val"), str(int(p.lista)))
-    if p.alinhamento is not None:
-        etree.SubElement(ppr, q("jc")).set(q("val"), _JC[p.alinhamento])
-    if (p.recuo_esquerdo_tw is not None or p.recuo_primeira_linha_tw is not None
-            or p.recuo_direito_tw is not None):
-        ind = etree.SubElement(ppr, q("ind"))
-        if p.recuo_esquerdo_tw is not None:
-            ind.set(q("left"), str(int(p.recuo_esquerdo_tw)))
-        if p.recuo_direito_tw is not None:
-            ind.set(q("right"), str(int(p.recuo_direito_tw)))
-        if p.recuo_primeira_linha_tw is not None:
-            v = int(p.recuo_primeira_linha_tw)
-            if v >= 0:
-                ind.set(q("firstLine"), str(v))
-            else:
-                ind.set(q("hanging"), str(-v))
-    if (p.espaco_antes_tw is not None or p.espaco_depois_tw is not None
-            or p.espacamento_linha_pct is not None):
-        sp = etree.SubElement(ppr, q("spacing"))
-        if p.espaco_antes_tw is not None:
-            sp.set(q("before"), str(int(p.espaco_antes_tw)))
-        if p.espaco_depois_tw is not None:
-            sp.set(q("after"), str(int(p.espaco_depois_tw)))
-        if p.espacamento_linha_pct is not None:
-            sp.set(q("line"), str(round(int(p.espacamento_linha_pct) * 240 / 100)))
-            sp.set(q("lineRule"), "auto")
-    if len(ppr):
-        ordem.ordenar_filhos(ppr, ordem.ORDEM_PPR)
+    ctx.estilo_par = p.estilo
+    ppr = fx_props.montar_ppr(p, estilo, ctx.bases_de_paragrafo(p), ctx.estilo_existe)
+    if ppr is not None:
         pe.append(ppr)
     if p.quebra_antes:
         # Quebra de pagina: o paragrafo comeca no topo da proxima pagina.
         r_quebra = etree.SubElement(pe, q("r"))
         etree.SubElement(r_quebra, q("br")).set(q("type"), "page")
     # Hiperlink (0.1.3): runs vizinhos com o mesmo destino ficam num w:hyperlink so'.
+    # Controle de conteudo (0.1.5): o w:sdt do paragrafo abre e fecha nas marcas; o link
+    # recomeca dentro dele.
+    pilha = [pe]
     destino = pe
     link_atual = None
     for i, run in enumerate(p.runs):
+        if isinstance(run.marca, MarcaConteudo):
+            if run.marca.bloco:
+                continue  # controle de bloco: por fora do paragrafo (_blocos)
+            if run.marca.tipo == "inicio":
+                sdt = etree.SubElement(pilha[-1], q("sdt"))
+                for el in fx_props.elementos_de_sdt(run.marca.propriedades):
+                    sdt.append(el)
+                pilha.append(etree.SubElement(sdt, q("sdtContent")))
+            elif len(pilha) > 1:
+                pilha.pop()
+            destino = pilha[-1]
+            link_atual = None
+            continue
         if run.link != link_atual:
             link_atual = run.link
-            destino = pe if run.link is None else _hiperlink(pe, run.link, ctx)
+            destino = pilha[-1] if run.link is None else _hiperlink(pilha[-1], run.link, ctx)
         if run.marca is not None:
             proximo = p.runs[i + 1] if i + 1 < len(p.runs) else None
             _marca(destino, run, proximo, ctx)
             continue
         if run.imagem is not None:
             r = etree.SubElement(destino, q("r"))
+            if run.extras:
+                rpr = fx_props.montar_rpr(Run(extras=run.extras), None)
+                if rpr is not None:
+                    r.append(rpr)
             _desenho(r, run.imagem, ctx)
             continue
         if run.objeto is not None:
@@ -380,12 +366,12 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
             destino.append(ctx.opacos.escrever(run.objeto, ctx.relacoes.adicionar))
             continue
         if run.campo is not None:
-            _campo(destino, run, coletor, ctx.estilo_de_caractere(run.estilo))
+            _campo(destino, run, coletor, ctx.estilo_de_caractere(run.estilo), ctx)
             continue
         if run.texto == "":
             continue
         r = etree.SubElement(destino, q("r"))
-        rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo))
+        rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
         if rpr is not None:
             r.append(rpr)
         _conteudo_run(r, run.texto, coletor)
@@ -423,7 +409,7 @@ def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
             if ident is not None:
                 etree.SubElement(destino, q("bookmarkEnd")).set(q("id"), str(ident))
         return
-    rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo))
+    rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
     if m.tipo == "fim":
         _run_de_campo(destino, rpr, "end")
         return
@@ -486,7 +472,7 @@ def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool) -> None:
         _run_de_campo(destino, rpr, "separate")
 
 
-def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None) -> None:
+def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None, ctx=None) -> None:
     """Campo complexo, como o Word grava: begin, instrucao, separate, resultado, end.
 
     Cada pedaco e' um w:r com a formatacao do campo, para que o numero recalculado pelo
@@ -495,7 +481,7 @@ def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None) -> None:
     instrucao, _n = texto_gravavel(run.campo or "")
     if tipo_do_campo(instrucao) is None:
         raise ValueError(f"campo nao suportado: {run.campo!r}")
-    rpr = _rpr(run, estilo)
+    rpr = _rpr(run, estilo, ctx)
 
     def novo_run():
         r = etree.SubElement(pe, q("r"))
@@ -556,6 +542,7 @@ def _tabela(pai, tabela: Tabela, ctx: _Ctx) -> None:
             m.set(q("w"), str(int(valor)))
             m.set(q("type"), "dxa")
     ordem.ordenar_filhos(tbl_pr, ordem.ORDEM_TBLPR)
+    fx_props.montar_extras_tabela(tbl_pr, tabela.extras)  # 0.1.5
     grade = etree.SubElement(tbl, q("tblGrid"))
     for w in tabela.colunas_tw:
         etree.SubElement(grade, q("gridCol")).set(q("w"), str(int(w)))
@@ -568,6 +555,7 @@ def _tabela(pai, tabela: Tabela, ctx: _Ctx) -> None:
             h.set(q("hRule"), "exact" if linha.altura_exata else "atLeast")
         if linha.cabecalho:
             etree.SubElement(tr_pr, q("tblHeader"))
+        fx_props.montar_extras_tabela(tr_pr, linha.extras)  # 0.1.5
         if len(tr_pr):
             tr.append(tr_pr)
         coluna = 0
@@ -575,7 +563,11 @@ def _tabela(pai, tabela: Tabela, ctx: _Ctx) -> None:
             span = max(1, int(celula.colunas))
             largura_celula = sum(tabela.colunas_tw[coluna:coluna + span])
             coluna += span
-            _celula(tr, celula, span, largura_celula, ctx)
+            ctx.em_tabela += 1
+            try:
+                _celula(tr, celula, span, largura_celula, ctx)
+            finally:
+                ctx.em_tabela -= 1
 
 
 def _celula(tr, celula: Celula, span: int, largura: int, ctx: _Ctx) -> None:
@@ -608,16 +600,34 @@ def _celula(tr, celula: Celula, span: int, largura: int, ctx: _Ctx) -> None:
     if celula.alinhamento_vertical is not None:
         etree.SubElement(tc_pr, q("vAlign")).set(q("val"), _VALIGN[celula.alinhamento_vertical])
     ordem.ordenar_filhos(tc_pr, ordem.ORDEM_TCPR)
+    fx_props.montar_extras_tabela(tc_pr, celula.extras)  # 0.1.5
     _blocos(tc, celula.blocos, ctx, em_celula=True)
 
 
 def _blocos(pai, blocos: list[Bloco], ctx: _Ctx, em_celula: bool) -> None:
-    """Paragrafos e tabelas, na ordem. Celula e corpo terminam em paragrafo (o Word exige)."""
+    """Paragrafos e tabelas, na ordem. Celula e corpo terminam em paragrafo (o Word exige).
+
+    Controle de conteudo de bloco (0.1.5): a marca de inicio no paragrafo abre um w:sdt antes
+    dele, e os blocos seguintes entram no w:sdtContent ate' o paragrafo com a marca de fim.
+    `marcas.equilibrar` ja' deixou os pares na mesma lista de blocos e bem aninhados.
+    """
+    pilha = [pai]
     for bloco in blocos:
         if isinstance(bloco, Tabela):
-            _tabela(pai, bloco, ctx)
-        else:
-            _paragrafo(pai, bloco, ctx)
+            _tabela(pilha[-1], bloco, ctx)
+            continue
+        for run in bloco.runs:
+            m = run.marca
+            if isinstance(m, MarcaConteudo) and m.bloco and m.tipo == "inicio":
+                sdt = etree.SubElement(pilha[-1], q("sdt"))
+                for el in fx_props.elementos_de_sdt(m.propriedades):
+                    sdt.append(el)
+                pilha.append(etree.SubElement(sdt, q("sdtContent")))
+        _paragrafo(pilha[-1], bloco, ctx)
+        for run in bloco.runs:
+            m = run.marca
+            if isinstance(m, MarcaConteudo) and m.bloco and m.tipo == "fim" and len(pilha) > 1:
+                pilha.pop()
     if not blocos or isinstance(blocos[-1], Tabela):
         if em_celula or blocos:
             etree.SubElement(pai, q("p"))
@@ -805,6 +815,24 @@ def _zip(partes: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _extensoes_usadas(doc: Documento) -> dict[str, str]:
+    """prefixo -> namespace das extensoes do Word nos extras e nos controles de conteudo."""
+    saida: dict[str, str] = {}
+    vistos: set = set()
+    from editdoc.modelo.marcas import historias
+    from editdoc.modelo.documento import paragrafos_de
+    for blocos in historias(doc):
+        for p in paragrafos_de(blocos):
+            textos = [p.extras] + [r.extras for r in p.runs]
+            textos += [r.marca.propriedades.decode("utf-8") for r in p.runs
+                       if isinstance(r.marca, MarcaConteudo) and r.marca.propriedades]
+            for texto in textos:
+                if texto and texto not in vistos and "xmlns:" in texto.replace('xmlns:w="', ""):
+                    vistos.add(texto)
+                    saida.update(fx_props.namespaces_usados(texto))
+    return saida
+
+
 def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     """Devolve (bytes do .docx, avisos da gravacao). Levanta ErroDocx se o validador reprovar."""
     coletor = Coletor()
@@ -815,10 +843,16 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         coletor.somar("CAMPO_INCOMPLETO", desfeitos["campos"])
     if desfeitos["marcadores"]:
         coletor.somar("MARCADOR", desfeitos["marcadores"])
+    if desfeitos.get("conteudos"):
+        coletor.somar("CONTEUDO_INCOMPLETO", desfeitos["conteudos"])
     # Listas montadas em codigo so' com o tipo: numId e definicao (0.1.4).
     doc = materializado(doc)
     ctx = _Ctx(coletor, doc.estilos, doc.pacote)
+    ctx.numeracao = doc.numeracao
     ctx.opacos.preparar(objetos_de(doc), _NSMAP_PARTE)
+    # Extensoes do Word nos extras e nos controles de conteudo (w14, w15...): a raiz declara
+    # e as poe no mc:Ignorable (0.1.5).
+    ctx.opacos.declarar_extensoes(_extensoes_usadas(doc), _NSMAP_PARTE)
     agora = _agora_iso()
     criado = doc.criado_em or agora
     modificado = doc.modificado_em or agora

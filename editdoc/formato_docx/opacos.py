@@ -33,6 +33,7 @@ import copy
 import hashlib
 import posixpath
 import re
+import sys
 
 from lxml import etree
 
@@ -170,14 +171,17 @@ def classificar(item) -> str:
     return "objeto"
 
 
-def codigo_do_aviso(tipo: str, flutuante: bool) -> str:
-    """Aviso (sem perda) de cada tipo de objeto preservado."""
+def codigo_do_aviso(tipo: str, flutuante: bool, previa: bool = False) -> str | None:
+    """Aviso (sem perda) de cada tipo de objeto preservado. None: nada a avisar (a imagem na
+    linha em EMF, WMF, TIFF ou SVG que a tela mostra, desde a 0.1.5)."""
     if tipo in ("caixa_de_texto", "forma", "grupo", "desenho"):
         return "CAIXA_DE_TEXTO"
     if tipo == "equacao":
         return "EQUACAO"
     if tipo == "imagem":
-        return "IMAGEM_FLUTUANTE" if flutuante else "IMAGEM_FORMATO"
+        if flutuante:
+            return "IMAGEM_FLUTUANTE"
+        return None if previa else "IMAGEM_FORMATO"
     return "OBJETO"
 
 
@@ -260,6 +264,21 @@ def referencias(el) -> list[str]:
             if (chave.startswith(_PREFIXO_R) or chave == _RELID_O) and valor not in vistos:
                 vistos.append(valor)
     return vistos
+
+
+def _vinculos(item) -> list[str]:
+    """rIds das imagens vinculadas a arquivo externo (a:blip r:link, v:imagedata)."""
+    base = _ramo_principal(item)
+    saida = []
+    for blip in base.iter("{%s}blip" % A_NS):
+        rid = blip.get("{%s}link" % R_NS)
+        if rid:
+            saida.append(rid)
+    for dado in base.iter("{%s}imagedata" % V_NS):
+        rid = dado.get("{%s}id" % R_NS) or dado.get(_RELID_O)
+        if rid:
+            saida.append(rid)
+    return saida
 
 
 def _blips(item) -> list[str]:
@@ -397,6 +416,7 @@ class Capturador:
         tipo_obj = classificar(item)
         largura, altura, flutuante = medidas(item)
         previa = None
+        texto = resumo(item)
         if tipo_obj == "imagem":
             for rid in _blips(item):
                 rel = relacoes_host.get(rid)
@@ -406,9 +426,23 @@ class Capturador:
                     if dims and dims[0] > 0 and dims[1] > 0 and mod_imagem.decodificavel(*dims):
                         previa = parte.dados
                         break
+                elif parte is not None and mod_imagem.previa_possivel(
+                        parte.dados, sys.platform == "win32"):
+                    # EMF, WMF, TIFF ou SVG (0.1.5): a tela renderiza (ponte_qt/vetoriais.py).
+                    previa = parte.dados
+                    break
+            if previa is None and not texto:
+                # Vinculada a arquivo externo: nunca lida do disco nem da rede; o quadro
+                # mostra o nome do destino.
+                for rid in _vinculos(item):
+                    rel = relacoes_host.get(rid)
+                    if rel is not None and rel[2]:
+                        nome = rel[1].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+                        texto = ("vinculada a " + nome)[:_RESUMO_MAXIMO]
+                        break
         self.contagem += 1
         self.bytes_total += len(xml)
-        return ObjetoOpaco(xml=xml, tipo=tipo_obj, resumo=resumo(item), flutuante=flutuante,
+        return ObjetoOpaco(xml=xml, tipo=tipo_obj, resumo=texto, flutuante=flutuante,
                            largura_emu=largura, altura_emu=altura, relacoes=tuple(relacoes),
                            partes=tuple(partes[n] for n in sorted(partes)),
                            ignoraveis=tuple(ignoraveis), previa=previa)
@@ -485,6 +519,17 @@ class GravadorOpacos:
                     self.espacos[prefixo] = uri
                 if prefixo not in self.ignoraveis:
                     self.ignoraveis.append(prefixo)
+
+    def declarar_extensoes(self, espacos: dict, nsmap_base: dict) -> None:
+        """Extensoes do Word usadas nos extras de rPr e pPr e nos controles de conteudo (0.1.5):
+        a raiz declara o prefixo e o poe no mc:Ignorable, como o Word faz."""
+        for prefixo, uri in espacos.items():
+            if nsmap_base.get(prefixo, uri) != uri or self.espacos.get(prefixo, uri) != uri:
+                continue
+            if prefixo not in nsmap_base:
+                self.espacos[prefixo] = uri
+            if prefixo not in self.ignoraveis:
+                self.ignoraveis.append(prefixo)
 
     def id_de_desenho(self) -> int:
         """wp:docPr id para uma imagem do EditDoc, sem colidir com os dos objetos."""

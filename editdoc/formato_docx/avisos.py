@@ -52,10 +52,10 @@ CATALOGO: dict[str, tuple] = {
                   "(relação quebrada ou parte ausente no arquivo) e sai do arquivo ao salvar.",
         True),
     "IMAGEM_FORMATO": (
-        lambda n: f"{n} {_plural(n, 'imagem está', 'imagens estão')} em formato que o EditDoc "
-                  "não mostra (EMF, WMF, TIFF, SVG, VML ou vinculada a arquivo externo). "
-                  f"{_plural(n, 'Ela é preservada', 'Elas são preservadas')} no arquivo e "
-                  f"{_plural(n, 'aparece', 'aparecem')} como um quadro.",
+        lambda n: f"{n} {_plural(n, 'imagem não pode ser mostrada', 'imagens não podem ser mostradas')} "
+                  "(vinculada a arquivo externo, danificada, grande demais ou em formato que o "
+                  f"EditDoc não lê). {_plural(n, 'Ela é preservada', 'Elas são preservadas')} no "
+                  f"arquivo e {_plural(n, 'aparece', 'aparecem')} como um quadro.",
         False),
     "IMAGEM_GRANDE": (
         lambda n: f"{n} {_plural(n, 'imagem é grande demais', 'imagens são grandes demais')} "
@@ -76,8 +76,9 @@ CATALOGO: dict[str, tuple] = {
                   "Word esconde. Esse texto sai do arquivo ao salvar.",
         True),
     "CAIXA_DE_TEXTO": (
-        lambda n: f"{n} {_plural(n, 'caixa de texto ou forma é preservada', 'caixas de texto ou formas são preservadas')}, "
-                  f"mas não {_plural(n, 'pode ser editada', 'podem ser editadas')} nesta versão.",
+        lambda n: f"{n} {_plural(n, 'caixa de texto ou forma é preservada', 'caixas de texto ou formas são preservadas')}. "
+                  "O texto de uma caixa de texto pode ser editado (duplo clique na caixa); "
+                  "a forma em si (posição, tamanho, cor) e as formas sem texto não são editáveis nesta versão.",
         False),
     "OBJETO": (
         lambda n: f"{n} {_plural(n, 'objeto incorporado (gráfico, SmartArt ou objeto OLE) é preservado', 'objetos incorporados (gráficos, SmartArt ou objetos OLE) são preservados')}, "
@@ -173,8 +174,14 @@ CATALOGO: dict[str, tuple] = {
                   "nesta versão e sai do arquivo ao salvar.",
         True),
     "CONTEUDO_CONTROLADO": (
-        lambda n: f"{n} {_plural(n, 'controle de conteúdo foi achatado', 'controles de conteúdo foram achatados')}: "
+        lambda n: f"{n} {_plural(n, 'controle de conteúdo não pôde ser preservado e foi achatado', 'controles de conteúdo não puderam ser preservados e foram achatados')} "
+                  "(envolve linha ou célula de tabela, começa ou termina numa tabela, ou passa dos limites): "
                   "o texto ficou, mas o controle se perde.",
+        True),
+    "CONTEUDO_INCOMPLETO": (
+        lambda n: f"{n} {_plural(n, 'controle de conteúdo perdeu', 'controles de conteúdo perderam')} "
+                  f"o início ou o fim na edição e {_plural(n, 'sai', 'saem')} do arquivo; o texto "
+                  "de dentro fica.",
         True),
     "ESTILO": (
         lambda n: f"{n} {_plural(n, 'referência de estilo não pôde ser aplicada', 'referências de estilo não puderam ser aplicadas')} "

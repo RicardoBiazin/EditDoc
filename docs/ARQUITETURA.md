@@ -315,8 +315,9 @@ vinculada) e equação.
   transferência faz o colar avisar na barra de status.
 
 Limites: 2000 objetos por documento, 4 MB de XML por objeto, 64 MB somados, 64 partes e
-6 níveis de relação por objeto. O objeto não é editado por dentro; para mudar o texto de
-uma caixa, só no Word.
+6 níveis de relação por objeto. Desde a 0.1.5 o texto da caixa de texto se edita (ver
+"Formatação preservada, controles de conteúdo, caixas de texto e imagens"); a forma em si
+não.
 
 ## Partes do pacote, hiperlinks e campos
 
@@ -393,9 +394,9 @@ Implementados na 0.1.3.
 - Limites: 20.000 campos, links e marcadores por documento; instrução de 4096
   caracteres; endereço de 8192; 8 campos um dentro do outro. Acima disso, texto com aviso.
 
-Limite: o controle de conteúdo (`w:sdt`) continua achatado com aviso. O do sumário do Word
-envolve parágrafos inteiros (bloco), e as marcas no fluxo ficam dentro dos parágrafos: o
-escritor teria de subir o `w:sdt` para fora deles, o que não cai no mesmo mecanismo.
+Até a 0.1.4 o controle de conteúdo (`w:sdt`) era achatado com aviso. Desde a 0.1.5 o de
+bloco (o do sumário) e o de parágrafo são preservados com marcas no fluxo; o escritor sobe
+o de bloco para fora dos parágrafos (ver a seção da 0.1.5).
 
 ## Listas e numeração
 
@@ -458,19 +459,83 @@ Implementadas na 0.1.4.
 
 Limites: a definição de uma lista do arquivo não é editada (fonte, recuo ou texto de um
 nível); a tabulação depois do número não considera as tabulações próprias do parágrafo
-(`w:tabs` do pPr, que o modelo não guarda); o número dentro de caixa de texto não aparece
-(a caixa é um quadro), mas volta ao arquivo.
+(`w:tabs` do pPr, guardado nos extras desde a 0.1.5, mas fora desse cálculo); o número dentro
+de caixa de texto aparece desde a 0.1.5, na caixa editável.
+
+## Formatação preservada, controles de conteúdo, caixas de texto e imagens (0.1.5)
+
+Implementados na 0.1.5.
+
+- Propriedades preservadas (`formato_docx/propriedades.py`): `Run.extras`,
+  `Paragrafo.extras`, `Tabela.extras`, `Linha.extras` e `Celula.extras` guardam o XML original
+  do que o modelo não representa, um `w:rPr`/`w:pPr`/`w:tblPr`/`w:trPr`/`w:tcPr` em forma
+  canônica (c14n, só os namespaces usados). Três classes de filho: representado (o modelo
+  tem o campo e o escritor gera igual: `b`, `i`, `strike`, `sz`, `rStyle`, `pStyle`,
+  `outlineLvl`, `numPr`), detalhe (o modelo tem o campo mas o elemento traz mais: `u` duplo,
+  `dstrike`, `color` com tema, `rFonts` com tema, `vertAlign` estranho, `jc` start, `ind` com
+  `leftChars`, `spacing` com entrelinha exata; vai para os extras só se o escritor não o
+  geraria igual, e volta enquanto o campo do modelo — ou, com o campo vazio, o estilo —
+  der o mesmo valor) e extra (vai inteiro). `szCs` diferente de `sz` fica e o escritor não
+  gera o seu. Extensões do Word (`w14`, `w15`, `w16*`) ficam; a raiz da parte as declara e
+  as põe no `mc:Ignorable`, e o validador as aceita no document.xml. Revisão de
+  formatação sai (REVISAO); filho `w:` fora do esquema sai (FORMATACAO). A marca de
+  parágrafo (`pPr/rPr`) é saneada: sem revisão, sem estilo inexistente, na ordem.
+  Tabela: o escritor continua impondo "Table Grid" e as bordas explícitas (`tblLook` e as
+  faixas do estilo não voltam); `gridBefore`/`gridAfter` mudam a grade e continuam com aviso.
+- Qt (`ponte_qt/propriedades.py`): PROP_RPR_EXTRA (UserProperty + 28) no caractere,
+  PROP_PPR_EXTRA (+ 29) no bloco, e os extras da tabela, linha e célula no JSON que já
+  existia. A aparência: fundo (realce, sombreamento), maiúsculas, versalete, espaçamento
+  entre letras, escala, tabulações (`setTabPositions`), fundo do bloco e entrelinha exata ou
+  mínima; bordas de parágrafo e de trecho e o preenchimento das tabulações são pintados por
+  `desenhar`, na mesma função da folha que pinta os números das listas. Medido (Qt 6.11.2,
+  1440 dpi): espaçamento entre letras, posição de tabulação e altura fixa de linha são px96
+  (× 15). A tabulação do Qt conta da posição da linha, a do Word da margem: desconta-se o
+  recuo esquerdo (na primeira linha com recuo próprio fica deslocada). O formato acompanha o
+  texto: digitar herda, Enter copia o bloco; copiar leva `application/x-editdoc-propriedades`
+  (posições contadas sem os objetos de tipo próprio, que o HTML não leva; se o tamanho colado
+  não bate, os trechos não se aplicam); Limpar formatação tira. O recorte de imagem
+  (`Imagem.recorte`) vai no nome do recurso (`#recorte=l,t,r,b`) e volta dele.
+- Controles de conteúdo: `MarcaConteudo` no fluxo (início com o `sdtPr`/`sdtEndPr`
+  canônicos, fim), como os campos. O de bloco tem o início no começo do primeiro parágrafo e
+  o fim no fim do último, e o escritor (`_blocos`) abre o `w:sdt` antes do parágrafo e fecha
+  depois; o de parágrafo abre e fecha dentro do `w:p` (o link recomeça dentro dele).
+  `marcas.equilibrar` deixa os pares na mesma lista de blocos (ou no mesmo parágrafo), bem
+  aninhados, normaliza a posição das marcas de bloco e troca o `w:id` repetido; o par
+  desfeito conta CONTEUDO_INCOMPLETO. O controle vazio, que começa ou termina numa tabela,
+  ou em volta de linha ou célula (`_filhos_w`), continua achatado (CONTEUDO_CONTROLADO).
+- Caixa de texto (`formato_docx/caixas.py`): `analisar` lê o `w:txbxContent` de primeiro
+  nível do ramo que o Word mostra com o leitor de sempre e decide se é editável: só
+  parágrafos, runs de texto, tabulação, quebra de linha, links e formatação; e a trava
+  final (regravar e reler na hora tem de dar o mesmo modelo). `regravar` gera o conteúdo
+  com o escritor de sempre e troca o de cada `w:txbxContent` de primeiro nível (Choice e
+  Fallback), com rIds novos `rIdCx*` para os links e o resumo refeito; o resto do XML fica
+  igual. O diálogo (`interface/dialogo_caixa.py`) usa o `PainelDocumento`; confirmar troca o
+  formato do caractere da caixa (`formato_de_opaco` com o objeto novo) num bloco de edição.
+  Na tela (`ponte_qt/opacos.py`), a caixa editável é composta num `DocumentoQt` próprio a
+  1440 dpi (catálogo de estilos e listas do corpo por `_doc_estilos`), do tamanho do
+  `wp:extent` (a flutuante também, no ponto da âncora; o EditDoc não posiciona fora do
+  fluxo), crescendo se o texto passa; texto todo claro ganha fundo escuro.
+- Imagens (`ponte_qt/vetoriais.py`): `modelo/imagem.previa_possivel` decide na leitura (sem
+  Qt): formato pelo número mágico, tamanho pelo cabeçalho, registros do EMF/WMF percorridos
+  até o EOF (tamanho impossível, sem EOF ou acima de 1 milhão de registros: sem prévia),
+  dimensões acima do teto da tela, arquivo acima de 16 MB, EMF/WMF fora do Windows. Com
+  prévia, a imagem na linha não dá aviso. A tela: TIFF pelo `qtiff`, SVG pelo `QSvgRenderer`
+  (sem DOCTYPE, sem referência que não seja `#` ou `data:`), EMF/WMF pelo GDI
+  (`EnumEnhMetaFile` + `PlayEnhMetaFileRecord`, parando em registros ou 2 s), duas passadas
+  (fundo branco e preto) para a transparência, bitmap no máximo 1800 px. A vinculada a
+  arquivo externo nunca é lida.
 
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
 0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3; definições de
-numeração, desde a 0.1.4) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
+numeração, desde a 0.1.4; formatação que o modelo não representa e controles de conteúdo de
+parágrafo e de bloco, desde a 0.1.5) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
 LISTA_NIVEL só para referência quebrada, nível fora de 0 a 8 ou numeração acima dos
 limites, e LISTA_EM_CAIXA só quando a numeração do arquivo não pôde ser lida. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
 confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
 não pede confirmação. Comentários, revisões, notas de rodapé de verdade e controles de
-conteúdo entram aqui até as versões que os implementam. Nenhuma parte do pacote sai sem
+conteúdo de linha ou célula de tabela entram aqui até as versões que os implementam. Nenhuma parte do pacote sai sem
 aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
 NOTA, MINIATURA).
 
@@ -495,6 +560,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M7 Impressão e PDF | 0.0.10 (feito) | imprimir, pré-visualizar, exportar PDF (e texto `.txt`) |
 | M8 Polimento | 0.1.0 (feito) | recuperação automática, preferências, acessibilidade, documentação final |
 | Listas | 0.1.4 (feito) | numbering.xml inteiro, números como o Word, galeria, vários níveis, teclado |
+| Sem perda | 0.1.5 (feito) | rPr/pPr/tabela preservados, controles de conteúdo, texto da caixa editável, EMF/WMF/TIFF/SVG na tela |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em
@@ -503,8 +569,8 @@ modo contínuo, com paginação só na impressão.
 ## Fora da 0.1.0
 
 Revisão com controle de alterações, comentários, notas de rodapé, gerar e atualizar
-índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações, formas e caixas de texto (preservadas sem
-edição desde a 0.1.2), colunas, seções múltiplas editáveis, ortografia (prevista para a
+índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações e formas (preservadas sem
+edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas, seções múltiplas editáveis, ortografia (prevista para a
 0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).
 
 ## Riscos abertos

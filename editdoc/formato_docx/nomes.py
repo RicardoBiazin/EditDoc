@@ -64,3 +64,18 @@ URI_DIAGRAMA = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 #: Extensao do SmartArt: o relId do dataModelExt aponta para a relacao do documento.
 DSP_NS = "http://schemas.microsoft.com/office/drawing/2008/diagram"
 CT_DIAGRAMA_DADOS = "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml"
+
+#: Extensoes do Word que podem aparecer dentro de rPr, pPr e sdtPr (0.1.5): prefixo padrao ->
+#: namespace. Sao todas ignoraveis (mc:Ignorable): o leitor as guarda nos extras, e a raiz da
+#: parte gravada as declara.
+NS_EXTENSOES = {
+    "w14": "http://schemas.microsoft.com/office/word/2010/wordml",
+    "w15": "http://schemas.microsoft.com/office/word/2012/wordml",
+    "w16se": "http://schemas.microsoft.com/office/word/2015/wordml/symex",
+    "w16cid": "http://schemas.microsoft.com/office/word/2016/wordml/cid",
+    "w16": "http://schemas.microsoft.com/office/word/2018/wordml",
+    "w16cex": "http://schemas.microsoft.com/office/word/2018/wordml/cex",
+    "w16sdtdh": "http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash",
+    "w16du": "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
+    "w16sdtfl": "http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock",
+}

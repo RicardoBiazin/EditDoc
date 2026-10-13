@@ -25,6 +25,9 @@ causou defeito.
 - `editdoc/`: pacote. `configuracao.py`, `log_interno.py`, `idioma.py`,
   `recursos.py` são infraestrutura.
 - `editdoc/interface/`: tudo que importa Qt. `janela_principal.py` é a casca.
+- `editdoc/formato_docx/propriedades.py` e `ponte_qt/propriedades.py`: formatação preservada
+  (0.1.5); `formato_docx/caixas.py` e `interface/dialogo_caixa.py`: texto da caixa de texto;
+  `ponte_qt/vetoriais.py`: prévia de EMF, WMF, TIFF e SVG.
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -162,3 +165,13 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | contador da lista (0.1.4) | Os contadores sao da ABSTRATA, nao da instancia (`w:num`): duas instancias sem sobrescrita continuam a contagem. Lista nova do EditDoc que deve comecar em 1 leva `startOverride`. |
 | propriedade de usuario (0.1.4) | Bloco: `PROP_LISTA` = UserProperty + 23, `PROP_LISTA_NIVEL` + 24, `PROP_RECUO_REAL` + 25, `PROP_SAIU_DA_LISTA` + 26; quadro raiz: `PROP_NUMERACAO` + 27. O proximo livre e' + 28. |
 | `\f` em docstring | O docstring do escritor tinha uma barra invertida antes de "formato_docx": virou o caractere 0x0C no texto. Em docstring nao bruto, nada de barra invertida antes de letra. |
+| propriedade de usuario (0.1.5) | Caractere: `PROP_RPR_EXTRA` = UserProperty + 28; bloco: `PROP_PPR_EXTRA` + 29 (`ponte_qt/propriedades.py`). O proximo livre e' + 30. A marca de controle de conteudo usa o `TIPO_MARCA_CAMPO`; UserObject + 5 continua livre. |
+| extras de rPr/pPr (0.1.5) | Sao texto em forma canonica (c14n, `propriedades.canonico`): a releitura do arquivo gravado da' os mesmos bytes. Comparar extras so' pela forma canonica, nunca por `tostring` (a ordem dos atributos e as declaracoes mudam). O leitor so' guarda o "detalhe" (u duplo, cor de tema, ind com leftChars...) se o escritor nao o geraria igual: senao todo documento montado em codigo ganharia extras na releitura. |
+| detalhe e formatacao direta (0.1.5) | O `de_qt` tira a formatacao direta igual a do estilo (o campo volta None). O escritor confere o detalhe contra o modelo OU, com o campo None, contra a base do estilo (`bases_de_caractere`/`bases_de_paragrafo`); sem isso a cor de tema e a entrelinha exata caiam depois de passar pelo Qt. |
+| unidades no Qt (0.1.5) | Medido no Qt 6.11.2, 1440 dpi: espacamento absoluto entre letras, posicao de tabulacao (`QTextOption.Tab`) e altura fixa/minima de linha sao px96 (x 15), como a margem vertical. A tabulacao conta da posicao da linha (recuo esquerdo, e na 1a linha o recuo dela); a do Word, da margem. |
+| `QImageReader` do TIFF (0.1.5) | O leitor tem de morrer ANTES do `QBuffer` (`del leitor`): na ordem inversa o plugin do TIFF fecha o arquivo no destrutor e o processo cai (codigo 139, medido). |
+| SVG no PySide6 (0.1.5) | O plugin `imageformats/qsvg` nao carrega sem o `Qt6Svg.dll` no caminho: so' aparece depois de `import PySide6.QtSvg`. A previa usa `QSvgRenderer` direto e o `.spec` tem `PySide6.QtSvg` em hiddenimports. |
+| GDI e QImage RGB32 (0.1.5) | O DIB do GDI deixa no quarto byte o valor do fundo (0 sobre preto). `Format_RGB32` exige 0xFF ali: sem forcar, o `CompositionMode_Difference` da' cores erradas. A transparencia do EMF sai de duas passadas (branco e preto): alfa = 255 - (branco - preto), cor pre-multiplicada = a do preto. |
+| controle de conteudo de bloco (0.1.5) | A marca de inicio fica no COMECO do primeiro paragrafo e a de fim no FIM do ultimo; o escritor abre o `w:sdt` antes do paragrafo. `marcas.equilibrar` move as marcas para la' e tira par cruzado: sem isso a releitura teria as marcas em outro lugar e a conferencia recusaria o arquivo. O `w:id` repetido e' trocado no equilibrar (regex na forma canonica), nao no escritor, pelo mesmo motivo. |
+| celula terminando em sdt (0.1.5) | O Word grava o controle que envolve o paragrafo da celula como o ultimo filho do `w:tc`. O validador olha o ultimo bloco DENTRO do `w:sdtContent` (`ordem._ultimo_bloco`). |
+| caixa de texto editavel (0.1.5) | A edicao troca o objeto do caractere (`formato_de_opaco` com o objeto novo) num bloco de edicao: um passo de desfazer. `caixas.regravar` confere relendo: so' grava o que volta igual. A caixa com conteudo que o EditDoc nao regravaria (tabela, imagem, campo, sdt, marcador que nao seja `_GoBack`) e' so' leitura. |

@@ -29,11 +29,35 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   arquivo. A gravação é atômica: o arquivo novo é escrito ao lado, relido, conferido e
   só então troca o original.
 - **Caixas de texto, formas, gráficos, SmartArt, objetos OLE, equações e imagens
-  flutuantes** são preservados: o EditDoc não os edita, mas eles voltam ao arquivo
-  exatamente como vieram (o XML, as imagens, as planilhas dos gráficos e a posição na
-  página). Na tela cada um aparece como um quadro com o nome ("Caixa de texto: …",
-  "Gráfico", "Equação: …") no lugar dele no texto; Delete ou Backspace apagam o objeto
-  inteiro, e Ctrl+Z o traz de volta.
+  flutuantes** são preservados: eles voltam ao arquivo exatamente como vieram (o XML, as
+  imagens, as planilhas dos gráficos e a posição na página). Na tela cada um aparece como
+  um quadro com o nome ("Gráfico", "Equação: …") no lugar dele no texto; Delete ou
+  Backspace apagam o objeto inteiro, e Ctrl+Z o traz de volta.
+- **Texto das caixas de texto** (desde a 0.1.5): a caixa aparece do tamanho dela, com o
+  texto dentro. **Duplo clique** na caixa (ou Enter com a caixa selecionada, ou **Editar
+  texto da caixa** no botão direito) abre o editor do texto, com negrito (Ctrl+B), itálico
+  (Ctrl+I) e sublinhado (Ctrl+U); a formatação que o texto já tinha fica. OK grava o texto
+  novo dentro da caixa (nas duas versões que o Word guarda, a moderna e a de
+  compatibilidade), sem mexer na posição, no tamanho, na cor ou no contorno; um Ctrl+Z
+  desfaz. A caixa que tem tabela, imagem, campo ou outro objeto dentro abre só para
+  leitura, com o motivo. A forma sem texto não é editável.
+- **Imagens EMF, WMF, TIFF e SVG** (desde a 0.1.5) aparecem na tela, no PDF e na impressão,
+  em vez do quadro cinza. O arquivo original da imagem volta ao `.docx` sem mudança. EMF e
+  WMF dependem do Windows. A imagem vinculada a um arquivo externo nunca é lida do disco
+  nem da rede: continua um quadro com o nome do arquivo.
+- **Formatação sem perda** (desde a 0.1.5): tudo o que o EditDoc não edita na formatação
+  do texto e do parágrafo volta ao arquivo como veio (realce, sombreamento, bordas do
+  parágrafo e do trecho, tabulações, espaçamento entre caracteres, maiúsculas, versalete,
+  escala, idioma, quadro de texto, sublinhado duplo, cor e fonte do tema, entrelinha
+  exata...), e também o da tabela, da linha e da célula (tabela flutuante, margens e
+  direção do texto da célula, linha que não se parte). Na tela aparecem o realce, o
+  sombreamento, as bordas, as tabulações com pontilhado, o espaçamento, as maiúsculas, o
+  versalete e a entrelinha exata. O recorte de imagem do Word também volta e aparece.
+  Digitar, Enter, copiar e colar levam essa formatação junto, como no Word; Limpar
+  formatação a tira.
+- **Controles de conteúdo** (desde a 0.1.5): o quadro "Sumário" do Word e os campos de
+  formulário (texto, data, lista) voltam ao arquivo com as propriedades; na tela, colchetes
+  finos azulados marcam o começo e o fim (não saem na impressão).
 - **Hiperlinks** (desde a 0.1.3): o link do arquivo aparece com o estilo dele (azul
   sublinhado) e volta ao arquivo com o endereço. **Ctrl+clique** abre o link: endereço da
   Web e e-mail abrem direto no programa do Windows; arquivo, pasta de rede e outros
@@ -100,7 +124,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.4-win64.zip` da página
+1. Baixe `EditDoc-0.1.5-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -169,7 +193,8 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   não mostra (desde a 0.1.2); hiperlinks, marcadores, campos de qualquer tipo (sumário,
   referências, data...) e as partes do arquivo que o EditDoc não edita (desde a 0.1.3);
   a numeração de listas inteira, com os níveis, os formatos, os símbolos e a lista ligada
-  ao estilo (desde a 0.1.4).
+  ao estilo (desde a 0.1.4); a formatação de texto, parágrafo e tabela que o EditDoc não
+  edita e os controles de conteúdo de parágrafo e de bloco (desde a 0.1.5).
   Os estilos que o EditDoc não altera e o tema voltam como vieram. Ainda avisam, com
   confirmação, só o que não pode voltar inteiro: objeto, link ou campo com referência
   quebrada no arquivo, ou acima dos limites (2000 objetos; 20.000 campos, links ou
@@ -182,19 +207,25 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 - Notas de rodapé e de fim: as notas separadoras do Word voltam ao arquivo; as notas de
   verdade ainda não (com aviso e confirmação).
 - O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
-  atualize (F9) se o texto mudou. O controle de conteúdo que envolve o sumário no Word
-  (o quadro "Sumário") é achatado, com aviso; o sumário continua sendo campo.
-- Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
+  atualize (F9) se o texto mudou. O controle de conteúdo que envolve uma linha ou uma
+  célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
+  ou só o fim de um controle de conteúdo tira o controle ao salvar, com aviso.
+- Formatação: o filho de propriedade que o formato não define (arquivo de outro programa)
+  e as revisões de formatação saem, com aviso; a formatação do código de um campo (o
+  texto escondido entre o começo e o separador) segue a do começo do campo. Tabulação:
+  na primeira linha com recuo próprio a parada aparece deslocada desse recuo.
+- Objetos preservados: a forma não aparece na posição da página (a caixa de texto e a
+  imagem flutuante ficam no ponto do texto onde estão presas, e a caixa ocupa o tamanho
+  dela ali); copiar e colar dentro do EditDoc leva o texto em volta, mas não o
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
   caixa de texto perdem a referência ao salvar (com aviso), porque essas partes não voltam
   ao arquivo. A lista numerada dentro da caixa volta (desde a 0.1.4).
 - Fora desta versão: revisão com controle de alterações, comentários, notas de rodapé,
-  gerar ou atualizar sumário e índices, mala direta, editar equações, formas e caixas de texto (elas são
-  preservadas, não editadas), colunas, várias seções editáveis, ortografia, `.doc`, RTF,
+  gerar ou atualizar sumário e índices, mala direta, editar equações e formas (elas são
+  preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), colunas, várias seções editáveis, ortografia, `.doc`, RTF,
   ODT e macros (nunca).
 - Numeração de listas: o EditDoc não edita a definição de uma lista do arquivo (fonte,
-  recuo ou texto do número de um nível); a galeria cria definições novas. O número dentro
-  de caixa de texto não aparece na tela (a caixa é um quadro). A tabulação depois do número
+  recuo ou texto do número de um nível); a galeria cria definições novas. A tabulação depois do número
   usa as paradas do nível e a padrão do documento, não as tabulações próprias do parágrafo.
   Num documento com milhares de itens, Enter e Backspace entre parágrafos levam mais
   (medido: 50 ms com 3000 itens), porque a numeração é recalculada.
@@ -232,7 +263,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.4-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.5-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

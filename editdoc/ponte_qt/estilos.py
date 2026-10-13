@@ -427,6 +427,10 @@ def recompor_blocos(doc: QTextDocument, blocos, velho: Resolvedor, novo: Resolve
                 # Tudo o que o texto tinha passa a ser "igual ao estilo velho" e cai.
                 base_velha = props_de_caractere(cf)
             ncf = recompor_caractere(cf, base_velha, novo.caractere(sid, car) or vazio, car)
+            if limpar_direto:
+                # As propriedades preservadas (realce, versalete... 0.1.5) tambem saem.
+                from editdoc.ponte_qt import propriedades as pq_props  # import tardio
+                pq_props.tirar_rpr(ncf)
             if ncf != cf:
                 c = QTextCursor(doc)
                 c.setPosition(inicio)

@@ -44,6 +44,12 @@ Listas (0.1.4): `Paragrafo.lista` (numId) e `lista_nivel` (ilvl) sao o w:numPr d
 catalogo do numbering.xml fica em `Documento.numeracao` (modelo/numeracao.py), fora da
 comparacao, como os estilos. `Paragrafo.numeracao` virou so' o tipo, informativo.
 
+Formatacao preservada (0.1.5): `Run.extras`, `Paragrafo.extras` e os de `Tabela`, `Linha` e
+`Celula` guardam o XML das propriedades que o modelo nao representa (formato_docx/
+propriedades.py); entram na comparacao, entao runs com extras diferentes nao fundem.
+`MarcaConteudo` marca o inicio (com o sdtPr) e o fim de um controle de conteudo no fluxo.
+`Imagem.recorte` e' o a:srcRect.
+
 `normalizar` funde runs vizinhos de mesma formatacao e descarta runs vazios.
 Dois documentos com o mesmo texto e a mesma formatacao so' sao iguais depois de
 normalizados: o Qt e o XML podem dividir o mesmo texto em runs diferentes. Ela
@@ -75,6 +81,9 @@ class Imagem:
     largura_emu: int
     altura_emu: int
     descricao: str = ""  # texto alternativo (wp:docPr descr)
+    # Recorte (0.1.5, a:srcRect): (esquerda, topo, direita, base) em milesimos de por cento
+    # (100000 = 100%) cortados de cada lado. None = a imagem inteira.
+    recorte: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +217,22 @@ class Marcador:
     nome: str
 
 
+@dataclass(frozen=True)
+class MarcaConteudo:
+    """Inicio ou fim de um controle de conteudo (w:sdt, 0.1.5) no fluxo do texto.
+
+    `propriedades`: o w:sdtPr e o w:sdtEndPr do controle (so' no inicio), em forma canonica
+    (`formato_docx/propriedades.py`). `bloco`: o controle envolve paragrafos inteiros (o do
+    sumario); o inicio fica no comeco do primeiro paragrafo e o fim no fim do ultimo, e o
+    escritor grava o w:sdt por fora deles. Sem `bloco`, o controle esta' dentro do paragrafo.
+    `par` liga o inicio ao fim, como na marca de campo (fora da comparacao).
+    """
+    tipo: Literal["inicio", "fim"]
+    propriedades: bytes = b""
+    bloco: bool = False
+    par: int = field(default=0, compare=False)
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -232,8 +257,12 @@ class Run:
     objeto: ObjetoOpaco | None = None
     # Hiperlink (0.1.3): o destino do trecho. None = fora de link.
     link: Link | None = None
-    # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador. texto == "".
-    marca: MarcaCampo | Marcador | None = None
+    # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador; desde a 0.1.5 tambem de
+    # controle de conteudo (MarcaConteudo). texto == "".
+    marca: MarcaCampo | Marcador | MarcaConteudo | None = None
+    # Propriedades de run que o modelo nao representa (0.1.5): o XML original delas (um w:rPr
+    # em forma canonica, `formato_docx/propriedades.py`). None = nenhuma.
+    extras: str | None = None
 
     def eh_objeto(self) -> bool:
         """Run que ocupa o caractere de objeto: imagem ou objeto opaco."""
@@ -280,6 +309,9 @@ class Paragrafo:
     # tenha); `lista_nivel` e' o ilvl (0 a 8). None = herda do estilo (modelo/numeracao.py).
     lista: int | None = None
     lista_nivel: int | None = None
+    # Propriedades de paragrafo que o modelo nao representa (0.1.5): tabulacoes, bordas,
+    # sombreamento, quadro, controle de linhas... (um w:pPr em forma canonica). None = nenhuma.
+    extras: str | None = None
 
 
 @dataclass
@@ -318,6 +350,9 @@ class Celula:
     bordas: BordasCelula | None = None
     sombreamento_hex: str | None = None  # cor de fundo, "RRGGBB"
     alinhamento_vertical: Literal["topo", "centro", "base"] | None = None
+    # Propriedades da celula que o modelo nao representa (0.1.5): tcMar, textDirection,
+    # noWrap... (um w:tcPr em forma canonica). None = nenhuma.
+    extras: str | None = None
 
 
 @dataclass
@@ -326,6 +361,8 @@ class Linha:
     cabecalho: bool = False  # w:tblHeader: repete no alto de cada pagina
     altura_tw: int | None = None  # w:trHeight (guardada; a tela nao aplica)
     altura_exata: bool = False  # hRule="exact"; senao, "atLeast"
+    # Propriedades da linha que o modelo nao representa (0.1.5): cantSplit, jc, hidden...
+    extras: str | None = None
 
 
 @dataclass
@@ -340,6 +377,9 @@ class Tabela:
     layout_fixo: bool | None = None  # w:tblLayout type="fixed"
     # Margens internas padrao das celulas (w:tblCellMar), em twips: sup, esq, inf, dir.
     margens_celula_tw: tuple[int, int, int, int] | None = None
+    # Propriedades da tabela que o modelo nao representa (0.1.5): tblpPr (tabela flutuante),
+    # sombreamento, espacamento entre celulas, legenda... (um w:tblPr em forma canonica).
+    extras: str | None = None
 
 
 Bloco = Union[Paragrafo, Tabela]

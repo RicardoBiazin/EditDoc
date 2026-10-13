@@ -10,6 +10,7 @@ dependência nova.
 | PySide6 (Essentials) | 6.11.2 | LGPL-3.0 | Qt for Python. Distribuído em pasta, para que as DLLs possam ser substituídas. |
 | Qt (dentro do PySide6) | 6.11 | LGPL-3.0 | Traduções `qtbase_pt_BR.qm` e `qt_pt_BR.qm` embutidas. Desde a 0.0.7 os plugins de imagem do Qt (`imageformats`: JPEG com libjpeg-turbo, licença IJG/BSD; GIF) decodificam as imagens do documento. Já vinham no pacote. |
 | lxml | 6.1.3 | BSD-3-Clause | Leitura e escrita de XML. |
+| Qt SVG e plugin TIFF (dentro do PySide6) | 6.11 | LGPL-3.0; libtiff (licença libtiff, estilo BSD) dentro do `qtiff` | Desde a 0.1.5 o módulo `QtSvg` (`Qt6Svg.dll`, plugin `qsvg`) e o plugin `imageformats/qtiff` mostram as imagens SVG e TIFF do documento. Já vinham no PySide6-Essentials; o `.spec` passa a incluir o `QtSvg`. EMF e WMF usam o GDI do Windows (sistema), sem componente novo. |
 
 ## Só para desenvolvimento e testes
 

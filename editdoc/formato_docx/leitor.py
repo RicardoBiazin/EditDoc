@@ -15,7 +15,12 @@ PAGE e NUMPAGES (M5) viram um `Run` com `campo`; desde a 0.1.3 os outros (TOC, R
 IF...) viram marcas de inicio (com o codigo) e de fim no fluxo, com o resultado como texto
 entre elas. Hiperlinks viram `Run.link`; marcadores, marcas no fluxo. O resto do pacote
 (custom.xml, customXml, fontTable, webSettings, settings.xml...) vai para `Documento.pacote`
-(`pacote.py`). Revisoes aceitas; exclusoes e controles de conteudo tem aviso.
+(`pacote.py`). Revisoes aceitas; exclusoes tem aviso.
+
+0.1.5: as propriedades de run, de paragrafo e de tabela que o modelo nao representa vao para
+os extras (`propriedades.py`) e voltam ao arquivo; o controle de conteudo de bloco e de
+paragrafo vira marcas no fluxo (`MarcaConteudo`); o de linha ou celula de tabela continua
+achatado, com aviso. Recorte de imagem (a:srcRect) vai para `Imagem.recorte`.
 
 Cabecalho e rodape (M5): os da ultima secao, com a heranca do Word (a secao sem
 referencia herda a da anterior). Cada parte passa pelos mesmos limites do pacote e
@@ -50,6 +55,7 @@ from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos
 from editdoc.formato_docx import pacote as fx_pacote
+from editdoc.formato_docx import propriedades as fx_props
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, MATH_NS, MC_NS,
@@ -60,7 +66,8 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import (FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO,
                                    normalizar_instrucao, tipo_do_campo)
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Campo, Celula,
-                                      Documento, Imagem, Linha, Link, MarcaCampo, Marcador,
+                                      Documento, Imagem, Linha, Link, MarcaCampo, MarcaConteudo,
+                                      Marcador,
                                       Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
@@ -94,6 +101,9 @@ LIMITES_PADRAO = {
     "hiperlinks": 20000,
     "link_tamanho": 8192,
     "marcadores": 20000,
+    # Controles de conteudo (w:sdt, 0.1.5) preservados por documento. Acima disto o controle
+    # e' achatado (o texto fica), com aviso.
+    "conteudos": 20000,
     # Objetos opacos (0.1.2): quantos, o tamanho do XML e o fecho das partes.
     **opacos.LIMITES,
     # Partes do pacote preservadas (0.1.3).
@@ -115,11 +125,9 @@ _LADOS_TABELA = (("top", "sup"), ("left", "esq"), ("start", "esq"), ("bottom", "
 _VALIGN = {"top": "topo", "center": "centro", "bottom": "base"}
 _JC_TABELA = {"left": "esquerda", "start": "esquerda", "center": "centro",
               "right": "direita", "end": "direita"}
-#: Filhos de tblPr, trPr e tcPr sem efeito visivel que o modelo nao usa.
-_TBLPR_NEUTRAS = {"tblLook", "tblStyleRowBandSize", "tblStyleColBandSize", "tblOverlap",
-                  "tblPrChange"}
-_TRPR_NEUTRAS = {"cnfStyle", "divId", "cantSplit", "wBefore", "wAfter", "trPrChange"}
-_TCPR_NEUTRAS = {"cnfStyle", "tcW", "noWrap", "tcFitText", "hideMark", "tcPrChange"}
+#: Filhos de tblPr do estilo que o escritor impoe ("Table Grid"): nao valem na tabela gravada.
+#: Desde a 0.1.5 o resto (tblOverlap, tblpPr, shd...) vai para os extras da tabela.
+_TBLPR_NEUTRAS = {"tblLook", "tblStyleRowBandSize", "tblStyleColBandSize", "tblPrChange"}
 
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _DOCTYPE = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)", re.IGNORECASE)
@@ -128,15 +136,8 @@ _HEX6 = re.compile(r"[0-9A-Fa-f]{6}")
 _JC = {"left": "esquerda", "start": "esquerda", "center": "centro",
        "right": "direita", "end": "direita", "both": "justificado"}
 
-#: Propriedades de paragrafo sem efeito visivel que o modelo nao usa: sao ignoradas.
-_PPR_NEUTRAS = {"widowControl", "keepNext", "keepLines", "suppressAutoHyphens", "kinsoku",
-                "wordWrap", "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN",
-                "adjustRightInd", "snapToGrid", "textAlignment", "divId",
-                "cnfStyle", "contextualSpacing", "textboxTightWrap", "rPr", "pPrChange",
-                "suppressLineNumbers"}
-#: Propriedades de run sem efeito visivel que o modelo nao usa.
-_RPR_NEUTRAS = {"bCs", "iCs", "szCs", "lang", "noProof", "kern", "snapToGrid",
-                "eastAsianLayout", "rtl", "cs", "specVanish", "oMath", "webHidden", "em"}
+#: Desde a 0.1.5 nao ha' propriedade de run ou de paragrafo "neutra" (ignorada): o que o
+#: modelo nao representa vai para os extras (`propriedades.py`) e volta ao arquivo.
 
 _CONTEINERES_INLINE = {"hyperlink", "fldSimple", "smartTag", "customXml", "dir", "bdo",
                        "moveTo", "ins"}
@@ -251,6 +252,12 @@ class _Contexto:
         self.marcas_pendentes: list[Run] = []
         #: texto do codigo de campo que ja' tinha ido para o paragrafo (sai na limpeza)
         self.descartar: list[Run] = []
+        #: controles de conteudo preservados (0.1.5)
+        self.total_conteudos = 0
+
+    def estilo_existe(self, sid, tipo: str) -> bool:
+        estilo = self.estilos.obter(sid) if sid else None
+        return estilo is not None and estilo.tipo == tipo
 
 
 # -- objetos opacos -------------------------------------------------------------
@@ -266,14 +273,20 @@ def _opaco(item, rpr, ctx: _Contexto) -> Run | None:
     if obj is None:
         ctx.coletor.somar("IMAGEM" if opacos.classificar(item) == "imagem" else "OBJETO_PERDIDO")
         return None
-    ctx.coletor.somar(opacos.codigo_do_aviso(obj.tipo, obj.flutuante))
+    codigo = opacos.codigo_do_aviso(obj.tipo, obj.flutuante, obj.previa is not None)
+    if codigo is not None:
+        ctx.coletor.somar(codigo)
     return run_de_objeto(obj)
 
 
 # -- propriedades -------------------------------------------------------------
 
 def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
+    """O que o modelo representa vai para os campos do run; o resto, desde a 0.1.5, vai inteiro
+    para `run.extras` (`propriedades.py`) e volta ao arquivo. So' o que o esquema nao tem (ou
+    a revisao de formatacao) se perde, com aviso."""
     c = ctx.coletor
+    fontes = ctx.estilos.fontes_tema
     for f in rpr:
         ns, loc = _local(f)
         if ns != W or loc is None:
@@ -282,39 +295,19 @@ def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
             run.negrito = _onoff(f)
         elif loc == "i":
             run.italico = _onoff(f)
-        elif loc == "u":
-            v = _atr(f, "val")
-            run.sublinhado = v != "none"
-            if v not in (None, "single", "none"):
-                c.somar("FORMATACAO")
         elif loc == "strike":
             run.tachado = _onoff(f)
-        elif loc == "dstrike":
-            run.tachado = _onoff(f)
-            c.somar("FORMATACAO")
-        elif loc == "vertAlign":
-            v = _atr(f, "val")
-            if v == "superscript":
-                run.sobrescrito, run.subscrito = True, False
-            elif v == "subscript":
-                run.subscrito, run.sobrescrito = True, False
-            elif v == "baseline":
-                run.subscrito, run.sobrescrito = False, False
-            else:
-                c.somar("FORMATACAO")
+        elif loc in ("u", "dstrike", "color", "vertAlign"):
+            # Duplo, tema, sobrescrito estranho...: o modelo fica com o que entende e o
+            # elemento original volta pelos extras.
+            for campo, valor in fx_props.derivado_rpr(loc, f, fontes).items():
+                setattr(run, campo, valor)
         elif loc == "sz":
             run.tamanho_meio_pt = _inteiro(_atr(f, "val"))
         elif loc == "rFonts":
-            fonte = fx_estilos.fonte_de_rfonts(f, ctx.estilos.fontes_tema)
+            fonte = fx_props.derivado_rpr(loc, f, fontes)["fonte"]
             if fonte:
                 run.fonte = fonte
-        elif loc == "color":
-            v = _atr(f, "val")
-            if v and v.lower() != "auto":
-                if _HEX6.fullmatch(v):
-                    run.cor_hex = v.upper()
-                else:
-                    c.somar("FORMATACAO")
         elif loc == "rStyle":
             sid = _atr(f, "val")
             estilo = ctx.estilos.obter(sid)
@@ -322,49 +315,21 @@ def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
                 run.estilo = sid
             elif sid not in (None, "DefaultParagraphFont"):
                 c.somar("ESTILO")
-        elif loc in _RPR_NEUTRAS:
-            continue
-        else:
-            c.somar("FORMATACAO")
+    run.extras = fx_props.ler_extras_rpr(rpr, fontes, c)
 
 
 def _ler_ppr(ppr, ctx: _Contexto) -> dict:
+    """Propriedades do paragrafo. Desde a 0.1.5 o que o modelo nao representa (tabulacoes,
+    bordas, sombreamento, quadro, controle de linhas, a marca de paragrafo...) vai para
+    `extras` e volta ao arquivo; a entrelinha exata ou minima tambem (antes saia simples)."""
     c = ctx.coletor
     out: dict = {}
     for f in ppr:
         ns, loc = _local(f)
         if ns != W or loc is None:
             continue
-        if loc == "jc":
-            v = _atr(f, "val")
-            if v in _JC:
-                out["alinhamento"] = _JC[v]
-            else:
-                c.somar("FORMATACAO")
-        elif loc == "ind":
-            esq = _atr(f, "left") or _atr(f, "start")
-            if esq is not None:
-                out["recuo_esquerdo_tw"] = _inteiro(esq)
-            if _atr(f, "firstLine") is not None:
-                out["recuo_primeira_linha_tw"] = _inteiro(_atr(f, "firstLine"))
-            elif _atr(f, "hanging") is not None:
-                h = _inteiro(_atr(f, "hanging"))
-                out["recuo_primeira_linha_tw"] = None if h is None else -h
-            direito = _atr(f, "right") or _atr(f, "end")
-            if direito is not None:
-                out["recuo_direito_tw"] = _inteiro(direito)
-        elif loc == "spacing":
-            if _atr(f, "before") is not None:
-                out["espaco_antes_tw"] = _inteiro(_atr(f, "before"))
-            if _atr(f, "after") is not None:
-                out["espaco_depois_tw"] = _inteiro(_atr(f, "after"))
-            linha = _inteiro(_atr(f, "line"))
-            if linha is not None:
-                regra = _atr(f, "lineRule") or "auto"
-                if regra == "auto":
-                    out["espacamento_linha_pct"] = round(linha * 100 / 240)
-                else:
-                    c.somar("ESPACAMENTO_LINHA")
+        if loc in ("jc", "ind", "spacing"):
+            out.update({k: v for k, v in fx_props.derivado_ppr(loc, f).items() if v is not None})
         elif loc == "numPr":
             _ler_numpr(f, out, ctx)
         elif loc == "pStyle":
@@ -385,10 +350,9 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
             _faixas_da_secao(f, ctx, final=False)
         elif loc == "pageBreakBefore":
             out["quebra_antes"] = _onoff(f)
-        elif loc in _PPR_NEUTRAS:
-            continue
-        else:
-            c.somar("FORMATACAO")
+    extras = fx_props.ler_extras_ppr(ppr, ctx.estilo_existe, c)
+    if extras is not None:
+        out["extras"] = extras
     return out
 
 
@@ -488,7 +452,10 @@ class _Pedacos:
     def imagem(self, imagem: Imagem) -> None:
         self.descarregar()
         if self._no_fluxo():
-            self.saida.append(run_de_imagem(imagem))
+            run = run_de_imagem(imagem)
+            # O rPr do run da imagem (borda em volta, noProof) vai junto pelos extras (0.1.5).
+            run.extras = self.base.extras
+            self.saida.append(run)
 
     def objeto(self, item, ctx: "_Contexto") -> None:
         self.descarregar()
@@ -824,10 +791,17 @@ def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
         cx = max(1, round(dims[0] * EMU_POR_PX * escala))
         cy = max(1, round(dims[1] * EMU_POR_PX * escala))
         c.somar("FORMATACAO")
+    recorte = None
     if blip.getparent() is not None:
-        recorte = blip.getparent().find("{%s}srcRect" % A_NS)
-        if recorte is not None and any((recorte.get(k) or "0") != "0" for k in "ltrb"):
-            c.somar("FORMATACAO")  # recorte da imagem: o EditDoc mostra a imagem inteira
+        src = blip.getparent().find("{%s}srcRect" % A_NS)
+        if src is not None and any((src.get(k) or "0") != "0" for k in "ltrb"):
+            # Recorte (0.1.5): guardado e aplicado na tela. Valor que nao e' numero, ou fora
+            # de -1000% a 100%, nao vale: a imagem inteira, com aviso.
+            valores = tuple(_inteiro(src.get(k) or "0") for k in "ltrb")
+            if all(v is not None and -1000000 <= v <= 100000 for v in valores):
+                recorte = valores
+            else:
+                c.somar("FORMATACAO")
     xfrm = pic.find("{%s}spPr/{%s}xfrm" % (PIC_NS, A_NS))
     if xfrm is not None and (xfrm.get("rot") not in (None, "0") or xfrm.get("flipH") in ("1", "true")
                              or xfrm.get("flipV") in ("1", "true")):
@@ -835,7 +809,7 @@ def _ler_desenho(drawing, ctx: _Contexto) -> Imagem | None:
     doc_pr = quadro.find("{%s}docPr" % WP_NS)
     descricao = (doc_pr.get("descr") or "") if doc_pr is not None else ""
     return Imagem(dados=dados, formato=formato, largura_emu=cx, altura_emu=cy,
-                  descricao=descricao)
+                  descricao=descricao, recorte=recorte)
 
 
 def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
@@ -866,7 +840,7 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             _runs_em(f, ctx, dentro)
             if link is not None:
                 for r in dentro:
-                    if r.link is None:
+                    if r.link is None and not isinstance(r.marca, MarcaConteudo):
                         r.link = link
             saida.extend(dentro)
         elif loc in ("bookmarkStart", "bookmarkEnd"):
@@ -880,10 +854,7 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
         elif loc in ("del", "moveFrom"):
             c.somar("REVISAO")
         elif loc == "sdt":
-            c.somar("CONTEUDO_CONTROLADO")
-            conteudo = f.find(q("sdtContent"))
-            if conteudo is not None:
-                _runs_em(conteudo, ctx, saida)
+            _conteudo_de_run(f, ctx, saida)
         elif loc in ("smartTag", "customXml", "dir", "bdo"):
             _runs_em(f, ctx, saida)
         elif loc in ("oMath", "oMathPara"):
@@ -892,6 +863,27 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             continue
         else:
             c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _conteudo_de_run(f, ctx: _Contexto, saida: list) -> None:
+    """w:sdt dentro do paragrafo (0.1.5): marcas de inicio (com o sdtPr) e de fim no fluxo, o
+    conteudo entre elas. No codigo de um campo, ou acima do limite, o controle e' achatado
+    (o texto fica), com aviso."""
+    no_fluxo = _destino_do_texto(ctx) is None and ctx.total_conteudos < ctx.lim["conteudos"]
+    conteudo = f.find(q("sdtContent"))
+    dentro: list[Run] = []
+    if conteudo is not None:
+        _runs_em(conteudo, ctx, dentro)
+    if not no_fluxo:
+        ctx.coletor.somar("CONTEUDO_CONTROLADO")
+        saida.extend(dentro)
+        return
+    ctx.total_conteudos += 1
+    ctx.pares += 1
+    props = fx_props.propriedades_de_sdt(f, ctx.estilo_existe, ctx.coletor)
+    saida.append(Run(marca=MarcaConteudo("inicio", props, False, ctx.pares)))
+    saida.extend(dentro)
+    saida.append(Run(marca=MarcaConteudo("fim", par=ctx.pares)))
 
 
 def _campo_simples(f, ctx: _Contexto, saida: list) -> None:
@@ -1012,10 +1004,7 @@ def _blocos(elemento, paras: list[Bloco], ctx: _Contexto, achatar: bool = False)
         elif loc in ("tr", "tc", "customXml", "smartTag", "sdtContent", "ins"):
             _blocos(f, paras, ctx, achatar)
         elif loc == "sdt":
-            c.somar("CONTEUDO_CONTROLADO")
-            conteudo = f.find(q("sdtContent"))
-            if conteudo is not None:
-                _blocos(conteudo, paras, ctx, achatar)
+            _conteudo_de_bloco(f, paras, ctx, achatar)
         elif loc in ("del", "moveFrom"):
             c.somar("REVISAO")
         elif loc in ("bookmarkStart", "bookmarkEnd"):
@@ -1024,6 +1013,29 @@ def _blocos(elemento, paras: list[Bloco], ctx: _Contexto, achatar: bool = False)
             continue
         else:
             c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _conteudo_de_bloco(f, paras: list, ctx: _Contexto, achatar: bool) -> None:
+    """w:sdt que envolve paragrafos inteiros (o do sumario, 0.1.5): a marca de inicio entra no
+    comeco do primeiro paragrafo e a de fim no fim do ultimo; o escritor grava o w:sdt por
+    fora deles. Controle vazio, que comeca ou termina numa tabela, ou acima do limite, e'
+    achatado (o conteudo fica), com aviso."""
+    conteudo = f.find(q("sdtContent"))
+    dentro: list[Bloco] = []
+    if conteudo is not None:
+        _blocos(conteudo, dentro, ctx, achatar)
+    if (achatar or not dentro or not isinstance(dentro[0], Paragrafo)
+            or not isinstance(dentro[-1], Paragrafo)
+            or ctx.total_conteudos >= ctx.lim["conteudos"]):
+        ctx.coletor.somar("CONTEUDO_CONTROLADO")
+        paras.extend(dentro)
+        return
+    ctx.total_conteudos += 1
+    ctx.pares += 1
+    props = fx_props.propriedades_de_sdt(f, ctx.estilo_existe, ctx.coletor)
+    dentro[0].runs.insert(0, Run(marca=MarcaConteudo("inicio", props, True, ctx.pares)))
+    dentro[-1].runs.append(Run(marca=MarcaConteudo("fim", bloco=True, par=ctx.pares)))
+    paras.extend(dentro)
 
 
 def _fechar_historia(blocos: list, ctx: _Contexto) -> None:
@@ -1179,10 +1191,12 @@ def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
                 tabela.margens_celula_tw = (margens["top"], margens["left"],
                                             margens["bottom"], margens["right"])
             elif loc in _TBLPR_NEUTRAS:
+                if loc == "tblPrChange":
+                    c.somar("REVISAO")
                 continue
-            else:
-                # tblpPr (tabela flutuante), shd, tblCellSpacing, bidiVisual, legenda...
-                c.somar("FORMATACAO")
+            # tblpPr (tabela flutuante), shd, tblCellSpacing, bidiVisual, legenda...: desde a
+            # 0.1.5 vao para os extras da tabela e voltam ao arquivo.
+        tabela.extras = fx_props.ler_extras_tabela(tbl_pr)
     # Bordas efetivas: as do estilo (cadeia basedOn), depois as diretas. Lado sem
     # borda nenhuma fica explicito como "nenhuma": o escritor grava os seis lados.
     bordas = _bordas_do_estilo(ctx, estilo_id)
@@ -1253,14 +1267,12 @@ def _linha(tr, tcs: list, ctx: _Contexto) -> Linha:
                 if valor is not None and 0 < valor <= PAPEL_MAXIMO_TW:
                     linha.altura_tw = valor
                     linha.altura_exata = _atr(f, "hRule") == "exact"
-            elif loc in ("gridBefore", "gridAfter", "jc", "hidden", "tblCellSpacing"):
-                c.somar("FORMATACAO")
-            elif loc in ("ins", "del"):
+            elif loc in ("gridBefore", "gridAfter"):
+                c.somar("FORMATACAO")  # a grade da linha: o leitor completa com celula vazia
+            elif loc in ("ins", "del", "trPrChange"):
                 c.somar("REVISAO")
-            elif loc in _TRPR_NEUTRAS:
-                continue
-            else:
-                c.somar("FORMATACAO")
+            # cantSplit, jc, hidden, tblCellSpacing...: extras da linha (0.1.5).
+        linha.extras = fx_props.ler_extras_tabela(tr_pr)
     for tc in tcs:
         celula = _celula(tc, ctx)
         if celula is None:
@@ -1302,12 +1314,10 @@ def _celula(tc, ctx: _Contexto) -> Celula | None:
                     c.somar("FORMATACAO")  # padrao de hachura
             elif loc == "vAlign":
                 celula.alinhamento_vertical = _VALIGN.get(_atr(f, "val") or "")
-            elif loc in ("cellIns", "cellDel", "cellMerge"):
+            elif loc in ("cellIns", "cellDel", "cellMerge", "tcPrChange"):
                 c.somar("REVISAO")
-            elif loc in _TCPR_NEUTRAS:
-                continue
-            else:
-                c.somar("FORMATACAO")  # tcMar, textDirection...
+            # tcMar, textDirection, noWrap...: extras da celula (0.1.5).
+        celula.extras = fx_props.ler_extras_tabela(tc_pr)
     _blocos(tc, celula.blocos, ctx)
     if celula.mescla_vertical == "continua" and any(
             r.texto for p in celula.blocos if isinstance(p, Paragrafo) for r in p.runs):

@@ -69,7 +69,9 @@ a = Analysis(
     pathex=[str(RAIZ)],
     binaries=[],
     datas=datas,
-    hiddenimports=["lxml.etree", "lxml._elementpath"],
+    # QtSvg (0.1.5): importado tarde, so' quando o documento tem SVG; o qsvg e o Qt6Svg.dll
+    # vem com ele. A autoverificacao renderiza um SVG e um TIFF para provar.
+    hiddenimports=["lxml.etree", "lxml._elementpath", "PySide6.QtSvg"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

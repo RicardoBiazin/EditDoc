@@ -14,6 +14,14 @@ resto do documento como codigo de campo. `equilibrar` devolve uma copia em que:
 Cada historia (corpo, cada cabecalho e cada rodape) e' equilibrada sozinha, na ordem de
 leitura (inclusive dentro das tabelas). O escritor e a conferencia usam a mesma funcao.
 
+Controle de conteudo (0.1.5, `MarcaConteudo`): o de paragrafo tem o inicio e o fim no mesmo
+paragrafo; o de bloco, na mesma lista de blocos (corpo, celula, cabecalho), com o inicio no
+comeco de um paragrafo e o fim no fim de outro. O par tem de estar bem aninhado com os outros
+do mesmo nivel (o arquivo e' uma arvore). Ponta sem par, ou par cruzado, sai (o conteudo
+fica, sem o controle) e conta como controle desfeito. O inicio do controle de bloco vai para
+o comeco do paragrafo e o fim para o fim, que e' onde o escritor grava o w:sdt, e o w:id
+repetido (colar duas vezes) ganha outro numero.
+
 Tambem aplica a regra do leitor para PAGE e NUMPAGES: o campo de pagina que ficou simples
 (inicio, texto e fim no mesmo paragrafo e no mesmo link) vira o run de campo que a tela
 recalcula. Sem isso, o arquivo relido teria outra forma e a conferencia acusaria diferenca.
@@ -22,11 +30,12 @@ recalcula. Sem isso, o arquivo relido teria outra forma e a conferencia acusaria
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import replace
 
 from editdoc.modelo.campos import normalizar_instrucao, tipo_do_campo
-from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Documento, MarcaCampo, Marcador, Run,
-                                      paragrafos_de)
+from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Documento, MarcaCampo, MarcaConteudo,
+                                      Marcador, Run, Tabela, paragrafos_de)
 
 
 def historias(doc: Documento) -> list[list]:
@@ -143,10 +152,122 @@ def _colapsar_campos_de_pagina(p) -> None:
         i += 1
 
 
+def _par_de(abertos: list, fim: Run):
+    """O inicio que esta marca de fim de controle fecha: o do mesmo par, ou o mais recente."""
+    if not abertos:
+        return None
+    par = fim.marca.par
+    if not par:
+        return abertos[-1]
+    return next((r for r in reversed(abertos) if r.marca.par == par), None)
+
+
+def _fechar(abertos: list, fim: Run, remover: set, contagem: dict) -> None:
+    alvo = _par_de(abertos, fim)
+    if alvo is None:
+        remover.add(id(fim))
+        contagem["conteudos"] += 1
+    elif alvo is abertos[-1]:
+        abertos.pop()
+    else:
+        # Par cruzado com outro controle: nao cabe na arvore do arquivo.
+        abertos.remove(alvo)
+        remover.update((id(alvo), id(fim)))
+        contagem["conteudos"] += 1
+
+
+def _eh_conteudo(r: Run, bloco: bool, tipo: str | None = None) -> bool:
+    m = r.marca
+    return isinstance(m, MarcaConteudo) and m.bloco == bloco and (tipo is None or m.tipo == tipo)
+
+
+def _conteudos_de_bloco(blocos: list, contagem: dict) -> None:
+    """Controles de bloco de uma lista de blocos (a celula e' outra lista)."""
+    abertos: list[Run] = []
+    remover: set[int] = set()
+    paragrafos = []
+    for bloco in blocos:
+        if isinstance(bloco, Tabela):
+            for linha in bloco.linhas:
+                for celula in linha.celulas:
+                    _conteudos_de_bloco(celula.blocos, contagem)
+            continue
+        paragrafos.append(bloco)
+        for r in bloco.runs:
+            if _eh_conteudo(r, True, "inicio"):
+                abertos.append(r)
+        for r in bloco.runs:
+            if _eh_conteudo(r, True, "fim"):
+                _fechar(abertos, r, remover, contagem)
+    for r in abertos:
+        remover.add(id(r))
+        contagem["conteudos"] += 1
+    for p in paragrafos:
+        if not any(isinstance(r.marca, MarcaConteudo) and r.marca.bloco for r in p.runs):
+            continue
+        inicios = [r for r in p.runs if _eh_conteudo(r, True, "inicio") and id(r) not in remover]
+        fins = [r for r in p.runs if _eh_conteudo(r, True, "fim") and id(r) not in remover]
+        meio = [r for r in p.runs if not _eh_conteudo(r, True)]
+        p.runs = inicios + meio + fins
+
+
+def _conteudos_de_run(p, contagem: dict) -> None:
+    """Controles de paragrafo: inicio e fim no mesmo paragrafo, bem aninhados."""
+    if not any(_eh_conteudo(r, False) for r in p.runs):
+        return
+    abertos: list[Run] = []
+    remover: set[int] = set()
+    for r in p.runs:
+        if _eh_conteudo(r, False, "inicio"):
+            abertos.append(r)
+        elif _eh_conteudo(r, False, "fim"):
+            _fechar(abertos, r, remover, contagem)
+    for r in abertos:
+        remover.add(id(r))
+        contagem["conteudos"] += 1
+    if remover:
+        p.runs = [r for r in p.runs if id(r) not in remover]
+
+
+_ID_SDT = re.compile(r'(<w:id w:val=")(-?\d+)(")')
+
+
+def _ids_unicos(doc: Documento) -> None:
+    """O w:id do controle tem de ser unico no documento: o repetido ganha outro numero."""
+    vistos: set[int] = set()
+    marcas = []
+    for blocos in historias(doc):
+        for p in paragrafos_de(blocos):
+            for r in p.runs:
+                if isinstance(r.marca, MarcaConteudo) and r.marca.tipo == "inicio"                         and r.marca.propriedades:
+                    marcas.append(r)
+    usados = set()
+    for r in marcas:
+        m = _ID_SDT.search(r.marca.propriedades.decode("utf-8", "replace"))
+        if m:
+            usados.add(int(m.group(2)))
+    proximo = max(usados, default=0) + 1
+    for r in marcas:
+        texto = r.marca.propriedades.decode("utf-8", "replace")
+        m = _ID_SDT.search(texto)
+        if not m:
+            continue
+        valor = int(m.group(2))
+        if valor in vistos:
+            while proximo in usados:
+                proximo += 1
+            usados.add(proximo)
+            novo = _ID_SDT.sub(lambda x: f"{x.group(1)}{proximo}{x.group(3)}", texto, count=1)
+            r.marca = replace(r.marca, propriedades=novo.encode("utf-8"))
+            valor = proximo
+        vistos.add(valor)
+
+
 def equilibrar(doc: Documento) -> tuple[Documento, dict[str, int]]:
     """Copia do documento com as marcas em pares. Devolve (documento, contagens):
-    "campos" desfeitos e "marcadores" repetidos que sairam."""
-    contagem = {"campos": 0, "marcadores": 0}
+    "campos" desfeitos, "marcadores" repetidos que sairam e "conteudos" (controles de
+    conteudo) desfeitos."""
+    contagem = {"campos": 0, "marcadores": 0, "conteudos": 0}
     if not any(r.marca is not None for blocos in historias(doc)
                for p in paragrafos_de(blocos) for r in p.runs):
         return doc, contagem
@@ -156,6 +277,10 @@ def equilibrar(doc: Documento) -> tuple[Documento, dict[str, int]]:
     saida.rodapes = copy.deepcopy(doc.rodapes)
     for blocos in historias(saida):
         _equilibrar_historia(blocos, contagem)
+        _conteudos_de_bloco(blocos, contagem)
+        for p in paragrafos_de(blocos):
+            _conteudos_de_run(p, contagem)
+    _ids_unicos(saida)
     return saida, contagem
 
 

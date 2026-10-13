@@ -6,6 +6,15 @@ equacao) e' o caractere de objeto (U+FFFC) com um formato de objeto proprio
 no registro, nunca no Qt: o desfazer devolve o formato com a chave, e a chave acha o
 objeto de novo. E' o mesmo arranjo das imagens (`imagens.py`).
 
+Caixa de texto editavel (0.1.5): aparece como uma caixa do tamanho do wp:extent (a
+flutuante tambem, no ponto da ancora: o EditDoc nao posiciona fora do fluxo), com o texto de
+dentro composto por um QTextDocument proprio (`_documento_da_caixa`), o mesmo catalogo de
+estilos e de listas do corpo. A caixa que so' pode ser lida, e a forma, continuam a etiqueta.
+
+Imagem na linha em EMF, WMF, TIFF ou SVG (0.1.5): a previa renderizada por `vetoriais.py`
+ocupa o lugar inteiro, como uma imagem comum (sem quadro e sem rotulo). Se a previa falha,
+volta o quadro.
+
 Na tela: o objeto na linha (com wp:extent) vira um quadro do tamanho dele, com o rotulo,
 o comeco do texto da caixa e a previa, quando ha' uma imagem que o Qt le. O flutuante e
 a equacao viram uma etiqueta do tamanho do texto no ponto da ancora. Apagar remove o
@@ -28,7 +37,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPen, QPyTextOb
 from editdoc import log_interno
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.documento import CARACTERE_OBJETO, ROTULOS_OPACOS, ObjetoOpaco
-from editdoc.modelo.unidades import EMU_POR_TWIP
+from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
 log = log_interno.obter(__name__)
 
@@ -119,9 +128,91 @@ def _previa(chave: str, obj: ObjetoOpaco) -> QImage | None:
         if len(_PREVIAS) > 64:
             _PREVIAS.clear()
         from editdoc.ponte_qt.imagens import previa  # import tardio: imagens importa este
-        _PREVIAS[chave] = previa(obj.previa) if mod_imagem.formato_de(obj.previa) else QImage()
+        if mod_imagem.formato_de(obj.previa):
+            _PREVIAS[chave] = previa(obj.previa)
+        else:
+            # EMF, WMF, TIFF, SVG (0.1.5): renderizado so' para a tela, o PDF e a impressao.
+            from editdoc.ponte_qt import vetoriais
+            tamanho_doc = None
+            if obj.largura_emu and obj.altura_emu:
+                tamanho_doc = (obj.largura_emu / EMU_POR_PX, obj.altura_emu / EMU_POR_PX)
+            _PREVIAS[chave] = vetoriais.renderizar(obj.previa, tamanho_doc=tamanho_doc)
     img = _PREVIAS[chave]
     return None if img.isNull() else img
+
+
+def mostra_como_imagem(obj: ObjetoOpaco | None, chave) -> QImage | None:
+    """A previa, se o objeto e' uma imagem na linha que a tela mostra inteira (0.1.5)."""
+    if obj is None or obj.tipo != "imagem" or obj.flutuante or not obj.largura_emu \
+            or not obj.altura_emu or not isinstance(chave, str):
+        return None
+    return _previa(chave, obj)
+
+
+#: chave da caixa -> (documento do Qt com o texto, altura do texto em twips)
+_CAIXAS: dict = {}
+#: Margem interna padrao da caixa (wps:bodyPr lIns/tIns: 0,1 polegada).
+_MARGEM_CAIXA_TW = 144
+
+
+def _dispositivo_1440():
+    from PySide6.QtGui import QImage as _QImage
+    img = _QImage(1, 1, _QImage.Format.Format_ARGB32_Premultiplied)
+    dpm = round(1440 / 0.0254)
+    img.setDotsPerMeterX(dpm)
+    img.setDotsPerMeterY(dpm)
+    return img
+
+
+def _documento_da_caixa(doc: QTextDocument, obj: ObjetoOpaco, chave: str, largura_tw: float):
+    """O texto da caixa composto na largura dela, ou None (caixa so' de leitura, forma)."""
+    if obj is None or obj.tipo != "caixa_de_texto" or not obj.largura_emu or not obj.altura_emu:
+        return None
+    corpo = getattr(doc, "_doc_estilos", None) or doc
+    item = (chave, id(corpo), doc.defaultFont().toString(), round(largura_tw))
+    if item in _CAIXAS:
+        return _CAIXAS[item]
+    if len(_CAIXAS) > 32:
+        _CAIXAS.clear()
+    from editdoc.formato_docx import caixas
+    from editdoc.ponte_qt import estilos as pq_estilos
+    from editdoc.ponte_qt import listas as pq_listas
+    from editdoc.ponte_qt import para_qt
+    from editdoc.ponte_qt.imagens import DocumentoQt
+    analise = caixas.analisar(obj, pq_estilos.catalogo(corpo), pq_listas.catalogo(corpo))
+    if not analise.editavel:
+        _CAIXAS[item] = None
+        return None
+    mini = DocumentoQt()
+    mini._doc_estilos = corpo
+    mini._dispositivo = _dispositivo_1440()
+    mini.documentLayout().setPaintDevice(mini._dispositivo)
+    mini.setDocumentMargin(0)
+    mini.setDefaultFont(doc.defaultFont())
+    mini.setTextWidth(max(largura_tw - 2 * _MARGEM_CAIXA_TW, 200.0))
+    para_qt.preencher_blocos(mini, analise.blocos)
+    altura = mini.documentLayout().documentSize().height()
+    _CAIXAS[item] = (mini, altura, _texto_claro(mini))
+    return _CAIXAS[item]
+
+
+def _texto_claro(mini: QTextDocument) -> bool:
+    """Todo o texto da caixa e' claro (branco sobre uma forma escura, que a tela nao junta):
+    a caixa ganha um fundo escuro, senao o texto some na folha branca."""
+    visto = False
+    bloco = mini.begin()
+    while bloco.isValid():
+        it = bloco.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid() and frag.text().strip():
+                cf = frag.charFormat()
+                if not cf.hasProperty(QTextFormat.Property.ForegroundBrush) or                         cf.foreground().color().lightness() < 200:
+                    return False
+                visto = True
+            it += 1
+        bloco = bloco.next()
+    return visto
 
 
 def _fonte(doc: QTextDocument, fmt: QTextFormat) -> QFont:
@@ -153,6 +244,16 @@ def tamanho(doc: QTextDocument, fmt: QTextFormat) -> tuple[QSizeF, bool]:
     altura_linha = metrica.height()
     if obj is None:
         return QSizeF(altura_linha, altura_linha), True
+    chave = fmt.property(PROP_OPACO)
+    if obj.tipo == "caixa_de_texto" and obj.largura_emu and obj.altura_emu and isinstance(chave, str):
+        largura = min(obj.largura_emu / EMU_POR_TWIP, disponivel)
+        caixa = _documento_da_caixa(doc, obj, chave, largura)
+        if caixa is not None:
+            # Pelo menos o tamanho da caixa; o texto que passa dela faz a caixa crescer, como
+            # o "ajustar a forma ao texto" do Word.
+            altura = max(obj.altura_emu / EMU_POR_TWIP, caixa[1] + 2 * _MARGEM_CAIXA_TW * 0.5)
+            return QSizeF(max(largura, altura_linha * 2), min(max(altura, altura_linha * 1.3),
+                                                              _ALTURA_MAXIMA_TW)), False
     if obj.flutuante or obj.tipo == "equacao" or not obj.largura_emu or not obj.altura_emu:
         largura = metrica.horizontalAdvance(texto_do_rotulo(obj)) + altura_linha * 1.6
         if obj.previa is not None:
@@ -180,6 +281,12 @@ class ManipuladorDeOpaco(QPyTextObject):
     def drawObject(self, painter, rect, doc, pos, fmt) -> None:  # noqa: N802 - nome do Qt
         try:
             obj = objeto_de(fmt)
+            imagem = mostra_como_imagem(obj, fmt.property(PROP_OPACO))
+            if imagem is not None:
+                painter.drawImage(QRectF(rect), imagem)
+                return
+            if _desenhar_caixa(painter, QRectF(rect), doc, obj, fmt):
+                return
             _tam, etiqueta = tamanho(doc, fmt)
             fonte = _fonte(doc, fmt)
             metrica = QFontMetricsF(fonte)
@@ -218,6 +325,36 @@ class ManipuladorDeOpaco(QPyTextObject):
             painter.restore()
         except Exception:  # noqa: BLE001 - chamado pelo Qt no meio da pintura
             log.exception("pintura do objeto opaco")
+
+
+def _desenhar_caixa(painter, rect: QRectF, doc, obj, fmt) -> bool:
+    """A caixa de texto editavel: contorno fino e o texto de dentro. False se nao for."""
+    chave = fmt.property(PROP_OPACO)
+    if obj is None or obj.tipo != "caixa_de_texto" or not isinstance(chave, str):
+        return False
+    caixa = _documento_da_caixa(doc, obj, chave, rect.width())
+    if caixa is None:
+        return False
+    mini, _altura, claro = caixa
+    from PySide6.QtGui import QAbstractTextDocumentLayout
+    from editdoc.ponte_qt import listas as pq_listas
+    from editdoc.ponte_qt import propriedades as pq_props
+    painter.save()
+    caneta = QPen(QColor(0x9a, 0xa3, 0xad))
+    caneta.setWidthF(10.0)
+    painter.setPen(caneta)
+    painter.setBrush(QColor(0x5f, 0x6b, 0x7a) if claro else Qt.BrushStyle.NoBrush)
+    painter.drawRect(rect)
+    painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
+    painter.translate(rect.left() + _MARGEM_CAIXA_TW, rect.top() + _MARGEM_CAIXA_TW * 0.5)
+    contexto = QAbstractTextDocumentLayout.PaintContext()
+    contexto.cursorPosition = -1
+    contexto.palette.setColor(contexto.palette.ColorRole.Text, QColor(0, 0, 0))
+    mini.documentLayout().draw(painter, contexto)
+    pq_listas.desenhar_rotulos(painter, mini, None)
+    pq_props.desenhar(painter, mini, None)
+    painter.restore()
+    return True
 
 
 def registrar_manipulador(doc: QTextDocument) -> ManipuladorDeOpaco:

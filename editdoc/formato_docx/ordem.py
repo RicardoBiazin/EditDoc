@@ -34,8 +34,12 @@ import re
 
 from lxml import etree
 
-from editdoc.formato_docx.nomes import (CT_XML, MATH_NS, MC_NS, O_NS, PKG_CT, PKG_REL, R_NS,
-                                        W, XML_NS, q)
+from editdoc.formato_docx.nomes import (CT_XML, MATH_NS, MC_NS, NS_EXTENSOES, O_NS, PKG_CT,
+                                        PKG_REL, R_NS, W, XML_NS, q)
+
+#: Filhos de rPr e pPr de outro namespace que o document.xml pode ter (0.1.5): as extensoes
+#: do Word que os extras preservam (w14:ligatures, w14:textOutline...).
+_EXTENSOES = {"{%s}" % uri for uri in NS_EXTENSOES.values()}
 
 ORDEM_PPR = [
     "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl",
@@ -137,7 +141,8 @@ def validar_ordem(raiz, estrangeiros: bool = False) -> list[str]:
         pai = _nome(elemento)
         indices = []
         for filho in elemento:
-            if estrangeiros and isinstance(filho.tag, str) and not filho.tag.startswith("{%s}" % W):
+            if isinstance(filho.tag, str) and not filho.tag.startswith("{%s}" % W) and (
+                    estrangeiros or filho.tag.split("}", 1)[0] + "}" in _EXTENSOES):
                 continue
             if filho.tag != q(_nome(filho)) or _nome(filho) not in ordem:
                 problemas.append(f"{pai}: filho desconhecido '{_nome(filho)}'")
@@ -197,12 +202,12 @@ def validar_estrutura(raiz) -> list[str]:
         if tc in opacos:
             continue
         blocos = [f for f in tc if isinstance(f.tag, str) and _nome(f) != "tcPr"]
-        if not blocos or blocos[-1].tag != q("p"):
+        if not blocos or _ultimo_bloco(blocos[-1]).tag != q("p"):
             problemas.append("tc nao termina em paragrafo")
     if raiz.tag in (q("hdr"), q("ftr")):
         # Cabecalho e rodape: ao menos um paragrafo, e terminam em paragrafo (como a celula).
         blocos = [f for f in raiz if isinstance(f.tag, str)]
-        if not blocos or blocos[-1].tag != q("p"):
+        if not blocos or _ultimo_bloco(blocos[-1]).tag != q("p"):
             problemas.append(f"{_nome(raiz)} nao termina em paragrafo")
     problemas += _validar_campos(raiz, opacos)
     problemas += validar_marcadores(raiz, opacos)
@@ -230,6 +235,18 @@ def validar_estrutura(raiz) -> list[str]:
         if not ok:
             problemas.append("imagem com tamanho invalido (wp:extent)")
     return problemas
+
+
+def _ultimo_bloco(el):
+    """O bloco que fecha: o proprio, ou (controle de conteudo de bloco, 0.1.5) o ultimo de
+    dentro do w:sdtContent, como o Word grava o controle que envolve o paragrafo da celula."""
+    while el.tag == q("sdt"):
+        conteudo = el.find(q("sdtContent"))
+        filhos = [f for f in conteudo if isinstance(f.tag, str)] if conteudo is not None else []
+        if not filhos:
+            return el
+        el = filhos[-1]
+    return el
 
 
 _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
