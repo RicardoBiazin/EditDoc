@@ -31,6 +31,15 @@ Cabecalho e rodape (M5): `Documento.cabecalhos` e `Documento.rodapes` levam o ti
 nao tem a parte. A escolha de qual aparece em cada pagina esta' em `Pagina`
 (primeira_diferente, pares_impares).
 
+Hiperlink (0.1.3): `Run.link` leva o destino (`Link`: endereco externo ou marcador do
+documento). Runs vizinhos com o mesmo `Link` formam um w:hyperlink so' no arquivo.
+
+Marcas no fluxo (0.1.3): `Run.marca` e' uma marca sem texto. `MarcaCampo` marca o inicio
+(com o codigo do campo) ou o fim de um campo qualquer (DATE, REF, TOC...); o texto entre
+as duas e' o ultimo resultado, editavel. O campo pode comecar num paragrafo e terminar em
+outro (o sumario), como no Word. `Marcador` marca o inicio ou o fim de um w:bookmark.
+`marcas.equilibrar` deixa as marcas em pares antes de gravar.
+
 `normalizar` funde runs vizinhos de mesma formatacao e descarta runs vazios.
 Dois documentos com o mesmo texto e a mesma formatacao so' sao iguais depois de
 normalizados: o Qt e o XML podem dividir o mesmo texto em runs diferentes. Ela
@@ -119,6 +128,82 @@ ROTULOS_OPACOS = {
 }
 
 
+@dataclass(frozen=True)
+class Link:
+    """Destino de um hiperlink (0.1.3): endereco externo (`url`) ou marcador (`ancora`).
+
+    Os dois juntos sao um endereco com o trecho (#ancora) separado, como o Word grava.
+    `historico` e' o w:history; `dica`, o w:tooltip; `quadro`, o w:tgtFrame; `local`, o
+    w:docLocation. None = o arquivo nao diz.
+    """
+    url: str | None = None
+    ancora: str | None = None
+    dica: str | None = None
+    historico: bool | None = None
+    quadro: str | None = None
+    local: str | None = None
+
+    def interno(self) -> bool:
+        return self.url is None
+
+    def href(self) -> str:
+        if self.url is None:
+            return "#" + (self.ancora or "")
+        return self.url + ("#" + self.ancora if self.ancora else "")
+
+
+@dataclass(frozen=True)
+class Campo:
+    """Codigo de um campo qualquer (0.1.3): o que fica entre o begin e o separate.
+
+    `codigo`: pedacos da instrucao, cada um texto (w:instrText) ou outro `Campo` (campo
+    dentro da instrucao, como o PAGE de um IF). `sujo` e' o w:dirty; `travado`, o
+    w:fldLock. `sem_resultado`: o arquivo nao tinha separate (XE, TC...). `resultado`: so'
+    no campo de dentro da instrucao (o texto que ele mostrava). `extra`: o fldChar begin
+    inteiro, quando ele traz filhos (w:ffData do campo de formulario), como veio.
+    """
+    codigo: tuple = ()
+    sujo: bool = False
+    travado: bool = False
+    sem_resultado: bool = False
+    resultado: str = ""
+    extra: bytes = b""
+
+    def instrucao(self) -> str:
+        """A instrucao em texto; o campo de dentro aparece entre chaves, como no Word."""
+        partes = []
+        for pedaco in self.codigo:
+            if isinstance(pedaco, Campo):
+                partes.append("{ " + pedaco.instrucao().strip() + " }")
+            else:
+                partes.append(str(pedaco))
+        return "".join(partes)
+
+    def tipo(self) -> str:
+        """A primeira palavra da instrucao, em maiusculas ("TOC", "REF", "DATE"...)."""
+        palavras = self.instrucao().split()
+        return palavras[0].upper() if palavras else ""
+
+
+@dataclass(frozen=True)
+class MarcaCampo:
+    """Inicio ou fim de um campo no fluxo do texto. So' o inicio leva o `Campo`.
+
+    `par` liga o inicio ao fim do mesmo campo (o leitor numera; 0 = sem numero). Fica fora
+    da comparacao: o arquivo relido tem outra numeracao, e o campo e' o mesmo.
+    """
+    tipo: Literal["inicio", "fim"]
+    campo: Campo | None = None
+    par: int = field(default=0, compare=False)
+
+
+@dataclass(frozen=True)
+class Marcador:
+    """Inicio ou fim de um marcador (w:bookmarkStart / w:bookmarkEnd), pelo nome."""
+    tipo: Literal["inicio", "fim"]
+    nome: str
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -141,10 +226,17 @@ class Run:
     estilo: str | None = None
     # Objeto opaco (0.1.2): texto == CARACTERE_OBJETO; o XML original volta ao arquivo.
     objeto: ObjetoOpaco | None = None
+    # Hiperlink (0.1.3): o destino do trecho. None = fora de link.
+    link: Link | None = None
+    # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador. texto == "".
+    marca: MarcaCampo | Marcador | None = None
 
     def eh_objeto(self) -> bool:
         """Run que ocupa o caractere de objeto: imagem ou objeto opaco."""
         return self.imagem is not None or self.objeto is not None
+
+    def eh_marca(self) -> bool:
+        return self.marca is not None
 
 
 def run_de_imagem(imagem: Imagem) -> Run:
@@ -258,6 +350,28 @@ class Documento:
     # Fica fora da comparacao: dois documentos iguais no texto e na formatacao sao iguais,
     # mesmo que um venha com o styles.xml do Word e o outro com o do EditDoc.
     estilos: object = field(default=None, compare=False, repr=False)
+    # Partes do pacote de origem que voltam ao arquivo (0.1.3): PacoteOriginal ou None.
+    pacote: object = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class PacoteOriginal:
+    """O que o pacote de origem tem fora do texto e volta ao arquivo (0.1.3).
+
+    `configuracoes`: o settings.xml original (o EditDoc so' muda o que controla), com as
+    relacoes dele (`relacoes_configuracoes`: Id, tipo, alvo, externo). `propriedades` e
+    `aplicativo`: core.xml e app.xml originais (titulo, autor e datas sao reescritos).
+    `do_documento` e `do_pacote`: (tipo, alvo) das relacoes do document.xml e do
+    _rels/.rels para partes preservadas (fontTable, webSettings, customXml, custom.xml,
+    notas separadoras...). `partes`: o fecho dessas partes (ParteOpaca), byte a byte.
+    """
+    configuracoes: bytes | None = None
+    relacoes_configuracoes: tuple = ()
+    propriedades: bytes | None = None
+    aplicativo: bytes | None = None
+    do_documento: tuple = ()
+    do_pacote: tuple = ()
+    partes: tuple = ()
 
 
 #: Tipos de cabecalho e rodape, na ordem do .docx (default, first, even).
@@ -272,16 +386,16 @@ def _formato_de(run: Run) -> tuple:
 def _normalizar_paragrafo(paragrafo: Paragrafo) -> None:
     fundidos: list[Run] = []
     for run in paragrafo.runs:
-        if run.eh_objeto() or run.campo is not None:
-            # Imagem, objeto e campo nunca fundem: duas imagens iguais lado a lado sao duas
-            # imagens, e o campo PAGE seguido de outro PAGE sao dois campos.
+        if run.eh_objeto() or run.campo is not None or run.marca is not None:
+            # Imagem, objeto, campo e marca nunca fundem: duas imagens iguais lado a lado sao
+            # duas imagens, e o campo PAGE seguido de outro PAGE sao dois campos.
             fundidos.append(run)
             continue
         if run.texto == "":
             continue
         anterior = fundidos[-1] if fundidos else None
         if anterior is not None and not anterior.eh_objeto() and anterior.campo is None and \
-                _formato_de(anterior) == _formato_de(run):
+                anterior.marca is None and _formato_de(anterior) == _formato_de(run):
             anterior.texto += run.texto
         else:
             fundidos.append(run)

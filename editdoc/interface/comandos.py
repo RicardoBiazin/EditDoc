@@ -110,6 +110,11 @@ DEFINICOES = (
     Definicao("dividir_celula", "Dividir células", (), dica="Desfazer a mescla da célula"),
     Definicao("inserir_imagem", "Imagem...", (), dica="Inserir imagem de um arquivo"),
     Definicao("tamanho_imagem", "Tamanho da imagem...", (), dica="Tamanho da imagem em centímetros"),
+    # Hiperlinks (0.1.3).
+    Definicao("inserir_link", "Link...", ("Ctrl+K",),
+              dica="Inserir ou editar link (endereço ou marcador do documento)"),
+    Definicao("remover_link", "Remover link", (), dica="Tirar o link do texto, que fica"),
+    Definicao("abrir_link", "Abrir link", (), dica="Abrir o link do cursor (ou Ctrl+clique)"),
     # Cabecalho, rodape e numero de pagina (M5).
     Definicao("editar_cabecalho", "Editar cabeçalho", (),
               dica="Editar o cabeçalho (ou dê um duplo clique no alto da página)"),
@@ -204,6 +209,9 @@ TABELA = ("inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerd
           "inserir_coluna_direita", "excluir_linha", "excluir_coluna", "excluir_tabela",
           "mesclar_celulas", "dividir_celula")
 
+#: Comandos que so' valem com o cursor num link (o atualizador os habilita).
+LINK = ("remover_link", "abrir_link")
+
 #: Papel: id da acao -> nome do papel em editdoc/modelo/pagina.py (PAPEIS).
 PAPEL_DAS_ACOES = {"papel_a4": "A4", "papel_carta": "Carta", "papel_oficio": "Ofício"}
 #: Margens: id da acao -> predefinicao. "personalizadas" abre o dialogo.
@@ -252,6 +260,9 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         "inserir_tabela": lambda: _chamar(inserir, "tabela"),
         "inserir_imagem": lambda: _chamar(inserir, "imagem"),
         "tamanho_imagem": lambda: _chamar(inserir, "tamanho_imagem"),
+        "inserir_link": lambda: _chamar(inserir, "link"),
+        "remover_link": lambda: _chamar(inserir, "remover_link"),
+        "abrir_link": lambda: _chamar(inserir, "abrir_link"),
         "inserir_linha_acima": lambda: tabelas.inserir_linha(editor, abaixo=False),
         "inserir_linha_abaixo": lambda: tabelas.inserir_linha(editor, abaixo=True),
         "inserir_coluna_esquerda": lambda: tabelas.inserir_coluna(editor, direita=False),

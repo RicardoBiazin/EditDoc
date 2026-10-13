@@ -11,6 +11,9 @@ largura fixa, divide a largura do corpo.
 
 Estilos (M6): o id do estilo sai da propriedade de usuario do bloco e do caractere; a
 formatacao que volta ao modelo e' so' a direta, o efetivo menos o estilo resolvido.
+
+Hiperlinks e marcas (0.1.3): o link de cada fragmento (`links.link_de`) e as marcas de
+campo e de marcador (`marcas.marca_de`), uma por caractere de objeto.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from editdoc.modelo.documento import (CARACTERE_OBJETO, Celula, Documento, Image
                                       Paragrafo, Run, Tabela)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
-from editdoc.ponte_qt import campos, imagens, opacos
+from editdoc.ponte_qt import campos, imagens, links, marcas, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
@@ -153,6 +156,8 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
         frag = it.fragment()
         if frag.isValid() and frag.text():
             cf = frag.charFormat()
+            # Hiperlink (0.1.3): vale para texto, imagem, objeto, campo e marca.
+            link = links.link_de(cf)
             if campos.eh_campo(cf):
                 # Campo (M5): um run por caractere de objeto, com o resultado guardado.
                 for caractere in frag.text():
@@ -161,7 +166,21 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                         instrucao = campos.instrucao_de(cf)
                         # Instrucao estranha (formato montado a mao): fica o texto, sem campo.
                         run.campo = instrucao if tipo_do_campo(instrucao) else None
+                        run.link = link
                         p.runs.append(run)
+            elif marcas.eh_marca(cf):
+                # Campo ou marcador (0.1.3): uma marca por caractere, sem texto.
+                marca = marcas.marca_de(cf)
+                for caractere in frag.text():
+                    if caractere != CARACTERE_OBJETO:
+                        continue
+                    if marca is None:
+                        log.warning("marca de campo ilegivel descartada ao salvar")
+                        continue
+                    run = _run_direto("", cf, p.estilo, res)
+                    run.marca = marca
+                    run.link = link
+                    p.runs.append(run)
             elif opacos.eh_opaco(cf):
                 # Objetos opacos iguais lado a lado viram um fragmento so': um por caractere.
                 obj = opacos.objeto_de(cf)
@@ -169,7 +188,7 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                     if caractere != CARACTERE_OBJETO:
                         continue
                     if obj is not None:
-                        p.runs.append(Run(texto=CARACTERE_OBJETO, objeto=obj))
+                        p.runs.append(Run(texto=CARACTERE_OBJETO, objeto=obj, link=link))
                     else:
                         log.warning("objeto opaco sem registro descartado ao salvar")
             elif cf.isImageFormat():
@@ -179,9 +198,11 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                         continue
                     imagem = imagem_do_formato(doc, cf)
                     if imagem is not None:
-                        p.runs.append(Run(texto=CARACTERE_OBJETO, imagem=imagem))
+                        p.runs.append(Run(texto=CARACTERE_OBJETO, imagem=imagem, link=link))
             else:
-                p.runs.append(_run_direto(frag.text(), cf, p.estilo, res))
+                run = _run_direto(frag.text(), cf, p.estilo, res)
+                run.link = link
+                p.runs.append(run)
         it += 1
     return p
 

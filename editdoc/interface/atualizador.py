@@ -17,8 +17,9 @@ from PySide6.QtWidgets import QComboBox, QFontComboBox, QTextEdit
 
 from editdoc.edicao import imagens, tabelas
 from editdoc.edicao.estado import ler
-from editdoc.interface.comandos import (ALINHAMENTOS, EDICAO_DE_FAIXA, ESPACAMENTOS, TABELA,
-                                        Comandos)
+from editdoc.interface.comandos import (ALINHAMENTOS, EDICAO_DE_FAIXA, ESPACAMENTOS, LINK,
+                                        TABELA, Comandos)
+from editdoc.ponte_qt import links
 
 
 class AtualizadorDeEstado(QObject):
@@ -82,6 +83,10 @@ class AtualizadorDeEstado(QObject):
             c.acao("mesclar_celulas").setEnabled(tabelas.pode_mesclar(cursor))
             c.acao("dividir_celula").setEnabled(tabelas.pode_dividir(cursor))
         c.acao("tamanho_imagem").setEnabled(imagens.imagem_selecionada(self._editor) is not None)
+        # Link (0.1.3): remover e abrir so' com o cursor num link.
+        no_link = links.link_no_cursor(self._editor.document(), cursor) is not None
+        for id_ in LINK:
+            c.acao(id_).setEnabled(no_link)
         # Cabecalho e rodape (M5): fechar e ir para so' na edicao.
         editando = getattr(self._editor, "editando_faixa", lambda: None)() is not None
         for id_ in EDICAO_DE_FAIXA:

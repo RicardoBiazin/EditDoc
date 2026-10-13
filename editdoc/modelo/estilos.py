@@ -244,8 +244,8 @@ class Estilos:
         achado = self.por_nome(nome_canonico_)
         if achado is not None:
             return achado
-        modelo = next((e for e in definicoes_padrao() if e.nome.lower() == nome_canonico_.lower()),
-                      None)
+        modelo = next((e for e in (*definicoes_padrao(), *estilos_latentes())
+                       if e.nome.lower() == nome_canonico_.lower()), None)
         if modelo is None:
             return None
         novo = copy.deepcopy(modelo)
@@ -352,6 +352,15 @@ def definicoes_padrao() -> list[Estilo]:
                caractere={"italico": True}),
         Estilo("Strong", "Strong", tipo="caractere", rapido=True, prioridade=22,
                caractere={"negrito": True}),
+    ]
+
+
+def estilos_latentes() -> list[Estilo]:
+    """Estilos internos do Word que o documento novo nao tem, mas que passam a existir quando
+    sao usados (0.1.3): o "Hyperlink" do link inserido no EditDoc (cor e sublinhado do Word)."""
+    return [
+        Estilo("Hyperlink", "Hyperlink", tipo="caractere", prioridade=99, revelar_ao_usar=True,
+               caractere={"cor_hex": "0563C1", "sublinhado": True}),
     ]
 
 

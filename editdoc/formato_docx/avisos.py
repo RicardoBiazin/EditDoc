@@ -11,6 +11,12 @@ Desde a 0.1.2, caixa de texto, forma, grafico, SmartArt, objeto OLE, equacao, im
 flutuante e imagem em formato que a tela nao mostra sao preservados como objetos opacos
 (`formato_docx/opacos.py`): os avisos deles sao sem perda. O que nao pode ser preservado
 (referencia quebrada, limite) cai em OBJETO_PERDIDO ou IMAGEM, com perda.
+
+Desde a 0.1.3, hiperlinks, campos (DATE, REF, TOC...), marcadores e as partes do pacote
+que o EditDoc nao edita (custom.xml, customXml, fontTable, webSettings, settings.xml) voltam
+ao arquivo: HIPERLINK, CAMPO e PARTE_PERDIDA so' aparecem para o que nao pode voltar
+(relacao quebrada, arquivo incompleto, limite). CAMPO_INCOMPLETO e' aviso de gravacao: o
+usuario apagou o inicio ou o fim de um campo.
 """
 
 from __future__ import annotations
@@ -87,12 +93,36 @@ CATALOGO: dict[str, tuple] = {
                   "a numeração ao salvar.",
         True),
     "CAMPO": (
-        lambda n: f"{n} {_plural(n, 'campo que não é número de página (data, sumário, referência ou outro) ficou', 'campos que não são número de página (data, sumário, referência ou outros) ficaram')} "
-                  "com o último valor mostrado, como texto fixo. O campo se perde ao salvar.",
+        lambda n: f"{n} {_plural(n, 'campo não pôde ser preservado', 'campos não puderam ser preservados')} "
+                  "(incompleto no arquivo ou acima dos limites do EditDoc) e "
+                  f"{_plural(n, 'fica', 'ficam')} só com o último valor mostrado, como texto "
+                  "fixo, ao salvar.",
+        True),
+    "CAMPO_INCOMPLETO": (
+        lambda n: f"{n} {_plural(n, 'campo perdeu', 'campos perderam')} o início ou o fim na "
+                  f"edição e {_plural(n, 'sai', 'saem')} do arquivo como texto comum.",
         True),
     "HIPERLINK": (
-        lambda n: f"{n} {_plural(n, 'hiperlink foi mantido', 'hiperlinks foram mantidos')} "
-                  "só como texto. O endereço se perde ao salvar.",
+        lambda n: f"{n} {_plural(n, 'hiperlink aponta', 'hiperlinks apontam')} para endereço "
+                  "que não existe no arquivo (ou acima dos limites do EditDoc). O texto fica, "
+                  "mas o endereço se perde ao salvar.",
+        True),
+    "MARCADOR": (
+        lambda n: f"{n} {_plural(n, 'marcador repetido ou acima dos limites sai', 'marcadores repetidos ou acima dos limites saem')} "
+                  "do arquivo ao salvar.",
+        True),
+    "PARTE_PERDIDA": (
+        lambda n: f"{n} {_plural(n, 'parte do arquivo (propriedades, dados ou configurações) não pôde ser preservada', 'partes do arquivo (propriedades, dados ou configurações) não puderam ser preservadas')} "
+                  "(referência quebrada, conteúdo inválido ou acima dos limites) e "
+                  f"{_plural(n, 'sai', 'saem')} do arquivo ao salvar.",
+        True),
+    "MINIATURA": (
+        lambda n: "A miniatura de pré-visualização do arquivo não é mantida (mostraria o "
+                  "conteúdo antigo). O Word gera outra quando salva.",
+        False),
+    "ASSINATURA": (
+        lambda n: "O documento tem assinatura digital. Qualquer alteração a invalida, e ela "
+                  "sai do arquivo ao salvar.",
         True),
     "QUEBRA_DE_PAGINA": (
         lambda n: f"{n} {_plural(n, 'quebra de coluna não é preservada', 'quebras de coluna não são preservadas')} "
@@ -195,6 +225,9 @@ class Coletor:
         if codigo not in CATALOGO:
             raise KeyError(f"aviso sem texto no catalogo: {codigo}")
         self._contagens[codigo] = self._contagens.get(codigo, 0) + n
+
+    def contagem(self, codigo: str) -> int:
+        return self._contagens.get(codigo, 0)
 
     def avisos(self) -> list[Aviso]:
         return [construir(c, n) for c, n in self._contagens.items() if n > 0]

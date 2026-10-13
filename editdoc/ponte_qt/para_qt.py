@@ -24,6 +24,9 @@ Campos (M5): o run de campo vira o caractere de objeto com o formato de campo de
 Objetos opacos (0.1.2): o run de objeto vira o caractere de objeto com o formato de
 `opacos.py`; o XML e as partes ficam no registro de la'.
 
+Hiperlinks e marcas (0.1.3): o link vai no formato de caractere de cada run (`links.py`);
+a marca de campo ou de marcador vira o caractere de objeto de `marcas.py`.
+
 Estilos (M6): o formato do Qt recebe o efetivo, estilo resolvido (cadeia basedOn) mais a
 formatacao direta do modelo, e o id do estilo numa propriedade de usuario
 (`ponte_qt/estilos.py`). O catalogo vai para o documento (`definir_catalogo_base`).
@@ -43,7 +46,7 @@ from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula,
                                       Paragrafo, Tabela, bordas_padrao)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
-from editdoc.ponte_qt import campos, imagens, opacos
+from editdoc.ponte_qt import campos, imagens, links, marcas, opacos
 from editdoc.ponte_qt import estilos as pq_estilos
 
 LINHA_SEPARADORA = chr(0x2028)
@@ -116,12 +119,18 @@ def formato_estrutural() -> QTextBlockFormat:
 
 # -- imagens --------------------------------------------------------------------
 
-def inserir_imagem(cursor: QTextCursor, imagem) -> None:
+def inserir_imagem(cursor: QTextCursor, imagem, link=None) -> None:
     """Insere o run de imagem do modelo no cursor, com o recurso no documento."""
     nome = imagens.registrar(imagem.dados, imagem.formato)
     imagens.adicionar_recurso(cursor.document(), nome)
-    cursor.insertImage(imagens.formato_de_imagem(
-        nome, px_de_emu(imagem.largura_emu), px_de_emu(imagem.altura_emu), imagem.descricao))
+    fmt = imagens.formato_de_imagem(
+        nome, px_de_emu(imagem.largura_emu), px_de_emu(imagem.altura_emu), imagem.descricao)
+    if link is not None:
+        fmt.setAnchor(True)
+        fmt.setAnchorHref(link.href())
+        fmt.setProperty(links.PROP_LINK, links.com_link(QTextCharFormat(), link).property(
+            links.PROP_LINK))
+    cursor.insertImage(fmt)
 
 
 # -- bordas -----------------------------------------------------------------------
@@ -340,14 +349,20 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, listas: _Listas,
         cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
     for r in p.runs:
         if r.imagem is not None:
-            inserir_imagem(cursor, r.imagem)
+            inserir_imagem(cursor, r.imagem, r.link)
+        elif r.marca is not None:
+            # Campo ou marcador (0.1.3): a marca leva a formatacao do run (o codigo do campo
+            # e o resultado recalculado pelo Word saem com ela).
+            marcas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res), r.link))
         elif r.objeto is not None:
-            opacos.inserir(cursor, r.objeto, _formato_do_run(r, p.estilo, res))
+            opacos.inserir(cursor, r.objeto,
+                           links.com_link(_formato_do_run(r, p.estilo, res), r.link))
         elif r.campo is not None:
-            campos.inserir_campo(cursor, r.campo, r.texto, _formato_do_run(r, p.estilo, res))
+            campos.inserir_campo(cursor, r.campo, r.texto,
+                                 links.com_link(_formato_do_run(r, p.estilo, res), r.link))
         elif r.texto:
             cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA),
-                              _formato_do_run(r, p.estilo, res))
+                              links.com_link(_formato_do_run(r, p.estilo, res), r.link))
     listas.aplicar(cursor, p.numeracao)
 
 

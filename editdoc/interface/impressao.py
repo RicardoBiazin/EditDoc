@@ -36,6 +36,7 @@ from editdoc.interface.layout_paginado import DPI_LAYOUT, LayoutPaginado
 from editdoc.interface.vista_paginas import desenhar_faixas, desenhar_folha
 from editdoc.modelo.intervalo import sequencia_de_copias
 from editdoc.modelo.pagina import Pagina
+from editdoc.ponte_qt import marcas
 
 log = log_interno.obter(__name__)
 
@@ -104,9 +105,11 @@ def preparar(layout: LayoutPaginado) -> bool:
 
 def pintar_pagina(painter: QPainter, layout: LayoutPaginado, n: int, total: int,
                   transf: QTransform) -> None:
-    """A folha n como sai no papel: corpo, cabecalho e rodape, sem nada da tela."""
-    desenhar_folha(painter, layout, n, transf)
-    desenhar_faixas(painter, layout, n, transf, total, 1.0)
+    """A folha n como sai no papel: corpo, cabecalho e rodape, sem nada da tela (nem os
+    colchetes que marcam os campos, 0.1.3)."""
+    with marcas.sem_pintar_marcas():
+        desenhar_folha(painter, layout, n, transf)
+        desenhar_faixas(painter, layout, n, transf, total, 1.0)
 
 
 def _pintar_sequencia(painter: QPainter, nova_pagina: Callable[[int], None],

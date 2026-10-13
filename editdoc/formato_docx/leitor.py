@@ -11,8 +11,11 @@ aninhada fundo demais, vira paragrafos com aviso. Imagens na linha (PNG, JPEG,
 GIF, BMP) viram `Imagem` com os bytes originais. Caixa de texto, forma, grafico,
 SmartArt, OLE, equacao, imagem flutuante e imagem de outro formato (0.1.2) viram
 objeto opaco (`opacos.py`), que volta igual ao arquivo, com aviso sem perda. Campos
-PAGE e NUMPAGES (M5) viram um `Run` com `campo`; os outros viram o texto que o Word
-mostra, com aviso. Revisoes aceitas; exclusoes e controles de conteudo tem aviso.
+PAGE e NUMPAGES (M5) viram um `Run` com `campo`; desde a 0.1.3 os outros (TOC, REF, DATE,
+IF...) viram marcas de inicio (com o codigo) e de fim no fluxo, com o resultado como texto
+entre elas. Hiperlinks viram `Run.link`; marcadores, marcas no fluxo. O resto do pacote
+(custom.xml, customXml, fontTable, webSettings, settings.xml...) vai para `Documento.pacote`
+(`pacote.py`). Revisoes aceitas; exclusoes e controles de conteudo tem aviso.
 
 Cabecalho e rodape (M5): os da ultima secao, com a heranca do Word (a secao sem
 referencia herda a da anterior). Cada parte passa pelos mesmos limites do pacote e
@@ -39,6 +42,7 @@ from lxml import etree
 
 from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import opacos
+from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, MATH_NS, MC_NS,
@@ -46,12 +50,12 @@ from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, M
                                         W_STRICT, WP_NS, q)
 from editdoc.formato_docx.ordem import caminho_dos_rels
 from editdoc.modelo import imagem as mod_imagem
-from editdoc.modelo.campos import (FORMATOS_NUMERO, INSTRUCAO_MAXIMA, NUMERO_INICIAL_MAXIMO,
+from editdoc.modelo.campos import (FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO,
                                    normalizar_instrucao, tipo_do_campo)
-from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Celula,
-                                      Documento, Imagem, Linha, Paragrafo, Run, Tabela,
-                                      colunas_da_linha, normalizar, run_de_imagem,
-                                      run_de_objeto)
+from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Campo, Celula,
+                                      Documento, Imagem, Linha, Link, MarcaCampo, Marcador,
+                                      Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
+                                      paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
 from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
 from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
@@ -75,8 +79,17 @@ LIMITES_PADRAO = {
     "cabecalho_bytes": 4 * 1024 * 1024,
     # Campo dentro de campo dentro de campo...: acima disto o campo nao e' interpretado.
     "campo_profundidade": 8,
+    # Campos, hiperlinks e marcadores (0.1.3): quantos por documento, e o tamanho da
+    # instrucao e do endereco. Acima disto o campo (ou o link) fica so' como texto, com aviso.
+    "campos": 20000,
+    "instrucao_campo": 4096,
+    "hiperlinks": 20000,
+    "link_tamanho": 8192,
+    "marcadores": 20000,
     # Objetos opacos (0.1.2): quantos, o tamanho do XML e o fecho das partes.
     **opacos.LIMITES,
+    # Partes do pacote preservadas (0.1.3).
+    **fx_pacote.LIMITES,
 }
 
 #: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
@@ -117,9 +130,9 @@ _RPR_NEUTRAS = {"bCs", "iCs", "szCs", "lang", "noProof", "kern", "snapToGrid",
 
 _CONTEINERES_INLINE = {"hyperlink", "fldSimple", "smartTag", "customXml", "dir", "bdo",
                        "moveTo", "ins"}
-_IGNORADOS_INLINE = {"pPr", "bookmarkStart", "bookmarkEnd", "proofErr", "permStart",
+_IGNORADOS_INLINE = {"pPr", "proofErr", "permStart",
                      "permEnd", "commentRangeStart", "commentRangeEnd", "lastRenderedPageBreak"}
-_IGNORADOS_BLOCO = {"sectPr", "bookmarkStart", "bookmarkEnd", "permStart", "permEnd",
+_IGNORADOS_BLOCO = {"sectPr", "permStart", "permEnd",
                     "tblPr", "tblGrid", "sdtPr", "sdtEndPr", "tcPr", "trPr"}
 
 
@@ -218,6 +231,17 @@ class _Contexto:
         #: objetos opacos (0.1.2): quem captura, e o mc:Ignorable da parte que se le
         self.capturador: opacos.Capturador | None = None
         self.ignoraveis: tuple = ()
+        #: campos, hiperlinks e marcadores (0.1.3): contagens para os limites, marcadores
+        #: abertos (w:id -> nome), nomes ja' usados, e os que estavam entre paragrafos
+        self.total_campos = 0
+        #: numero que liga a marca de inicio a de fim do mesmo campo
+        self.pares = 0
+        self.total_links = 0
+        self.marcadores_ids: dict[str, str] = {}
+        self.marcadores_nomes: set[str] = set()
+        self.marcas_pendentes: list[Run] = []
+        #: texto do codigo de campo que ja' tinha ido para o paragrafo (sai na limpeza)
+        self.descartar: list[Run] = []
 
 
 # -- objetos opacos -------------------------------------------------------------
@@ -389,15 +413,34 @@ def _ler_numpr(numpr, out: dict, ctx: _Contexto) -> None:
             c.somar("LISTA")
 
 
+#: Destino do texto que esta' no codigo de um campo (entre o begin e o separate): nao
+#: aparece no Word, e nao entra no fluxo.
+_FORA_DO_FLUXO = object()
+
+
+def _destino_do_texto(ctx: "_Contexto"):
+    """None = o texto vai para o fluxo; um dict = o resultado de um campo de dentro da
+    instrucao; _FORA_DO_FLUXO = o codigo de um campo (o Word nao mostra)."""
+    if not ctx.campos:
+        return None
+    topo = ctx.campos[-1]
+    if topo["fase"] == "instr":
+        return _FORA_DO_FLUXO
+    if topo["no_codigo"]:
+        return topo
+    return None
+
+
 class _Pedacos:
     """Texto de um w:r em montagem. Uma imagem ou um objeto no meio fecha o trecho de texto."""
 
-    def __init__(self, base: Run, saida: list[Run], rpr=None) -> None:
+    def __init__(self, base: Run, saida: list[Run], rpr=None, ctx=None) -> None:
         self.base = base
         self.saida = saida
         self.partes: list[str] = []
         #: o w:rPr do run, que vai junto no XML do objeto opaco
         self.rpr = rpr
+        self.ctx = ctx
 
     def append(self, texto: str) -> None:
         self.partes.append(texto)
@@ -405,15 +448,37 @@ class _Pedacos:
     def descarregar(self) -> None:
         texto = "".join(self.partes)
         self.partes = []
-        if texto:
+        if not texto:
+            return
+        destino = _destino_do_texto(self.ctx) if self.ctx is not None else None
+        if destino is None:
             self.saida.append(replace(self.base, texto=texto))
+        elif destino is _FORA_DO_FLUXO:
+            # Texto no codigo de um campo: o Word nao mostra. Fica no fluxo so' ate' o
+            # codigo fechar (separate ou end); se o campo nunca fechar (arquivo cortado),
+            # o texto continua no documento.
+            run = replace(self.base, texto=texto)
+            self.saida.append(run)
+            dono = next(e for e in self.ctx.campos if e["fase"] == "instr")
+            dono["provisorios"].append((self.saida, run))
+        else:
+            destino["resultado"].append(texto)
+
+    def _no_fluxo(self) -> bool:
+        if self.ctx is None or _destino_do_texto(self.ctx) is None:
+            return True
+        self.ctx.coletor.somar("CAMPO")  # objeto dentro do codigo de um campo
+        return False
 
     def imagem(self, imagem: Imagem) -> None:
         self.descarregar()
-        self.saida.append(run_de_imagem(imagem))
+        if self._no_fluxo():
+            self.saida.append(run_de_imagem(imagem))
 
     def objeto(self, item, ctx: "_Contexto") -> None:
         self.descarregar()
+        if not self._no_fluxo():
+            return
         run = _opaco(item, self.rpr, ctx)
         if run is not None:
             self.saida.append(run)
@@ -424,7 +489,7 @@ def _ler_run(r, ctx: _Contexto, saida: list[Run]) -> None:
     rpr = r.find(q("rPr"))
     if rpr is not None:
         _ler_rpr(rpr, run, ctx)
-    pedacos = _Pedacos(run, saida, rpr)
+    pedacos = _Pedacos(run, saida, rpr, ctx)
     for f in r:
         ns, loc = _local(f)
         if loc is None:
@@ -475,14 +540,16 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     elif loc == "softHyphen" or loc == "lastRenderedPageBreak":
         return
     elif loc == "fldChar":
-        _fld_char(_atr(f, "fldCharType"), partes, ctx)
+        _fld_char(f, partes, ctx)
     elif loc == "instrText":
-        if ctx.campos and ctx.campos[-1].get("fase") == "instr":
+        if ctx.campos and ctx.campos[-1]["fase"] == "instr":
             topo = ctx.campos[-1]
-            if sum(len(x) for x in topo["instr"]) <= INSTRUCAO_MAXIMA:
-                topo["instr"].append(f.text or "")
+            texto = f.text or ""
+            topo["tamanho"] += len(texto)
+            if topo["tamanho"] > ctx.lim["instrucao_campo"]:
+                topo["ignorado"] = True  # instrucao enorme: arquivo estranho
             else:
-                topo["longo"] = True
+                topo["codigo"].append(texto)
     elif loc == "fldData":
         return
     elif loc == "drawing":
@@ -501,50 +568,193 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
         c.somar("ELEMENTO_DESCONHECIDO")
 
 
-def _fld_char(tipo: str | None, partes: _Pedacos, ctx: _Contexto) -> None:
-    """Campo complexo: begin, instrText, separate, resultado, end (podem estar em runs diferentes).
+#: Marca de inicio ainda sem o codigo (o end nao chegou). Sobra so' em campo sem fim, e
+#: `_limpar_marcas` a tira, com o aviso CAMPO.
+def _marca_pendente() -> MarcaCampo:
+    return MarcaCampo("inicio", None)
 
-    PAGE e NUMPAGES com o begin e o end no mesmo paragrafo, sem campo dentro, viram um
-    run com `campo`; o texto e' o resultado (o que o Word mostrava). O resto mantem o
-    resultado como texto, e o aviso CAMPO diz que o campo se perde.
+
+def _juntar_codigo(codigo: list) -> tuple:
+    """Pedacos da instrucao com os textos vizinhos juntos (a gravacao faz um instrText por
+    pedaco: a releitura da' o mesmo codigo)."""
+    saida: list = []
+    for pedaco in codigo:
+        if isinstance(pedaco, str) and saida and isinstance(saida[-1], str):
+            saida[-1] += pedaco
+        elif pedaco != "":
+            saida.append(pedaco)
+    return tuple(saida)
+
+
+def _fld_char(f, partes: _Pedacos, ctx: _Contexto) -> None:
+    """Campo complexo: begin, instrText, separate, resultado, end (podem estar em runs e
+    paragrafos diferentes).
+
+    0.1.3: todo campo e' preservado. No fluxo, o begin vira uma marca de inicio com o
+    codigo (`Campo`) e o end uma marca de fim; o resultado fica entre as duas, como texto
+    editavel. Campo dentro da instrucao de outro (o PAGE de um IF) vai para o codigo do de
+    fora. PAGE e NUMPAGES com o begin e o end no mesmo paragrafo, sem nada dentro, continuam
+    um run com `campo` (o valor muda em cada pagina na tela). Acima dos limites (profundidade,
+    quantidade, tamanho da instrucao) o campo nao e' preservado: o resultado fica como texto,
+    com o aviso CAMPO.
     """
+    tipo = _atr(f, "fldCharType")
     partes.descarregar()
     pilha = ctx.campos
+    lim = ctx.lim
     if tipo == "begin":
-        if len(pilha) >= ctx.lim["campo_profundidade"]:
-            pilha.append({"ignorado": True})
-            return
-        if pilha:
-            pilha[-1]["aninhado"] = True
-        pilha.append({"fase": "instr", "instr": [], "saida": partes.saida, "base": partes.base,
-                      "inicio": None, "aninhado": False})
+        no_codigo = bool(pilha) and (pilha[-1]["fase"] == "instr" or pilha[-1]["no_codigo"])
+        ignorado = (len(pilha) >= lim["campo_profundidade"] or ctx.total_campos >= lim["campos"]
+                    or (no_codigo and pilha[-1]["ignorado"]))
+        entrada = {"fase": "instr", "codigo": [], "no_codigo": no_codigo, "ignorado": ignorado,
+                   "sujo": _onoff_atr(f, "dirty"), "travado": _onoff_atr(f, "fldLock"),
+                   "extra": etree.tostring(f) if len(f) else b"", "resultado": [],
+                   "separou": False, "tamanho": 0, "run": None, "saida": partes.saida,
+                   "provisorios": []}
+        if not ignorado:
+            ctx.total_campos += 1
+            if not no_codigo:
+                marca = replace(partes.base, texto="", marca=_marca_pendente())
+                partes.saida.append(marca)
+                entrada["run"] = marca
+        pilha.append(entrada)
     elif tipo == "separate":
-        if pilha and not pilha[-1].get("ignorado"):
+        if pilha and pilha[-1]["fase"] == "instr":
             pilha[-1]["fase"] = "resultado"
-            if pilha[-1]["saida"] is partes.saida:
-                pilha[-1]["inicio"] = len(partes.saida)
-            else:
-                pilha[-1]["aninhado"] = True  # o resultado comeca em outro paragrafo
+            pilha[-1]["separou"] = True
+            _descartar_provisorios(pilha[-1], ctx)
     elif tipo == "end":
         if not pilha:
+            return  # end sem begin: nao ha' campo a desfazer
+        e = pilha.pop()
+        _descartar_provisorios(e, ctx)
+        if e["ignorado"]:
+            if e["run"] is None:
+                ctx.coletor.somar("CAMPO")
+            # Com marca no fluxo, `_limpar_marcas` a tira e conta o aviso.
             return
-        campo = pilha.pop()
-        if campo.get("ignorado"):
-            ctx.coletor.somar("CAMPO")
+        campo = Campo(codigo=_juntar_codigo(e["codigo"]), sujo=e["sujo"], travado=e["travado"],
+                      sem_resultado=not e["separou"],
+                      resultado="".join(e["resultado"]) if e["no_codigo"] else "",
+                      extra=e["extra"])
+        if e["no_codigo"]:
+            pai = pilha[-1] if pilha else None
+            if pai is not None and pai["fase"] == "instr":
+                pai["codigo"].append(campo)
+            elif pai is not None:
+                # Campo no resultado de um campo da instrucao: fica so' o texto.
+                pai["resultado"].append(campo.resultado)
+                ctx.coletor.somar("CAMPO")
             return
-        instrucao = normalizar_instrucao("".join(campo["instr"]))
+        inicio = e["run"]
         saida = partes.saida
-        inicio = campo["inicio"] if campo["inicio"] is not None else len(saida)
-        resultado = saida[inicio:] if campo["saida"] is saida else []
-        if (tipo_do_campo(instrucao) is None or campo.get("longo") or campo["aninhado"]
-                or campo["saida"] is not saida or any(r.eh_objeto() or r.campo is not None
-                                                      for r in resultado)):
-            ctx.coletor.somar("CAMPO")
+        if _vira_campo_de_pagina(campo, inicio, e["saida"], saida):
+            indice = next(i for i, r in enumerate(saida) if r is inicio)
+            resultado = saida[indice + 1:]
+            base = resultado[0] if resultado else inicio
+            texto = "".join(r.texto for r in resultado).replace("\f", "")
+            del saida[indice:]
+            saida.append(replace(base, texto=texto, campo=normalizar_instrucao(campo.instrucao()),
+                                 imagem=None, marca=None))
             return
-        base = resultado[0] if resultado else campo["base"]
-        texto = "".join(r.texto for r in resultado).replace("\f", "")
-        del saida[inicio:]
-        saida.append(replace(base, texto=texto, campo=instrucao, imagem=None))
+        ctx.pares += 1
+        inicio.marca = MarcaCampo("inicio", campo, ctx.pares)
+        saida.append(replace(partes.base, texto="", marca=MarcaCampo("fim", par=ctx.pares)))
+
+
+def _descartar_provisorios(entrada: dict, ctx: _Contexto) -> None:
+    """O codigo do campo fechou: o texto que estava nele sai do fluxo."""
+    for lista, run in entrada["provisorios"]:
+        indice = next((i for i, r in enumerate(lista) if r is run), None)
+        if indice is not None:
+            del lista[indice]
+        else:
+            ctx.descartar.append(run)  # ja' foi para outro paragrafo: sai na limpeza
+    entrada["provisorios"] = []
+
+
+def _vira_campo_de_pagina(campo: Campo, inicio: Run, saida_inicio: list, saida: list) -> bool:
+    """PAGE ou NUMPAGES simples: begin e end no mesmo paragrafo, resultado so' de texto."""
+    if saida_inicio is not saida or not all(isinstance(x, str) for x in campo.codigo):
+        return False
+    if campo.sem_resultado or campo.extra or campo.travado:
+        return False
+    if tipo_do_campo(normalizar_instrucao(campo.instrucao())) is None:
+        return False
+    indice = next((i for i, r in enumerate(saida) if r is inicio), None)
+    if indice is None:
+        return False
+    return not any(r.eh_objeto() or r.campo is not None or r.marca is not None or r.link is not None
+                   for r in saida[indice + 1:])
+
+
+def _limpar_marcas(blocos: list, ctx: _Contexto) -> None:
+    """Tira as marcas de inicio de campo que nunca fecharam (arquivo cortado, ou campo
+    acima dos limites): o resultado fica como texto, com o aviso CAMPO."""
+    descartar = {id(r) for r in ctx.descartar}
+    for p in paragrafos_de(blocos):
+        if descartar:
+            p.runs = [r for r in p.runs if id(r) not in descartar]
+        if any(isinstance(r.marca, MarcaCampo) and r.marca.tipo == "inicio" and r.marca.campo is None
+               for r in p.runs):
+            novos = []
+            for r in p.runs:
+                if isinstance(r.marca, MarcaCampo) and r.marca.tipo == "inicio" \
+                        and r.marca.campo is None:
+                    ctx.coletor.somar("CAMPO")
+                    continue
+                novos.append(r)
+            p.runs = novos
+
+
+def _ler_link(h, ctx: _Contexto) -> Link | None:
+    """O destino de um w:hyperlink. None (com aviso, se havia endereco) quando nao da' para
+    guardar: relacao que nao existe ou acima do limite de links."""
+    rid = h.get(q("id", R_NS))
+    ancora = _atr(h, "anchor") or None
+    url = None
+    if rid:
+        rel = ctx.relacoes.get(rid)
+        if rel is not None and rel[2] and rel[0].endswith("/hyperlink") \
+                and len(rel[1]) <= ctx.lim["link_tamanho"]:
+            url = rel[1]
+        else:
+            ctx.coletor.somar("HIPERLINK")  # o endereco se perde (fica o marcador, se houver)
+            if ancora is None:
+                return None
+    if url is None and ancora is None:
+        return None
+    if ancora is not None and len(ancora) > ctx.lim["link_tamanho"]:
+        ctx.coletor.somar("HIPERLINK")
+        return None
+    if ctx.total_links >= ctx.lim["hiperlinks"]:
+        ctx.coletor.somar("HIPERLINK")
+        return None
+    ctx.total_links += 1
+    historico = _atr(h, "history")
+    return Link(url=url, ancora=ancora, dica=_atr(h, "tooltip") or None,
+                historico=None if historico is None else historico.lower() in ("1", "true", "on"),
+                quadro=_atr(h, "tgtFrame") or None, local=_atr(h, "docLocation") or None)
+
+
+def _marcador(f, loc: str, ctx: _Contexto, saida: list) -> None:
+    """w:bookmarkStart e w:bookmarkEnd viram marcas no fluxo, pelo nome."""
+    ident = _atr(f, "id")
+    if loc == "bookmarkStart":
+        nome = _atr(f, "name")
+        if not nome or ident is None:
+            return  # marcador sem nome nao e' alcancavel: nada se perde
+        if (nome in ctx.marcadores_nomes or len(ctx.marcadores_nomes) >= ctx.lim["marcadores"]
+                or len(nome) > 255):
+            ctx.coletor.somar("MARCADOR")
+            return
+        ctx.marcadores_nomes.add(nome)
+        ctx.marcadores_ids[ident] = nome
+        saida.append(Run(marca=Marcador("inicio", nome)))
+    else:
+        nome = ctx.marcadores_ids.pop(ident, None) if ident is not None else None
+        if nome is not None:
+            saida.append(Run(marca=Marcador("fim", nome)))
 
 
 def _medida_emu(valor: str | None) -> int | None:
@@ -636,20 +846,19 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
         if loc == "r":
             _ler_run(f, ctx, saida)
         elif loc == "hyperlink":
-            c.somar("HIPERLINK")
-            _runs_em(f, ctx, saida)
-        elif loc == "fldSimple":
-            instrucao = normalizar_instrucao(_atr(f, "instr") or "")
+            link = _ler_link(f, ctx)
             dentro: list[Run] = []
             _runs_em(f, ctx, dentro)
-            if tipo_do_campo(instrucao) is not None and not any(
-                    r.eh_objeto() or r.campo is not None for r in dentro):
-                base = dentro[0] if dentro else Run()
-                texto = "".join(r.texto for r in dentro).replace("\f", "")
-                saida.append(replace(base, texto=texto, campo=instrucao, imagem=None))
-            else:
-                c.somar("CAMPO")
-                saida.extend(dentro)
+            if link is not None:
+                for r in dentro:
+                    if r.link is None:
+                        r.link = link
+            saida.extend(dentro)
+        elif loc in ("bookmarkStart", "bookmarkEnd"):
+            if _destino_do_texto(ctx) is None:
+                _marcador(f, loc, ctx, saida)
+        elif loc == "fldSimple":
+            _campo_simples(f, ctx, saida)
         elif loc in ("ins", "moveTo"):
             c.somar("REVISAO")
             _runs_em(f, ctx, saida)
@@ -668,6 +877,37 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             continue
         else:
             c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _campo_simples(f, ctx: _Contexto, saida: list) -> None:
+    """w:fldSimple. PAGE e NUMPAGES simples viram run com `campo`; o resto vira o mesmo
+    campo complexo que o Word grava (marca de inicio, resultado, marca de fim)."""
+    bruta = _atr(f, "instr") or ""
+    instrucao = normalizar_instrucao(bruta)
+    dentro: list[Run] = []
+    _runs_em(f, ctx, dentro)
+    if tipo_do_campo(instrucao) is not None and not any(
+            r.eh_objeto() or r.campo is not None or r.marca is not None for r in dentro):
+        base = dentro[0] if dentro else Run()
+        texto = "".join(r.texto for r in dentro).replace("\f", "")
+        saida.append(replace(base, texto=texto, campo=instrucao, imagem=None))
+        return
+    no_codigo = _destino_do_texto(ctx) is not None
+    if (no_codigo or ctx.total_campos >= ctx.lim["campos"] or len(ctx.campos) >= ctx.lim["campo_profundidade"]
+            or len(bruta) > ctx.lim["instrucao_campo"]):
+        ctx.coletor.somar("CAMPO")
+        if not no_codigo:
+            saida.extend(dentro)
+        return
+    ctx.total_campos += 1
+    base = next((r for r in dentro if r.marca is None and not r.eh_objeto()), Run())
+    campo = Campo(codigo=(bruta,) if bruta else (), sujo=_onoff_atr(f, "dirty"),
+                  travado=_onoff_atr(f, "fldLock"))
+    neutro = replace(base, texto="", campo=None, imagem=None, objeto=None, marca=None, link=None)
+    ctx.pares += 1
+    saida.append(replace(neutro, marca=MarcaCampo("inicio", campo, ctx.pares)))
+    saida.extend(dentro)
+    saida.append(replace(neutro, marca=MarcaCampo("fim", par=ctx.pares)))
 
 
 def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
@@ -691,7 +931,9 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
         lista = ctx.estilos.numeracao_de(props.get("estilo") or ctx.estilos.id_padrao())
         if lista is not None:
             props["numeracao"] = lista
-    runs: list[Run] = []
+    # Marcadores que estavam entre paragrafos (no corpo ou na celula) entram no comeco deste.
+    runs: list[Run] = ctx.marcas_pendentes
+    ctx.marcas_pendentes = []
     _runs_em(p, ctx, runs)
     if ctx.nivel_tabela > 0:
         # Quebra de pagina dentro de celula: o EditDoc nao pagina dentro da tabela por
@@ -700,11 +942,12 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
         quebras += 1 if props.pop("quebra_antes", False) else 0
         if quebras:
             ctx.coletor.somar("QUEBRA_EM_TABELA", quebras)
-            runs = [r if r.eh_objeto() else replace(r, texto=r.texto.replace("\f", "\n"))
-                    for r in runs]
+            for r in runs:
+                if not r.eh_objeto() and "\f" in r.texto:
+                    r.texto = r.texto.replace("\f", "\n")  # no lugar: a marca de campo e' o mesmo objeto
     saida = [Paragrafo(runs=[], **props)]
     for run in runs:
-        if run.eh_objeto() or run.campo is not None:
+        if run.eh_objeto() or run.campo is not None or run.marca is not None:
             saida[-1].runs.append(run)
             continue
         for i, pedaco in enumerate(run.texto.split("\f")):
@@ -765,10 +1008,29 @@ def _blocos(elemento, paras: list[Bloco], ctx: _Contexto, achatar: bool = False)
                 _blocos(conteudo, paras, ctx, achatar)
         elif loc in ("del", "moveFrom"):
             c.somar("REVISAO")
+        elif loc in ("bookmarkStart", "bookmarkEnd"):
+            _marcador(f, loc, ctx, ctx.marcas_pendentes)
         elif loc in _IGNORADOS_BLOCO or loc == "tblPrEx":
             continue
         else:
             c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _fechar_historia(blocos: list, ctx: _Contexto) -> None:
+    """Fim do corpo, de um cabecalho ou de um rodape: campos que nao fecharam, marcadores
+    que ficaram entre paragrafos no fim (vao para o ultimo paragrafo)."""
+    _fechar_campos(ctx)
+    _limpar_marcas(blocos, ctx)
+    ctx.descartar = []
+    if ctx.marcas_pendentes:
+        ultimo = None
+        for p in paragrafos_de(blocos):
+            ultimo = p
+        if ultimo is None:
+            ultimo = Paragrafo()
+            blocos.append(ultimo)
+        ultimo.runs.extend(ctx.marcas_pendentes)
+        ctx.marcas_pendentes = []
 
 
 # -- tabelas ------------------------------------------------------------------
@@ -1133,14 +1395,18 @@ def _ler_faixa(rid: str, onde: str, ctx: _Contexto, tamanho_de, relacoes_de) -> 
     finally:
         ctx.relacoes = relacoes_doc
         ctx.ignoraveis = ignoraveis_doc
-    _fechar_campos(ctx)
+    _fechar_historia(blocos, ctx)
     return blocos
 
 
 def _fechar_campos(ctx: _Contexto) -> None:
-    """Campo aberto que nunca fechou (arquivo cortado): o texto ficou, o campo nao."""
-    for _campo in ctx.campos:
-        ctx.coletor.somar("CAMPO")
+    """Campo aberto que nunca fechou (arquivo cortado): o texto ficou, o campo nao.
+
+    O campo com marca de inicio no fluxo e' contado por `_limpar_marcas`, que tira a marca.
+    """
+    for campo in ctx.campos:
+        if campo["run"] is None:
+            ctx.coletor.somar("CAMPO")
     ctx.campos = []
 
 
@@ -1397,7 +1663,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
 
         paras: list[Bloco] = []
         _blocos(corpo, paras, ctx)
-        _fechar_campos(ctx)
+        _fechar_historia(paras, ctx)
         sect_final = corpo.find(q("sectPr"))
         refs_finais = dict(ctx.faixas_herdadas)
         if sect_final is not None:
@@ -1427,8 +1693,21 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             _validar_nome(alvo_core)
             meta = _core(ler_parte(alvo_core), profundidade)
 
+        # O resto do pacote (0.1.3): o que o EditDoc nao edita volta igual ao arquivo.
+        reescritas = {alvo for tipo, alvo, externo in relacoes.values() if not externo and
+                      tipo.rstrip("/").rsplit("/", 1)[-1] in ("styles", "numbering", "settings",
+                                                               "header", "footer")}
+        if tema is not None:
+            reescritas |= {alvo for tipo, alvo, externo in relacoes.values()
+                           if not externo and tipo.endswith("/theme")}
+        pacote = fx_pacote.capturar(
+            coletor=coletor, lim=lim, nomes=nomes, ler_parte=ler_parte, relacoes_de=relacoes_de,
+            tipo_de=tipo_de, parse=lambda dados, nome: _parse(dados, nome, profundidade),
+            alvo_doc=alvo_doc, rels_pacote=relacoes_de(""), rels_doc=relacoes, raiz_doc=raiz,
+            tema_tratado=tema is not None, proibidos=reescritas)
+
     doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
-                               rodapes=rodapes, estilos=ctx.estilos, **meta))
+                               rodapes=rodapes, estilos=ctx.estilos, pacote=pacote, **meta))
     return doc, coletor.avisos()
 
 

@@ -18,6 +18,10 @@ de cima (ou de baixo) entra; duplo clique no corpo, ou Esc, sai. Na edicao o cur
 comandos de formatacao, tabela, imagem e busca continuam iguais. O corpo e' sempre
 `documento_corpo()`; e' ele que a janela grava e que diz se ha' alteracao. Cada
 variante tem o proprio desfazer.
+
+Hiperlinks (0.1.3): Ctrl+clique abre o link (`abrir_link`, com `abrir_url` e
+`confirmar_link` trocaveis nos testes); digitar logo depois de um link nao o estende; as
+setas, o Backspace e o Delete pulam a marca (sem largura) dos marcadores.
 """
 
 from __future__ import annotations
@@ -25,13 +29,15 @@ from __future__ import annotations
 import math
 import re
 
-from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QAction, QImage, QKeyEvent, QKeySequence, QTextBlockFormat, QTextCharFormat,
-                           QTextCursor, QTextDocument, QTextDocumentFragment, QTextFormat)
+from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, QUrl, Signal
+from PySide6.QtGui import (QAction, QDesktopServices, QImage, QKeyEvent, QKeySequence,
+                           QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument,
+                           QTextDocumentFragment, QTextFormat)
 from PySide6.QtWidgets import QApplication, QMenu
 
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
+from editdoc.edicao import links as ed_links
 from editdoc.edicao import tabelas as ed_tabelas
 from editdoc.interface.cabecalhos import FaixaQt
 from editdoc.interface.vista_paginas import VistaPaginas, origem_da_faixa
@@ -42,6 +48,8 @@ from editdoc.modelo.folhas import escala_do_zoom
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import campos as pq_campos
 from editdoc.ponte_qt import imagens as pq_imagens
+from editdoc.ponte_qt import links as pq_links
+from editdoc.ponte_qt import marcas as pq_marcas
 from editdoc.ponte_qt import opacos as pq_opacos
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
 
@@ -63,6 +71,13 @@ _IMG_HTML = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 ALCA_PX = 8.0
 #: Marca na area de transferencia: quantos objetos opacos ficaram fora da copia (0.1.2).
 MIME_OPACOS_OMITIDOS = "application/x-editdoc-objetos-omitidos"
+#: Esquemas de endereco que o Ctrl+clique nunca abre (o link pode rodar codigo).
+ESQUEMAS_PROIBIDOS = ("javascript", "vbscript", "data")
+
+
+def abrir_no_sistema(url: str) -> bool:
+    """Abre o endereco no programa padrao do Windows (navegador, e-mail)."""
+    return QDesktopServices.openUrl(QUrl(url, QUrl.ParsingMode.TolerantMode))
 
 
 def html_sem_imagens_de_fora(html: str) -> str:
@@ -508,14 +523,20 @@ class PainelDocumento(VistaPaginas):
             self._cursor.removeSelectedText()
         self._limpar_estrutural()
         formato = self._cursor.charFormat()
-        if formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato):
-            # Digitar logo depois de uma imagem, de um campo ou de um objeto opaco: o texto
-            # nao herda o formato de objeto (cada letra viraria outro objeto).
-            limpo = QTextCharFormat(formato)
+        # Logo depois de um link, o texto digitado nao entra no link (0.1.3).
+        para_digitar = ed_links.formato_para_digitar(self.document(), self._cursor.position(),
+                                                     formato)
+        if formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato) \
+                or pq_marcas.eh_marca(formato):
+            # Digitar logo depois de uma imagem, de um campo, de um objeto opaco ou de uma
+            # marca: o texto nao herda o formato de objeto (cada letra viraria outro objeto).
+            limpo = QTextCharFormat(para_digitar)
             for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO,
-                                *pq_opacos.PROPS_DE_OPACO):
+                                *pq_opacos.PROPS_DE_OPACO, *pq_marcas.PROPS_DE_MARCA):
                 limpo.clearProperty(propriedade)
             self._cursor.insertText(texto, limpo)
+        elif para_digitar is not formato:
+            self._cursor.insertText(texto, para_digitar)
         else:
             self._cursor.insertText(texto)
         if estrutural:
@@ -558,6 +579,24 @@ class PainelDocumento(VistaPaginas):
             self._cursor.setPosition(fim, Selecionar)
         self._depois_de_mover()
 
+    def _marcador_em(self, pos: int) -> bool:
+        """O caractere em `pos` e' a marca (sem largura) de um marcador (0.1.3)."""
+        cf = pq_links.formato_em(self.document(), pos)
+        return cf is not None and pq_marcas.eh_marcador(cf)
+
+    def _mover_horizontal(self, direita: bool, modo) -> None:
+        """Seta para os lados. A marca de marcador nao tem largura: o caret passa por ela
+        junto com o caractere vizinho, senao a tecla pareceria nao fazer nada."""
+        op = M.Right if direita else M.Left
+        self._cursor.movePosition(op, modo)
+        for _ in range(256):
+            pos = self._cursor.position()
+            if not self._marcador_em(pos - 1 if direita else pos):
+                break
+            if not self._cursor.movePosition(op, modo):
+                break
+        self._depois_de_mover()
+
     def _apagar(self, anterior: bool, palavra: bool = False) -> None:
         if self._cursor.hasSelection():
             self._cursor.removeSelectedText()
@@ -565,8 +604,18 @@ class PainelDocumento(VistaPaginas):
             self._cursor.movePosition(M.WordLeft if anterior else M.WordRight, Selecionar)
             self._cursor.removeSelectedText()
         elif anterior:
+            # Backspace e Delete pulam a marca de marcador (invisivel) e apagam o caractere
+            # que se ve: o link que aponta para o marcador continua valendo (0.1.3).
+            pos = self._cursor.position()
+            while pos > 0 and self._marcador_em(pos - 1):
+                pos -= 1
+            self._cursor.setPosition(pos)
             self._cursor.deletePreviousChar()
         else:
+            pos = self._cursor.position()
+            while self._marcador_em(pos):
+                pos += 1
+            self._cursor.setPosition(pos)
             self._cursor.deleteChar()
         self._depois_de_mover()
 
@@ -648,11 +697,9 @@ class PainelDocumento(VistaPaginas):
         elif k == Key.Key_Tab:
             self._inserir("\t")
         elif k == Key.Key_Left:
-            self._cursor.movePosition(M.Left, modo)
-            self._depois_de_mover()
+            self._mover_horizontal(False, modo)
         elif k == Key.Key_Right:
-            self._cursor.movePosition(M.Right, modo)
-            self._depois_de_mover()
+            self._mover_horizontal(True, modo)
         elif k == Key.Key_Up:
             self._cursor.movePosition(M.Up, modo)
             self._depois_de_mover()
@@ -765,6 +812,14 @@ class PainelDocumento(VistaPaginas):
                 self._arrastando = False
                 ev.accept()
                 return
+            if ev.modifiers() & Ctrl and not ev.modifiers() & Shift:
+                # Ctrl+clique num link abre o link (0.1.3), como no Word.
+                pos_link = self.link_em(ev.position())
+                if pos_link is not None:
+                    self._arrastando = False
+                    self.abrir_link(pos_link)
+                    ev.accept()
+                    return
             imagem = None if ev.modifiers() & Shift else self.imagem_em(ev.position())
             if imagem is not None:
                 # Clique na imagem seleciona a imagem, como no Word.
@@ -855,6 +910,56 @@ class PainelDocumento(VistaPaginas):
                 menu.addAction(acao)
         menu.exec(ev.globalPos())
 
+    # ----- hiperlinks (0.1.3) ------------------------------------------------
+    #: Quem abre o endereco externo. Os testes trocam por um registro: nunca abrem o navegador.
+    abrir_url = staticmethod(abrir_no_sistema)
+    #: Pergunta antes de abrir endereco que nao e' http, https ou mailto. None = o dialogo.
+    confirmar_link = None
+
+    def link_em(self, p: QPointF) -> int | None:
+        """Posicao do caractere de link sob o ponto do viewport, ou None (so' no corpo)."""
+        if self._edicao is not None:
+            return None
+        pos = self.posicao_em(p)
+        doc = self.layout_pag.doc
+        m = self._mapa()
+        for k in (pos, pos - 1):
+            if pq_links.link_em(doc, k) is None:
+                continue
+            ini = self.layout_pag.retangulo_cursor(k)
+            fim = self.layout_pag.retangulo_cursor(k + 1)
+            x0, _y0 = m.doc_para_tela(ini.x(), ini.y(), self._paginas())
+            x1, _y1 = m.doc_para_tela(fim.x(), fim.y(), self._paginas())
+            if abs(fim.y() - ini.y()) > 1 or min(x0, x1) - 2 <= p.x() <= max(x0, x1) + 2:
+                return k
+        return None
+
+    def abrir_link(self, pos: int) -> str:
+        """Ctrl+clique (ou "Abrir link"): o link interno leva ao marcador; o externo abre no
+        programa do Windows. Devolve o que foi feito: "marcador", "aberto", "recusado",
+        "cancelado", "sem_marcador" ou "nada"."""
+        link = pq_links.link_em(self.document(), pos)
+        if link is None:
+            return "nada"
+        if link.interno():
+            achados = [k for k, m in pq_marcas.posicoes_de_marcadores(
+                self.layout_pag.doc, link.ancora) if m.tipo == "inicio"]
+            if not achados:
+                self.mensagem.emit(f"O marcador \"{link.ancora}\" não existe neste documento.")
+                return "sem_marcador"
+            self.ir_para_posicao(achados[0] + 1)
+            return "marcador"
+        url = link.href()
+        if pq_links.esquema(url) in ESQUEMAS_PROIBIDOS:
+            self.mensagem.emit("Este link pode executar código e não é aberto pelo EditDoc.")
+            return "recusado"
+        if not pq_links.abre_sem_perguntar(url):
+            confirmar = self.confirmar_link or _confirmar_abrir_link
+            if not confirmar(self, url):
+                return "cancelado"
+        self.abrir_url(url)
+        return "aberto"
+
     # ----- foco ------------------------------------------------------------
     def focusInEvent(self, ev) -> None:  # noqa: N802
         super().focusInEvent(ev)
@@ -863,3 +968,9 @@ class PainelDocumento(VistaPaginas):
     def focusOutEvent(self, ev) -> None:  # noqa: N802
         super().focusOutEvent(ev)
         self.definir_piscar(False)
+
+
+def _confirmar_abrir_link(pai, url: str) -> bool:
+    """Pergunta antes de abrir endereco que nao e' de pagina da Web nem de e-mail."""
+    from editdoc.interface import dialogos_modais  # import tardio: so' quando se pergunta
+    return dialogos_modais.confirmar_abrir_link(pai, url)

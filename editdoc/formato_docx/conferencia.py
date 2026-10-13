@@ -8,6 +8,9 @@ Estilos (M6): o estilo de cada paragrafo e os estilos de caractere usados nele.
 Objetos opacos (0.1.2): cada um, no lugar, pela `opacos.assinatura` (o XML e o conteudo
 das partes que ele usa, sem depender dos nomes de parte e dos rIds renumerados). Uma
 parte referenciada que falta faz o leitor nao preservar o objeto, e a contagem acusa.
+Hiperlinks, campos e marcadores (0.1.3): o destino de cada trecho de link e as marcas de
+campo (com o codigo) e de marcador de cada paragrafo, depois de `marcas.equilibrar`; e o
+conteudo das partes preservadas do pacote (`pacote.assinatura`).
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -20,8 +23,10 @@ from __future__ import annotations
 import hashlib
 
 from editdoc.formato_docx import opacos
+from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import texto_gravavel
+from editdoc.modelo import marcas
 from editdoc.modelo.documento import CARACTERE_OBJETO, Documento, Tabela, normalizar
 
 
@@ -48,6 +53,25 @@ def _campos(paragrafo) -> tuple:
     return tuple(r.campo for r in paragrafo.runs if r.campo is not None)
 
 
+def _links(paragrafo) -> tuple:
+    """(destino, texto) de cada trecho de link, com os runs vizinhos de mesmo destino juntos."""
+    saida: list[list] = []
+    for r in paragrafo.runs:
+        if r.marca is not None:
+            continue
+        texto = CARACTERE_OBJETO if r.eh_objeto() else texto_gravavel(r.texto)[0]
+        if saida and saida[-1][0] == r.link:
+            saida[-1][1] += texto
+        else:
+            saida.append([r.link, texto])
+    return tuple((link, texto) for link, texto in saida if link is not None)
+
+
+def _marcas(paragrafo) -> tuple:
+    """As marcas de campo (com o codigo) e de marcador, na ordem."""
+    return tuple(r.marca for r in paragrafo.runs if r.marca is not None)
+
+
 def _itens(blocos, saida: list, onde: str) -> None:
     """Sequencia comparavel: um item por paragrafo, tabela, linha e celula."""
     n_par = 0
@@ -66,7 +90,7 @@ def _itens(blocos, saida: list, onde: str) -> None:
             saida.append((f"{onde}paragrafo {n_par}", "p", texto_do_paragrafo(bloco),
                           bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
                           bloco.estilo, tuple(sorted({r.estilo for r in bloco.runs if r.estilo})),
-                          _objetos(bloco)))
+                          _objetos(bloco), _links(bloco), _marcas(bloco)))
 
 
 def conferir(dados: bytes, esperado: Documento) -> None:
@@ -78,6 +102,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
         raise FalhaDeConferencia(f"o arquivo gravado nao pode ser lido: {erro.codigo}") from None
     a: list = []
     b: list = []
+    # O escritor grava as marcas em pares (marcas.equilibrar): e' isso que tem de voltar.
+    esperado = marcas.equilibrar(esperado)[0]
     esperado_n, lido_n = normalizar(esperado), normalizar(lido)
     _itens(esperado_n.paragrafos, a, "")
     _itens(lido_n.paragrafos, b, "")
@@ -105,6 +131,10 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"campo diferente no {lugar}")
             if x[8] != y[8]:
                 raise FalhaDeConferencia(f"objeto (caixa de texto, forma...) diferente no {lugar}")
+            if x[9] != y[9]:
+                raise FalhaDeConferencia(f"hiperlink diferente no {lugar}")
+            if x[10] != y[10]:
+                raise FalhaDeConferencia(f"campo ou marcador diferente no {lugar}")
             if x[6:8] != y[6:8]:
                 raise FalhaDeConferencia(f"estilo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")
@@ -113,6 +143,9 @@ def conferir(dados: bytes, esperado: Documento) -> None:
         raise FalhaDeConferencia("estrutura de tabela diferente no fim do documento")
     if esperado.pagina != lido.pagina:
         raise FalhaDeConferencia("papel ou margens diferentes do documento")
+    if fx_pacote.assinatura(esperado.pacote) != fx_pacote.assinatura(lido.pacote):
+        raise FalhaDeConferencia("partes preservadas do pacote (propriedades, customXml, "
+                                 "fontes...) diferentes")
 
 
 def conferidor(esperado: Documento):

@@ -1,3 +1,91 @@
+## 0.1.3 - 2026-10-13
+
+Partes do pacote, hiperlinks e campos deixam de sair do arquivo ao salvar.
+
+Defeito: salvar um `.docx` real pelo EditDoc tirava do arquivo, sem aviso, as propriedades
+personalizadas (`docProps/custom.xml`), os itens `customXml` (metadados do SharePoint), a
+tabela de fontes, as configurações da Web e as notas separadoras, e refazia o
+`settings.xml` (compatibilidade, rsids, variáveis do documento e proteção sumiam). Os
+hiperlinks viravam texto (aviso HIPERLINK, com perda) e todo campo que não era número de
+página (sumário, PAGEREF, REF, DATE...) virava texto fixo (aviso CAMPO, com perda). Causa:
+o escritor gravava só o que ele gera, e o modelo não tinha onde guardar o destino de um
+link nem o código de um campo.
+
+- Partes do pacote (`formato_docx/pacote.py`): toda relação do documento que o texto não
+  cita e toda relação do pacote é classificada. O que o EditDoc não edita volta byte a
+  byte, com o fecho das relações e um Override por parte: customXml (item, itemProps e
+  relações), custom.xml, fontTable com as fontes embutidas, webSettings, glossário,
+  people.xml. Nenhuma parte sai calada: o que não volta tem aviso próprio
+  (PARTE_PERDIDA para relação quebrada, XML inválido ou limite; MACROS para vbaProject e
+  personalizações; ASSINATURA para a assinatura digital, que deixaria de valer;
+  COMENTARIO; NOTA; MINIATURA, sem perda, para a miniatura que mostraria o conteúdo
+  antigo). Controles ActiveX também não voltam (OBJETO_PERDIDO).
+- `settings.xml`: o original volta inteiro, com as relações (o modelo anexado). O EditDoc
+  só muda o que controla: `w:evenAndOddHeaders`, na ordem do esquema, e as referências às
+  notas separadoras quando as notas não voltam. Sem mudança, os bytes são os mesmos.
+- Notas: `footnotes.xml` e `endnotes.xml` voltam com as notas separadoras; as notas de
+  verdade continuam fora, com o aviso NOTA.
+- `core.xml` e `app.xml`: os originais voltam (assunto, palavras-chave, categoria,
+  revisão, empresa, gerente), com título, autor, datas e o aplicativo reescritos.
+- Hiperlinks: o trecho do link guarda o destino (endereço externo ou marcador, com a dica,
+  o histórico e o quadro); ao salvar, `w:hyperlink` com relação externa nova (sem colisão
+  com imagens e objetos) ou `w:anchor`. Na tela, o link tem o estilo do arquivo (azul
+  sublinhado) e o `anchorHref` do Qt. Ctrl+clique abre o link: http, https e mailto abrem
+  direto; arquivo, rede e outros esquemas só com confirmação; javascript:, vbscript: e
+  data: nunca; o link interno leva ao marcador. Inserir > Link (Ctrl+K) insere no cursor,
+  põe o link na seleção (mantendo a formatação) ou edita o link do cursor, para um
+  endereço ou um marcador; Remover link tira o link e o estilo Hyperlink. Cada comando é
+  um passo de desfazer. Digitar logo depois de um link não o estende.
+- Marcadores (`w:bookmarkStart`/`End`): todos voltam, inclusive os que estão entre
+  parágrafos, com id único e em pares. Na tela não têm largura; as setas, o Backspace e o
+  Delete passam por eles (não se apagam sem ser vistos).
+- Campos: todo campo volta como campo, simples (`w:fldSimple`, gravado como complexo) ou
+  complexo, inclusive aninhados (o PAGE dentro do código de um IF), o sumário de vários
+  parágrafos com os hiperlinks e os PAGEREF dentro, o XE sem resultado e o campo de
+  formulário com o `w:ffData`; `w:dirty` e `w:fldLock` voltam. O último resultado é texto
+  editável (vira o novo resultado), entre dois colchetes finos que não saem na impressão.
+  Apagar só o começo ou só o fim de um campo grava XML válido: o campo vira texto comum,
+  com o aviso CAMPO_INCOMPLETO (com confirmação). O EditDoc não recalcula esses campos e
+  não marca o sumário como sujo: ver docs/ARQUITETURA.md.
+- Avisos: HIPERLINK e CAMPO só aparecem para o que não pode voltar (relação quebrada,
+  campo sem fim no arquivo, limites), com os textos revistos; novos PARTE_PERDIDA,
+  MINIATURA, ASSINATURA, MARCADOR e CAMPO_INCOMPLETO.
+- Validador e conferência: campos equilibrados na parte inteira (o código no parágrafo do
+  begin), marcadores com id e nome únicos e em pares, `r:id` de hiperlink para relação
+  externa do tipo hyperlink, relações e Overrides das partes preservadas; a conferência
+  compara o destino de cada link, as marcas de campo e de marcador de cada parágrafo e o
+  conteúdo das partes preservadas.
+- Limites contra arquivo hostil: 20.000 campos, links e marcadores; instrução de campo de
+  4096 caracteres; endereço de 8192; 8 campos um dentro do outro; 1000 partes
+  preservadas, 6 níveis de relação e 256 MB.
+- Testado com um manual real (sumário num controle de conteúdo, 11 PAGEREF, 19 hiperlinks,
+  6 marcadores, 4 itens customXml), aberto e salvo como outra cópia pela janela:
+
+  | Item | Original | Salvo pela 0.1.2 | Salvo pela 0.1.3 |
+  |---|---|---|---|
+  | Partes do pacote | 75 | 58 (18 saíam sem aviso) | 76 (as 75 e uma cópia de imagem, como na 0.1.2) |
+  | customXml, custom.xml, fontTable, webSettings, notas | presentes | fora | iguais byte a byte |
+  | settings.xml | do Word | refeito | igual byte a byte |
+  | `w:hyperlink` | 19 | 2 (os das caixas de texto) | 19 |
+  | fldChar begin / separate / end | 13 / 13 / 13 | 1 / 1 / 1 | 13 / 13 / 13 |
+  | instrText TOC / PAGEREF / PAGE | 1 / 11 / 1 | 0 / 0 / 1 | 1 / 11 / 1 |
+  | bookmarkStart / bookmarkEnd | 6 / 6 | 0 / 0 | 6 / 6 |
+  | txbxContent / w:drawing | 6 / 49 | 6 / 49 | 6 / 49 |
+  | controle de conteúdo (`w:sdt`) | 1 | 0 (aviso) | 0 (aviso) |
+
+  Avisos ao abrir o original: na 0.1.2, CAIXA_DE_TEXTO 6 e IMAGEM_FLUTUANTE 2
+  (preservados) e, com perda, CONTEUDO_CONTROLADO 1, FORMATACAO 157, HIPERLINK 17,
+  CAMPO 12 e LISTA 10; na 0.1.3, HIPERLINK e CAMPO deixam de existir. A cópia salva
+  reabre só com os dois avisos sem perda, e passa no validador.
+- Suítes novas: `tests/teste_partes_pacote.py`, `tests/teste_hiperlinks.py` e
+  `tests/teste_campos_gerais.py`, com fixtures geradas em código
+  (`fixtures_docx.docx_com_pacote_do_word`, `docx_com_links`, `docx_com_campos`).
+  Checagens reescritas em `teste_campos.py` (o DATE, o campo que atravessa parágrafos e o
+  IF com PAGE eram esperados como texto com o aviso CAMPO e passam a ser preservados; o
+  texto que está no código de 20 campos aninhados não aparece no Word, e a checagem passa a
+  exigir o aviso e o arquivo válido) e em `teste_acessibilidade.py` (o diálogo de link
+  entra na lista: nove diálogos, não oito).
+
 ## 0.1.2 - 2026-10-13
 
 Caixas de texto, formas e objetos deixam de sair do arquivo ao salvar.

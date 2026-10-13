@@ -197,10 +197,12 @@ def testar_dialogos() -> None:
         dialogos_modais.pedir_numero_inicial(None, 3)
         dialogos_modais.pedir_opcoes_pdf(None, 4, 0)
         dialogos_modais.pedir_opcoes(None, configuracao.padrao())
+        # 0.1.3: o dialogo de link (Ctrl+K). A contagem abaixo passou de oito para nove.
+        dialogos_modais.pedir_link(None, "texto", None, ["Marcador1", "Marcador2"])
         dialogo_estilo.pedir_estilo(None, estilos.obter("Normal"), estilos, QFont("Arial", 11))
         dialogo_estilo.pedir_estilo(None, estilos.obter("Normal"), estilos, QFont("Arial", 11),
                                     novo=True)
-    checa_igual(len(capt.dialogos), 8, "os oito dialogos do programa foram examinados")
+    checa_igual(len(capt.dialogos), 9, "os nove dialogos do programa foram examinados")
     for d in capt.dialogos:
         d.deleteLater()
     copia = Copia(id="0" * 32, docx=None, meta={"nome": "a.docx", "hora": "2026-10-12T10:00:00+00:00"})

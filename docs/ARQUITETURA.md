@@ -111,8 +111,9 @@ Implementados no M5 (0.0.8).
   último resultado. `modelo/campos.py` calcula o valor de cada página (decimal, romanos, letras,
   número inicial) e qual variante vale em cada página. No `.docx` o campo sai como campo
   complexo (`fldChar` begin/separate/end), como o Word grava; o leitor aceita também
-  `fldSimple`. Outros campos (DATE, TOC, REF) ficam com o último resultado como texto, com o
-  aviso CAMPO.
+  `fldSimple`. Os outros campos (DATE, TOC, REF...) ficavam com o último resultado como
+  texto, com o aviso CAMPO; desde a 0.1.3 são preservados (ver "Partes do pacote,
+  hiperlinks e campos").
 - Qt: cada variante é um `QTextDocument` próprio (`interface/cabecalhos.py`), no mesmo
   dispositivo de 1440 dpi do corpo, com a largura do corpo e sem paginação; cada um tem o seu
   desfazer. O campo é um objeto na linha (`ponte_qt/campos.py`): o manipulador do layout
@@ -310,15 +311,95 @@ Limites: 2000 objetos por documento, 4 MB de XML por objeto, 64 MB somados, 64 p
 6 níveis de relação por objeto. O objeto não é editado por dentro; para mudar o texto de
 uma caixa, só no Word.
 
+## Partes do pacote, hiperlinks e campos
+
+Implementados na 0.1.3.
+
+- Partes do pacote (`formato_docx/pacote.py`, `PacoteOriginal` no `Documento.pacote`, fora
+  da comparação): toda relação do documento que o texto não cita (r:id) e toda relação do
+  `_rels/.rels` é classificada. O que o escritor grava (estilos, numeração, tema simples,
+  core, app, settings) fica com ele; comentários, macros (vbaProject, personalizações),
+  assinatura digital e miniatura não voltam, com aviso (COMENTARIO, MACROS, ASSINATURA,
+  MINIATURA); o resto volta byte a byte com o fecho das relações (customXml com itemProps,
+  `docProps/custom.xml`, fontTable com as fontes embutidas, webSettings, glossário,
+  people.xml...). Cada parte guarda o nome de origem (renomeada só se cair num nome do
+  escritor), as relações mantêm o Id e têm o alvo recalculado, e cada parte tem Override.
+  Parte com relação quebrada, tipo proibido (documento principal, macros, ActiveX,
+  assinatura), XML inválido ou acima dos limites (1000 partes, 6 níveis, 256 MB) não vai,
+  com o aviso PARTE_PERDIDA. Parte só referenciada pelo conteúdo (imagem, cabeçalho, link,
+  gráfico) que o texto não cita não aparecia no Word e não volta.
+- `settings.xml`: o original volta inteiro (compat, rsids, docVars, proteção, mathPr, w14,
+  w15), com as relações dele (o modelo anexado, externo). O EditDoc só muda o que controla:
+  `w:evenAndOddHeaders`, inserido na ordem do `CT_Settings` (`pacote.ORDEM_SETTINGS`) ou
+  tirado; e, se as notas não voltam, as referências `footnotePr/footnote` e
+  `endnotePr/endnote` às separadoras. Sem mudança, sai byte a byte. Relação interna do
+  settings que não pode voltar: o elemento que a cita sai, com aviso.
+- Notas: `footnotes.xml` e `endnotes.xml` voltam só com as notas separadoras (separator,
+  continuationSeparator, continuationNotice), que o settings.xml cita. As notas de verdade
+  não voltam (aviso NOTA): as referências a elas já saíam do texto.
+- `core.xml` e `app.xml`: os originais voltam com título, autor, criação e modificação
+  reescritos (core) e o aplicativo "EditDoc" sem a AppVersion de origem (app). Assunto,
+  palavras-chave, categoria, revisão, empresa e gerente ficam.
+- Hiperlinks: `Run.link` (`Link`: url, âncora, dica, histórico, quadro, docLocation). O
+  leitor aplica o destino do `w:hyperlink` a cada run de dentro (texto, imagem, objeto,
+  campo, marca); o escritor junta os runs vizinhos de mesmo destino num `w:hyperlink`, com
+  `r:id` para uma relação `TargetMode="External"` do tipo hyperlink na parte (documento,
+  cabeçalho ou rodapé), alocada pelo `_Relacoes` (sem colisão com imagens e objetos; o
+  mesmo endereço usa uma relação só). No Qt, `setAnchor`/`setAnchorHref` e o `Link` em
+  JSON (`ponte_qt/links.py`, `PROP_LINK` = UserProperty + 21); o link sem JSON (HTML
+  colado) vem do `anchorHref`. A aparência vem do estilo de caractere "Hyperlink" do
+  arquivo; o link inserido recebe esse estilo (criado como latente se faltar).
+- Ctrl+clique (`PainelDocumento.abrir_link`): http, https e mailto abrem pelo
+  `abrir_url` (QDesktopServices; os testes trocam por um registro); qualquer outro
+  esquema (file:, caminho de rede, ftp...) só com o Sim de `confirmar_abrir_link`;
+  javascript:, vbscript: e data: nunca. O interno leva o cursor ao marcador.
+- Marcadores: `Marcador("inicio"|"fim", nome)` no fluxo (`Run.marca`). O que está entre
+  parágrafos entra no começo do parágrafo seguinte. Nome repetido sai com aviso (MARCADOR).
+  O escritor numera os ids (únicos no documento). No Qt é um caractere de objeto sem
+  largura e sem pintura (`ponte_qt/marcas.py`, `TIPO_MARCADOR`); as setas, o Backspace e o
+  Delete passam por ele, para que não seja apagado sem ser visto.
+- Campos: `MarcaCampo("inicio", Campo)` e `MarcaCampo("fim")` no fluxo, como o Word faz: o
+  resultado é o texto comum entre as duas, editável, e o campo pode começar num parágrafo e
+  terminar em outro (o sumário). `Campo.codigo` são os pedaços da instrução: texto
+  (`instrText`) ou outro `Campo` (o PAGE de um IF), com o último resultado dele.
+  `w:dirty`, `w:fldLock` e os filhos do begin (`w:ffData` do campo de formulário) voltam;
+  o campo sem separate (XE, TC) volta sem separate. PAGE e NUMPAGES simples continuam
+  `Run.campo` (o valor muda por página na tela). `par` liga o início ao fim do mesmo campo
+  (fora da comparação). No Qt cada marca é um caractere de objeto (`TIPO_MARCA_CAMPO`)
+  pintado como um colchete fino e cinza, que não sai na impressão nem no PDF
+  (`marcas.sem_pintar_marcas`).
+- Antes de gravar, `modelo/marcas.equilibrar` deixa as marcas em pares, história por
+  história: fim sem início e início sem fim saem (o resultado fica como texto, aviso de
+  gravação CAMPO_INCOMPLETO); o marcador sem fim ganha o fim logo depois dele; e o campo
+  de página que ficou simples vira `Run.campo` (a mesma regra do leitor). A conferência usa
+  a mesma função. O arquivo nunca sai com begin sem end.
+- Decisão sobre `w:dirty`: o EditDoc mantém o `w:dirty` que o arquivo tinha e não marca o
+  sumário como sujo quando o texto muda. Com `dirty`, o Word pergunta ao abrir se atualiza
+  os campos "que podem se referir a outros arquivos", a cada abertura, e o usuário aprende
+  a dizer não; a paginação do EditDoc também não é a do Word, então ele não sabe se os
+  números mudaram. Atualizar o sumário é o F9 no Word.
+- Validador: os campos são conferidos na parte inteira (begin, separate e end na ordem e
+  aninhados certo; o código no parágrafo do begin; instrText só no código); marcadores com
+  id e nome únicos e cada início com o seu fim; o `r:id` do `w:hyperlink` aponta para
+  relação externa do tipo hyperlink. Conferência: o destino de cada trecho de link, as
+  marcas (com o código) de cada parágrafo e o conteúdo das partes preservadas.
+- Limites: 20.000 campos, links e marcadores por documento; instrução de 4096
+  caracteres; endereço de 8192; 8 campos um dentro do outro. Acima disso, texto com aviso.
+
+Limite: o controle de conteúdo (`w:sdt`) continua achatado com aviso. O do sumário do Word
+envolve parágrafos inteiros (bloco), e as marcas no fluxo ficam dentro dos parágrafos: o
+escritor teria de subir o `w:sdt` para fora deles, o que não cai no mesmo mecanismo.
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
-0.1.2) ou descartado com aviso. Se algo que se perderia ao salvar estiver presente, a
-primeira gravação pede confirmação e oferece "Salvar cópia". O objeto preservado tem
-aviso sem perda e não pede confirmação. Comentários, revisões e notas de rodapé entram
-aqui até as versões que os implementam. Fora dos avisos, hoje, saem do arquivo: as
-propriedades personalizadas (`docProps/custom.xml`), os itens `customXml`, a tabela de
-fontes e as configurações da Web (o `settings.xml` é refeito).
+0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3) ou descartado com
+aviso. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
+confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
+não pede confirmação. Comentários, revisões, notas de rodapé de verdade e controles de
+conteúdo entram aqui até as versões que os implementam. Nenhuma parte do pacote sai sem
+aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
+NOTA, MINIATURA).
 
 ## Ribbon
 
@@ -347,8 +428,8 @@ modo contínuo, com paginação só na impressão.
 
 ## Fora da 0.1.0
 
-Revisão com controle de alterações, comentários, notas de rodapé, índices e
-sumários, mala direta, edição de equações, formas e caixas de texto (preservadas sem
+Revisão com controle de alterações, comentários, notas de rodapé, gerar e atualizar
+índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações, formas e caixas de texto (preservadas sem
 edição desde a 0.1.2), colunas, seções múltiplas editáveis, ortografia (prevista para a
 0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).
 

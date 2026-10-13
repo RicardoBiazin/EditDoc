@@ -35,6 +35,14 @@ Objetos opacos (0.1.2): caixa de texto, forma, grafico, SmartArt, OLE, imagem fl
 equacao voltam com o XML original e as partes que usam (formato_docx/opacos.py). A raiz
 de cada parte declara os namespaces do mc:Ignorable de origem, e o wp:docPr id das
 imagens do EditDoc nao colide com o dos objetos.
+
+Pacote, hiperlinks e campos (0.1.3): as partes que o EditDoc nao edita voltam pelo
+`pacote.GravadorPacote` (o settings.xml, o core.xml e o app.xml originais, com o que o
+EditDoc controla reescrito, e o resto byte a byte). Runs vizinhos com o mesmo `Link` saem
+num w:hyperlink (relacao externa nova na parte, sem colisao). As marcas de campo saem como
+begin (com o codigo e os campos de dentro dele), separate e end; as de marcador, como
+bookmarkStart e bookmarkEnd com id unico. `marcas.equilibrar` roda antes: o arquivo nunca
+sai com begin sem end.
 """
 
 from __future__ import annotations
@@ -50,6 +58,7 @@ from lxml import etree
 
 from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import opacos, ordem
+from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFIG, CT_CORE,
@@ -59,8 +68,10 @@ from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFI
                                         URI_IMAGEM, W, WP_NS, XML_NS, XSI, q)
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
-from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Celula, Documento, Imagem,
-                                      Paragrafo, Run, Tabela, bordas_padrao, objetos_de)
+from editdoc.modelo import marcas
+from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celula, Documento,
+                                      Imagem, Link, MarcaCampo, Marcador, Paragrafo, Run, Tabela,
+                                      bordas_padrao, objetos_de)
 from editdoc.modelo.estilos import catalogo_padrao
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
@@ -73,6 +84,8 @@ ESTILO_TABELA = fx_estilos.ESTILO_TABELA
 #: Tema do arquivo de origem (M6).
 CT_TEMA = "application/vnd.openxmlformats-officedocument.theme+xml"
 PARTE_TEMA = "word/theme/theme1.xml"
+#: Hiperlink externo (0.1.3): relacao com TargetMode="External".
+RT_HIPERLINK = RT + "hyperlink"
 #: Controles invalidos em XML 1.0, surrogates soltos, noncharacters e o caractere de
 #: objeto (U+FFFC), que so' tem sentido num run de imagem.
 _CONTROLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffc\ufffe\uffff\ud800-\udfff]")
@@ -249,10 +262,17 @@ _PARTES_FIXAS = {"[Content_Types].xml", "_rels/.rels", "word/document.xml",
 
 
 class _Ctx:
-    def __init__(self, coletor: Coletor, estilos=None) -> None:
+    def __init__(self, coletor: Coletor, estilos=None, pacote=None) -> None:
         self.coletor = coletor
         self.listas = _Listas()
         usados = set(_PARTES_FIXAS)
+        if estilos is not None and estilos.tema_original:
+            usados.add(PARTE_TEMA)
+        # Partes preservadas do pacote (0.1.3): tomam o nome primeiro, para manter o de origem.
+        self.pacote = fx_pacote.GravadorPacote(pacote, usados, _rels_xml, ordem.caminho_dos_rels)
+        #: marcadores (0.1.3): id sequencial no documento; nome -> id do inicio aberto
+        self.proximo_marcador = 0
+        self.ids_marcadores: dict[str, int] = {}
         self.opacos = opacos.GravadorOpacos(usados, _rels_xml, ordem.caminho_dos_rels)
         self.midias = _Midias(usados, self.opacos)
         #: relacoes da parte que esta' sendo escrita (troca no cabecalho e no rodape)
@@ -359,25 +379,130 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
         # Quebra de pagina: o paragrafo comeca no topo da proxima pagina.
         r_quebra = etree.SubElement(pe, q("r"))
         etree.SubElement(r_quebra, q("br")).set(q("type"), "page")
-    for run in p.runs:
+    # Hiperlink (0.1.3): runs vizinhos com o mesmo destino ficam num w:hyperlink so'.
+    destino = pe
+    link_atual = None
+    for i, run in enumerate(p.runs):
+        if run.link != link_atual:
+            link_atual = run.link
+            destino = pe if run.link is None else _hiperlink(pe, run.link, ctx)
+        if run.marca is not None:
+            proximo = p.runs[i + 1] if i + 1 < len(p.runs) else None
+            _marca(destino, run, proximo, ctx)
+            continue
         if run.imagem is not None:
-            r = etree.SubElement(pe, q("r"))
+            r = etree.SubElement(destino, q("r"))
             _desenho(r, run.imagem, ctx)
             continue
         if run.objeto is not None:
             # Objeto opaco (0.1.2): o XML original, com os rIds desta parte.
-            pe.append(ctx.opacos.escrever(run.objeto, ctx.relacoes.adicionar))
+            destino.append(ctx.opacos.escrever(run.objeto, ctx.relacoes.adicionar))
             continue
         if run.campo is not None:
-            _campo(pe, run, coletor, ctx.estilo_de_caractere(run.estilo))
+            _campo(destino, run, coletor, ctx.estilo_de_caractere(run.estilo))
             continue
         if run.texto == "":
             continue
-        r = etree.SubElement(pe, q("r"))
+        r = etree.SubElement(destino, q("r"))
         rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo))
         if rpr is not None:
             r.append(rpr)
         _conteudo_run(r, run.texto, coletor)
+
+
+def _hiperlink(pe, link: Link, ctx: "_Ctx"):
+    """w:hyperlink: r:id para o endereco externo (relacao TargetMode=External), w:anchor
+    para o marcador, e os atributos que o arquivo trazia (dica, historico, quadro)."""
+    h = etree.SubElement(pe, q("hyperlink"))
+    if link.url is not None:
+        url, _n = texto_gravavel(link.url)
+        h.set("{%s}id" % R_NS, ctx.relacoes.adicionar(RT_HIPERLINK, url, True))
+    for atributo, valor in (("anchor", link.ancora), ("tooltip", link.dica),
+                            ("tgtFrame", link.quadro), ("docLocation", link.local)):
+        if valor:
+            h.set(q(atributo), texto_gravavel(valor)[0])
+    if link.historico is not None:
+        h.set(q("history"), "1" if link.historico else "0")
+    return h
+
+
+def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
+    """Marca de campo (begin com o codigo, ou end) ou de marcador (bookmarkStart/End)."""
+    m = run.marca
+    if isinstance(m, Marcador):
+        if m.tipo == "inicio":
+            ident = ctx.proximo_marcador
+            ctx.proximo_marcador += 1
+            ctx.ids_marcadores[m.nome] = ident
+            el = etree.SubElement(destino, q("bookmarkStart"))
+            el.set(q("id"), str(ident))
+            el.set(q("name"), texto_gravavel(m.nome)[0])
+        else:
+            ident = ctx.ids_marcadores.pop(m.nome, None)
+            if ident is not None:
+                etree.SubElement(destino, q("bookmarkEnd")).set(q("id"), str(ident))
+        return
+    rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo))
+    if m.tipo == "fim":
+        _run_de_campo(destino, rpr, "end")
+        return
+    campo = m.campo
+    # Sem resultado no arquivo de origem (XE, TC...) e nada digitado entre as marcas: sem
+    # o separate, como veio.
+    fecha_logo = (proximo is not None and isinstance(proximo.marca, MarcaCampo)
+                  and proximo.marca.tipo == "fim")
+    _codigo_de_campo(destino, campo, rpr, sem_separador=campo.sem_resultado and fecha_logo)
+
+
+def _run_de_campo(destino, rpr, tipo: str, campo: Campo | None = None):
+    r = etree.SubElement(destino, q("r"))
+    if rpr is not None:
+        r.append(copy.deepcopy(rpr))
+    if tipo == "begin" and campo is not None and campo.extra:
+        fc = etree.fromstring(campo.extra, opacos.parser_seguro())
+        for atributo in ("dirty", "fldLock"):
+            fc.attrib.pop(q(atributo), None)
+        r.append(fc)
+    else:
+        fc = etree.SubElement(r, q("fldChar"))
+    fc.set(q("fldCharType"), tipo)
+    if tipo == "begin" and campo is not None:
+        if campo.sujo:
+            fc.set(q("dirty"), "true")
+        if campo.travado:
+            fc.set(q("fldLock"), "true")
+    return r
+
+
+def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool) -> None:
+    """begin, a instrucao (com os campos de dentro dela) e o separate."""
+    _run_de_campo(destino, rpr, "begin", campo)
+    for pedaco in campo.codigo:
+        if isinstance(pedaco, Campo):
+            # Campo dentro da instrucao (o PAGE de um IF): inteiro, com o ultimo resultado.
+            _codigo_de_campo(destino, pedaco, rpr, sem_separador=pedaco.sem_resultado)
+            if pedaco.resultado:
+                r = etree.SubElement(destino, q("r"))
+                if rpr is not None:
+                    r.append(copy.deepcopy(rpr))
+                t = etree.SubElement(r, q("t"))
+                texto, _n = texto_gravavel(pedaco.resultado)
+                if texto != texto.strip():
+                    t.set("{%s}space" % XML_NS, "preserve")
+                t.text = texto
+            _run_de_campo(destino, rpr, "end")
+            continue
+        texto, _n = texto_gravavel(str(pedaco))
+        if not texto:
+            continue
+        r = etree.SubElement(destino, q("r"))
+        if rpr is not None:
+            r.append(copy.deepcopy(rpr))
+        instr = etree.SubElement(r, q("instrText"))
+        instr.set("{%s}space" % XML_NS, "preserve")
+        instr.text = texto
+    if not sem_separador:
+        _run_de_campo(destino, rpr, "separate")
 
 
 def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None) -> None:
@@ -566,6 +691,7 @@ def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
             nome = f"{prefixo}{n}.xml"
             ctx.relacoes = _Relacoes(1)
             ctx.listas.encerrar()
+            ctx.ids_marcadores = {}
             raiz = _raiz_de_parte(raiz_nome, ctx)
             _blocos(raiz, modelo[tipo], ctx, em_celula=True)  # termina em paragrafo
             faixas.partes.append((f"word/{nome}", _xml(raiz)))
@@ -741,27 +867,46 @@ def _zip(partes: list[tuple[str, bytes]]) -> bytes:
 def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     """Devolve (bytes do .docx, avisos da gravacao). Levanta ErroDocx se o validador reprovar."""
     coletor = Coletor()
-    ctx = _Ctx(coletor, doc.estilos)
+    # Campos e marcadores (0.1.3): as marcas em pares. Campo que perdeu o inicio ou o fim
+    # na edicao vira texto comum, com aviso; o arquivo nunca sai com begin sem end.
+    doc, desfeitos = marcas.equilibrar(doc)
+    if desfeitos["campos"]:
+        coletor.somar("CAMPO_INCOMPLETO", desfeitos["campos"])
+    if desfeitos["marcadores"]:
+        coletor.somar("MARCADOR", desfeitos["marcadores"])
+    ctx = _Ctx(coletor, doc.estilos, doc.pacote)
     ctx.opacos.preparar(objetos_de(doc), _NSMAP_PARTE)
     agora = _agora_iso()
     criado = doc.criado_em or agora
     modificado = doc.modificado_em or agora
     documento_xml, faixas = _document_xml(doc, ctx)
     tema = ctx.estilos.tema_original
-    extras_tipos = list(faixas.tipos) + list(ctx.opacos.tipos)
+    gravador = ctx.pacote
+    extras_tipos = list(faixas.tipos) + list(ctx.opacos.tipos) + gravador.tipos()
     partes_tema: list[tuple[str, bytes]] = []
     if tema:
         # O tema volta para as fontes de tema (asciiTheme) dos estilos continuarem as mesmas.
         ctx.relacoes.adicionar(RT + "theme", "theme/theme1.xml")
         partes_tema.append((PARTE_TEMA, tema))
         extras_tipos.append(("/" + PARTE_TEMA, CT_TEMA))
+    # Partes preservadas (0.1.3): fontTable, webSettings, customXml, notas separadoras...
+    for tipo, alvo, externo in gravador.relacoes_do_documento():
+        ctx.relacoes.adicionar(tipo, alvo, externo)
+    rels_pacote = [
+        ("rId1", RT + "officeDocument", "word/document.xml"),
+        ("rId2", RT_CORE, "docProps/core.xml"),
+        ("rId3", RT + "extended-properties", "docProps/app.xml"),
+    ]
+    for n, (tipo, alvo, externo) in enumerate(gravador.relacoes_do_pacote(), start=4):
+        rels_pacote.append((f"rId{n}", tipo, alvo, "External") if externo else (f"rId{n}", tipo, alvo))
+    configuracoes = gravador.configuracoes(doc.pagina.pares_impares) or \
+        _settings_xml(doc.pagina.pares_impares)
+    rels_configuracoes = gravador.relacoes_das_configuracoes()
+    partes_configuracoes = [("word/_rels/settings.xml.rels", _rels_xml(rels_configuracoes))] \
+        if rels_configuracoes else []
     partes = [
         ("[Content_Types].xml", _content_types_xml(ctx.midias.extensoes, extras_tipos)),
-        ("_rels/.rels", _rels_xml([
-            ("rId1", RT + "officeDocument", "word/document.xml"),
-            ("rId2", RT_CORE, "docProps/core.xml"),
-            ("rId3", RT + "extended-properties", "docProps/app.xml"),
-        ])),
+        ("_rels/.rels", _rels_xml(rels_pacote)),
         ("word/document.xml", documento_xml),
         ("word/_rels/document.xml.rels", _rels_xml([
             ("rId1", RT + "styles", "styles.xml"),
@@ -773,11 +918,14 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         ("word/styles.xml", fx_estilos.escrever_estilos(ctx.estilos)),
         *partes_tema,
         ("word/numbering.xml", _numbering_xml(ctx.listas.numeracoes)),
-        ("word/settings.xml", _settings_xml(doc.pagina.pares_impares)),
-        ("docProps/core.xml", _core_xml(doc, criado, modificado)),
-        ("docProps/app.xml", _app_xml()),
+        ("word/settings.xml", configuracoes),
+        *partes_configuracoes,
+        ("docProps/core.xml", gravador.propriedades(doc.titulo, doc.autor, criado, modificado)
+         or _core_xml(doc, criado, modificado)),
+        ("docProps/app.xml", gravador.aplicativo() or _app_xml()),
         *ctx.midias.partes,
         *ctx.opacos.partes,
+        *gravador.partes(),
     ]
     mapa = dict(partes)
     problemas = ordem.validar(mapa)

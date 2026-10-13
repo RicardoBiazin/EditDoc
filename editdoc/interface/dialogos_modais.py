@@ -359,3 +359,87 @@ def mostrar_recuperacao(dialogo) -> None:
     dialogo.show()
     dialogo.raise_()
     dialogo.activateWindow()
+
+
+# -- hiperlinks (0.1.3) ----------------------------------------------------------------
+
+def confirmar_abrir_link(pai: QWidget | None, url: str) -> bool:
+    """Endereco que nao e' de pagina da Web nem de e-mail (arquivo, rede, outro programa):
+    so' abre com o Sim do usuario. O padrao e' Nao."""
+    curto = url if len(url) <= 300 else url[:300] + "…"
+    caixa = _caixa(pai, "Abrir link",
+                   "Este link não é de uma página da Web nem de e-mail:\n\n"
+                   f"{curto}\n\nLinks assim podem abrir arquivos ou programas do computador. "
+                   "Abrir mesmo assim?", QMessageBox.Icon.Warning)
+    sim = caixa.addButton("Abrir", QMessageBox.ButtonRole.YesRole)
+    nao = caixa.addButton("Não abrir", QMessageBox.ButtonRole.NoRole)
+    caixa.setDefaultButton(nao)
+    caixa.exec()
+    return caixa.clickedButton() is sim
+
+
+def pedir_link(pai: QWidget | None, texto: str, link=None, marcadores=(),
+               editar: bool = False):
+    """Inserir (ou editar) link: (texto exibido, Link) ou None se cancelar.
+
+    O destino e' um endereco (pagina da Web, e-mail ou arquivo) ou um marcador do documento.
+    """
+    from PySide6.QtWidgets import QComboBox
+
+    from editdoc.modelo.documento import Link
+    from editdoc.ponte_qt.links import endereco_normalizado
+
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(f"{'Editar' if editar else 'Inserir'} link - {APP}")
+    grade = QFormLayout(dialogo)
+    exibido = QLineEdit(texto.replace(" ", " ").replace(" ", " "))
+    exibido.setMaxLength(4000)
+    exibido.setAccessibleName("Texto para exibir")
+    grade.addRow("&Texto para exibir:", exibido)
+    externo = QRadioButton("&Endereço (página da Web, e-mail ou arquivo)")
+    endereco = QLineEdit(link.url if link is not None and link.url else "")
+    endereco.setPlaceholderText("https://... ou nome@exemplo.com")
+    endereco.setMaxLength(2000)
+    endereco.setAccessibleName("Endereço do link")
+    interno = QRadioButton("&Lugar neste documento (marcador)")
+    lista = QComboBox()
+    lista.addItems(list(marcadores))
+    lista.setAccessibleName("Marcador do documento")
+    if link is not None and link.interno() and link.ancora in marcadores:
+        lista.setCurrentIndex(list(marcadores).index(link.ancora))
+    interno.setEnabled(bool(marcadores))
+    lista.setEnabled(bool(marcadores))
+    (interno if link is not None and link.interno() and marcadores else externo).setChecked(True)
+    endereco.textEdited.connect(lambda _t: externo.setChecked(True))
+    lista.activated.connect(lambda _i: interno.setChecked(True))
+    grade.addRow(externo)
+    grade.addRow("Endereço:", endereco)
+    grade.addRow(interno)
+    grade.addRow("Marcador:", lista)
+    escolha: list = []
+
+    def aceitar() -> None:
+        if interno.isChecked() and lista.currentText():
+            novo = Link(ancora=lista.currentText(),
+                        historico=link.historico if link is not None else True)
+        else:
+            url = endereco_normalizado(endereco.text())
+            if url is None:
+                avisar(dialogo, "Link", "Digite o endereço do link ou escolha um marcador.")
+                endereco.setFocus()
+                return
+            novo = Link(url=url, dica=link.dica if link is not None else None,
+                        historico=link.historico if link is not None else True)
+        mostrado = exibido.text() or (novo.url or novo.ancora or "")
+        escolha[:] = [(mostrado, novo)]
+        dialogo.accept()
+
+    botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+    botoes.accepted.connect(aceitar)
+    botoes.rejected.connect(dialogo.reject)
+    grade.addRow(botoes)
+    exibido.setFocus()
+    if dialogo.exec() != QDialog.DialogCode.Accepted or not escolha:
+        return None
+    return escolha[0]

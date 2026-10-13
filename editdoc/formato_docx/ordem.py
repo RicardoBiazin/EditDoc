@@ -18,6 +18,11 @@ documento inteiro continua valendo la' dentro: wp:docPr com id unico, r:id com r
 na propria parte (inclusive o o:relid do VML), e as partes do grafico e do SmartArt
 tambem tem os r:id conferidos.
 
+Campos, marcadores e hiperlinks (0.1.3): begin, separate e end equilibrados na parte
+inteira (o campo pode atravessar paragrafos), o codigo no paragrafo do begin; marcadores
+com id e nome unicos e em pares; o r:id do w:hyperlink aponta para relacao externa do tipo
+hyperlink.
+
 As listas de ordem sao as do esquema transitional, conferidas contra a ordem de
 sucessores do python-docx 1.2.0 (spikes/docx, fato 10).
 """
@@ -200,6 +205,7 @@ def validar_estrutura(raiz) -> list[str]:
         if not blocos or blocos[-1].tag != q("p"):
             problemas.append(f"{_nome(raiz)} nao termina em paragrafo")
     problemas += _validar_campos(raiz, opacos)
+    problemas += validar_marcadores(raiz, opacos)
     corpo = raiz.find(q("body"))
     if corpo is not None:
         blocos = [f for f in corpo if isinstance(f.tag, str) and _nome(f) != "sectPr"]
@@ -230,31 +236,84 @@ _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 
 
-def _validar_campos(raiz, opacos: set | None = None) -> list[str]:
-    """Campo complexo: begin, separate e end equilibrados dentro de cada paragrafo.
+def _paragrafo_de(el):
+    pai = el.getparent()
+    while pai is not None and pai.tag != q("p"):
+        pai = pai.getparent()
+    return pai
 
-    O EditDoc so' grava campo de um paragrafo (PAGE, NUMPAGES). Um end sem begin, ou
-    um begin sem end, faz o Word engolir o texto seguinte como instrucao. Os campos de
-    dentro de uma caixa de texto preservada sao do arquivo de origem e ficam de fora.
+
+def _validar_campos(raiz, opacos: set | None = None) -> list[str]:
+    """Campo complexo: begin, separate e end na ordem e aninhados certo na parte inteira.
+
+    Desde a 0.1.3 o campo pode comecar num paragrafo e terminar em outro (o sumario), mas o
+    codigo (begin, instrText e separate) fica no paragrafo do begin. Um end sem begin, ou um
+    begin sem end, faz o Word engolir o texto seguinte como instrucao. Os campos de dentro de
+    uma caixa de texto preservada sao do arquivo de origem e ficam de fora.
     """
     opacos = dentro_de_opacos(raiz) if opacos is None else opacos
     problemas: list[str] = []
-    for p in raiz.iter(q("p")):
-        if p in opacos:
+    pilha: list[list] = []  # [fase, paragrafo do begin]
+    for el in raiz.iter(q("fldChar"), q("instrText")):
+        if el in opacos:
             continue
-        abertos = 0
-        for fc in p.iter(q("fldChar")):
-            if fc in opacos:
-                continue
-            tipo = fc.get(q("fldCharType"))
-            if tipo == "begin":
-                abertos += 1
-            elif tipo == "end":
-                abertos -= 1
-                if abertos < 0:
-                    break
-        if abertos != 0:
-            problemas.append("campo (fldChar) sem begin ou sem end no mesmo paragrafo")
+        p = _paragrafo_de(el)
+        if el.tag == q("instrText"):
+            if not pilha or pilha[-1][0] != "codigo":
+                problemas.append("instrText fora do codigo de um campo (fldChar)")
+            elif pilha[-1][1] is not p:
+                problemas.append("instrucao de campo (fldChar) em outro paragrafo")
+            continue
+        tipo = el.get(q("fldCharType"))
+        if tipo == "begin":
+            if pilha and pilha[-1][0] == "codigo" and pilha[-1][1] is not p:
+                problemas.append("campo (fldChar) aninhado no codigo de outro paragrafo")
+            pilha.append(["codigo", p])
+        elif tipo == "separate":
+            if not pilha or pilha[-1][0] != "codigo":
+                problemas.append("campo (fldChar) com separate fora de lugar")
+            elif pilha[-1][1] is not p:
+                problemas.append("campo (fldChar) com separate em outro paragrafo")
+            else:
+                pilha[-1][0] = "resultado"
+        elif tipo == "end":
+            if not pilha:
+                problemas.append("campo (fldChar) com end sem begin")
+            else:
+                pilha.pop()
+        else:
+            problemas.append(f"fldChar com tipo invalido: {tipo!r}")
+    if pilha:
+        problemas.append(f"campo (fldChar) sem end: {len(pilha)} aberto(s)")
+    return problemas
+
+
+def validar_marcadores(raiz, opacos: set | None = None) -> list[str]:
+    """Marcadores (0.1.3): id unico, nome unico e nao vazio, cada inicio com o seu fim."""
+    opacos = dentro_de_opacos(raiz) if opacos is None else opacos
+    problemas: list[str] = []
+    abertos: dict[str, str] = {}
+    ids: set[str] = set()
+    nomes: set[str] = set()
+    for el in raiz.iter(q("bookmarkStart"), q("bookmarkEnd")):
+        if el in opacos:
+            continue
+        ident = el.get(q("id"))
+        if el.tag == q("bookmarkStart"):
+            nome = el.get(q("name"))
+            if ident is None or ident in ids:
+                problemas.append(f"bookmarkStart com id repetido ou ausente: {ident!r}")
+            if not nome or nome in nomes:
+                problemas.append(f"bookmarkStart com nome repetido ou vazio: {nome!r}")
+            ids.add(ident)
+            nomes.add(nome)
+            abertos[ident] = nome
+        elif ident not in abertos:
+            problemas.append(f"bookmarkEnd sem bookmarkStart: {ident!r}")
+        else:
+            del abertos[ident]
+    if abertos:
+        problemas.append(f"bookmarkStart sem bookmarkEnd: {sorted(abertos.values())[:3]}")
     return problemas
 
 
@@ -279,6 +338,8 @@ def _relacoes(dados: bytes, base: str) -> dict[str, tuple[str, str, bool]]:
 
 
 _RELID_O = "{%s}relid" % O_NS
+_HIPERLINK = q("hyperlink")
+_RID = "{%s}id" % R_NS
 _PARSER = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
 
 
@@ -348,6 +409,11 @@ def validar_pacote(partes: dict[str, bytes]) -> list[str]:
                     if (chave.startswith("{%s}" % R_NS) or chave == _RELID_O) \
                             and valor not in relacoes:
                         problemas.append(f"{atual}: r:id '{valor}' sem relacao")
+                    elif el.tag == _HIPERLINK and chave == _RID and (
+                            not relacoes[valor][2] or not relacoes[valor][0].endswith("/hyperlink")):
+                        # 0.1.3: o endereco do link e' relacao externa do tipo hyperlink.
+                        problemas.append(f"{atual}: hiperlink '{valor}' nao aponta para "
+                                         "relacao externa do tipo hyperlink")
 
     for nome in partes:
         if nome == "[Content_Types].xml" or nome.endswith(".rels"):

@@ -8,8 +8,9 @@ Formato do numero: o da secao (w:pgNumType w:fmt) vale para PAGE; uma opcao
 `\\* roman`, `\\* ROMAN`, `\\* alphabetic`, `\\* ALPHABETIC` ou `\\* Arabic` na
 instrucao vence. NUMPAGES conta as paginas, sem o numero inicial da secao.
 
-Outros campos (DATE, TOC, REF...) nao sao modelados: o leitor guarda o ultimo
-resultado como texto e avisa (codigo CAMPO).
+Outros campos (DATE, TOC, REF...) nao sao calculados: desde a 0.1.3 eles voltam ao arquivo
+como campos (marcas de inicio e fim no fluxo, `modelo/documento.py`), com o ultimo
+resultado como texto editavel, e o Word os atualiza.
 """
 
 from __future__ import annotations

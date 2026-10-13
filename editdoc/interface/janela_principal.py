@@ -40,6 +40,7 @@ from editdoc.armazenamento import gravacao
 from editdoc.edicao import busca, tabelas
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
+from editdoc.edicao import links as ed_links
 from editdoc.edicao.busca import Opcoes
 from editdoc.formato_docx import conferencia
 from editdoc.formato_docx.avisos import Aviso
@@ -50,7 +51,7 @@ from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
-from editdoc.interface.comandos import TABELA, Comandos
+from editdoc.interface.comandos import LINK, TABELA, Comandos
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import BotaoAcao, Faixa
 from editdoc.interface.guarda_recuperacao import GuardaRecuperacao
@@ -64,7 +65,7 @@ from editdoc.modelo.estilos import catalogo_de_documento_novo
 from editdoc.modelo.estatisticas import contar
 from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
 from editdoc.modelo.texto_plano import texto_do_documento
-from editdoc.ponte_qt import de_qt, para_qt
+from editdoc.ponte_qt import de_qt, links, marcas, para_qt
 from editdoc.ponte_qt import estilos as pq_estilos
 
 log = log_interno.obter(__name__)
@@ -100,6 +101,9 @@ class JanelaPrincipal(QMainWindow):
         self._titulo = ""
         self._autor = ""
         self._criado_em: str | None = None
+        #: Partes do pacote de origem que voltam ao arquivo (0.1.3): settings.xml original,
+        #: custom.xml, customXml, fontTable, webSettings... None no documento novo.
+        self._pacote = None
         self._ja_confirmou_fechamento = False
         #: Exportar PDF: lembra a escolha "abrir depois de exportar" enquanto a janela vive.
         #: Comeca pela preferencia (M8).
@@ -148,6 +152,9 @@ class JanelaPrincipal(QMainWindow):
                                      "tabela": self._inserir_tabela,
                                      "imagem": self._inserir_imagem,
                                      "tamanho_imagem": self._tamanho_imagem,
+                                     "link": self._inserir_link,
+                                     "remover_link": self._remover_link,
+                                     "abrir_link": self._abrir_link,
                                  }, ao_exibir={
                                      "criar_estilo": self.criar_estilo,
                                      "modificar_estilo": self.modificar_estilo,
@@ -197,7 +204,7 @@ class JanelaPrincipal(QMainWindow):
                                                ao_atualizar=self._sintonizar)
         self.painel.registrar_atalhos(self.comandos.todas())
         self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
-            *TABELA, "tamanho_imagem")])
+            *TABELA, "tamanho_imagem", "inserir_link", *LINK)])
         self.painel.mensagem.connect(lambda texto: self.statusBar().showMessage(texto, 6000))
         # Sem isto o atalho so' funciona quando o foco esta no painel.
         for acao in self.comandos.todas():
@@ -487,6 +494,46 @@ class JanelaPrincipal(QMainWindow):
                                      ed_imagens.px_de_cm(escolha[1]))
         self.painel.setFocus()
 
+    # -- hiperlinks (0.1.3) -------------------------------------------------
+
+    def _inserir_link(self) -> None:
+        """Ctrl+K: insere link no cursor, poe link na selecao ou edita o link do cursor."""
+        doc = self.painel.document()
+        cursor = self.painel.textCursor()
+        existente = links.link_no_cursor(doc, cursor)
+        link = None
+        if existente is not None and (not cursor.hasSelection() or (
+                existente[0] <= cursor.selectionStart() and cursor.selectionEnd() <= existente[1])):
+            trecho = (existente[0], existente[1])
+            link = existente[2]
+        elif cursor.hasSelection():
+            trecho = (cursor.selectionStart(), cursor.selectionEnd())
+        else:
+            trecho = None
+        original = ed_links.texto_do_trecho(doc, *trecho) if trecho is not None else ""
+        mostrado = original.replace("\u2029", " ").replace("\u2028", " ")
+        escolha = dialogos_modais.pedir_link(self, mostrado, link,
+                                             marcas.nomes_de_marcadores(self.painel.documento_corpo()),
+                                             editar=link is not None)
+        if escolha is not None:
+            texto, novo = escolha
+            if texto == mostrado:
+                texto = original  # o texto nao mudou: o link vai por cima, com a formatacao
+            if texto:
+                ed_links.aplicar_link(self.painel, trecho, texto, novo)
+        self.painel.setFocus()
+
+    def _remover_link(self) -> None:
+        trecho = links.link_no_cursor(self.painel.document(), self.painel.textCursor())
+        if trecho is not None:
+            ed_links.remover_link(self.painel, (trecho[0], trecho[1]))
+        self.painel.setFocus()
+
+    def _abrir_link(self) -> None:
+        trecho = links.link_no_cursor(self.painel.document(), self.painel.textCursor())
+        if trecho is not None:
+            self.painel.abrir_link(trecho[0])
+
     # -- estatisticas e busca ----------------------------------------------
 
     def atualizar_estatisticas(self) -> None:
@@ -554,6 +601,7 @@ class JanelaPrincipal(QMainWindow):
         self.painel.carregar_faixas(modelo)
         self.painel.definir_configuracao_pagina(modelo.pagina)
         self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
+        self._pacote = modelo.pacote
         self.caminho = caminho
         self._assinatura = assinatura(caminho)
         self._avisos = list(avisos)
@@ -585,6 +633,7 @@ class JanelaPrincipal(QMainWindow):
         modelo.titulo = self._titulo
         modelo.autor = self._autor
         modelo.criado_em = self._criado_em
+        modelo.pacote = self._pacote
         return modelo
 
     def _mudou_no_disco(self) -> bool:

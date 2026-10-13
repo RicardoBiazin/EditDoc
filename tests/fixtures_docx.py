@@ -747,3 +747,256 @@ def docx_com_objetos() -> bytes:
         + '<w:r><w:t xml:space="preserve"> fim.</w:t></w:r></w:p>')
     return docx_com_corpo_de_objetos(corpo, RELACOES_OBJETOS, PARTES_OBJETOS, TIPOS_OBJETOS,
                                      PADROES_OBJETOS, cabecalho_xml="<w:p>" + RETANGULO_VML + "</w:p>")
+
+
+# -- partes do pacote, hiperlinks e campos (0.1.3) -----------------------------------------
+
+_RT_DOC = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+RT_CUSTOM_XML = _RT_DOC + "customXml"
+RT_CUSTOM_XML_PROPS = _RT_DOC + "customXmlProps"
+RT_FONTES = _RT_DOC + "fontTable"
+RT_FONTE = _RT_DOC + "font"
+RT_WEB = _RT_DOC + "webSettings"
+RT_NOTAS = _RT_DOC + "footnotes"
+RT_NOTAS_FIM = _RT_DOC + "endnotes"
+RT_PROPRIEDADES = _RT_DOC + "custom-properties"
+RT_MINIATURA = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
+RT_MODELO = _RT_DOC + "attachedTemplate"
+CT_CUSTOM_XML_PROPS = "application/vnd.openxmlformats-officedocument.customXmlProperties+xml"
+CT_FONTES = "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"
+CT_FONTE = "application/vnd.openxmlformats-officedocument.obfuscatedFont"
+CT_WEB = "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml"
+CT_NOTAS = "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
+CT_NOTAS_FIM = "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"
+CT_PROPRIEDADES = "application/vnd.openxmlformats-officedocument.custom-properties+xml"
+
+_XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+_RELS = '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+#: settings.xml como o Word grava: zoom, modelo anexado (relacao externa), rsids, compat com
+#: compatSetting, docVars, notas (que citam as separadoras), mathPr e extensoes w14/w15.
+SETTINGS_DO_WORD = (
+    _XML + f'<w:settings xmlns:w="{_NS_W}" xmlns:r="{_NS_R}" '
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+    'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+    'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" mc:Ignorable="w14 w15">'
+    '<w:zoom w:percent="120"/><w:proofState w:spelling="clean" w:grammar="clean"/>'
+    '<w:attachedTemplate r:id="rId1"/>'
+    '<w:defaultTabStop w:val="709"/><w:hyphenationZone w:val="425"/>'
+    '<w:characterSpacingControl w:val="doNotCompress"/>'
+    '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>'
+    '<w:endnotePr><w:endnote w:id="-1"/><w:endnote w:id="0"/></w:endnotePr>'
+    '<w:compat><w:useFELayout/><w:compatSetting w:name="compatibilityMode" '
+    'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
+    '<w:docVars><w:docVar w:name="Protocolo" w:val="2026/0042"/></w:docVars>'
+    '<w:rsids><w:rsidRoot w:val="00A1B2C3"/><w:rsid w:val="00A1B2C3"/><w:rsid w:val="00D4E5F6"/>'
+    '</w:rsids><m:mathPr><m:mathFont m:val="Cambria Math"/></m:mathPr>'
+    '<w:themeFontLang w:val="pt-BR"/><w:decimalSymbol w:val=","/><w:listSeparator w:val=";"/>'
+    '<w14:docId w14:val="1A2B3C4D"/><w15:docId w15:val="{00000000-0000-0000-0000-000000000042}"/>'
+    '</w:settings>')
+SETTINGS_RELS = (_XML + _RELS + f'<Relationship Id="rId1" Type="{RT_MODELO}" '
+                 'Target="file:///C:/Modelos/Oficio.dotx" TargetMode="External"/></Relationships>')
+FONTES_DO_WORD = (_XML + f'<w:fonts xmlns:w="{_NS_W}" xmlns:r="{_NS_R}">'
+                  '<w:font w:name="Calibri"><w:panose1 w:val="020F0502020204030204"/>'
+                  '<w:charset w:val="00"/><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font>'
+                  '<w:font w:name="Fonte Embutida"><w:charset w:val="00"/>'
+                  '<w:embedRegular r:id="rId1" w:fontKey="{11111111-2222-3333-4444-555555555555}"/>'
+                  '</w:font></w:fonts>')
+FONTES_RELS = (_XML + _RELS + f'<Relationship Id="rId1" Type="{RT_FONTE}" '
+               'Target="fonts/font1.odttf"/></Relationships>')
+FONTE_EMBUTIDA = b"\x00\x01\x00\x00 fonte ofuscada de exemplo \xfe\xff" * 4
+WEB_DO_WORD = (_XML + f'<w:webSettings xmlns:w="{_NS_W}"><w:optimizeForBrowser/>'
+               '<w:allowPNG/></w:webSettings>')
+NOTAS_SEPARADORAS = (_XML + f'<w:footnotes xmlns:w="{_NS_W}" xmlns:r="{_NS_R}">'
+                     '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p>'
+                     '</w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r>'
+                     '<w:continuationSeparator/></w:r></w:p></w:footnote></w:footnotes>')
+NOTAS_FIM_COM_REAL = (_XML + f'<w:endnotes xmlns:w="{_NS_W}" xmlns:r="{_NS_R}">'
+                      '<w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p>'
+                      '</w:endnote><w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r>'
+                      '<w:continuationSeparator/></w:r></w:p></w:endnote>'
+                      '<w:endnote w:id="1"><w:p><w:r><w:t>Nota de fim de verdade.</w:t></w:r></w:p>'
+                      '</w:endnote></w:endnotes>')
+ITEM_CUSTOM_XML = (_XML + '<p:properties xmlns:p="http://schemas.microsoft.com/office/2006/metadata/'
+                   'properties"><documentManagement><Setor>Faturamento</Setor></documentManagement>'
+                   '</p:properties>')
+ITEM_PROPS = (_XML + '<ds:datastoreItem ds:itemID="{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}" '
+              'xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml">'
+              '<ds:schemaRefs><ds:schemaRef ds:uri="http://schemas.microsoft.com/office/2006/'
+              'metadata/properties"/></ds:schemaRefs></ds:datastoreItem>')
+ITEM_RELS = (_XML + _RELS + f'<Relationship Id="rId1" Type="{RT_CUSTOM_XML_PROPS}" '
+             'Target="itemProps1.xml"/></Relationships>')
+PROPRIEDADES = (_XML + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/'
+                'custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/'
+                'docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" '
+                'name="Cliente"><vt:lpwstr>Hospital Exemplo</vt:lpwstr></property></Properties>')
+CORE_DO_WORD = (_XML + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/'
+                'metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" '
+                'xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+                'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Relatório</dc:title>'
+                '<dc:subject>Assunto do relatório</dc:subject><dc:creator>Fulana</dc:creator>'
+                '<cp:keywords>faturamento; 2026</cp:keywords><cp:lastModifiedBy>Beltrano</cp:lastModifiedBy>'
+                '<cp:revision>7</cp:revision><dcterms:created xsi:type="dcterms:W3CDTF">'
+                '2026-01-02T03:04:00Z</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">'
+                '2026-02-03T04:05:00Z</dcterms:modified><cp:category>Interno</cp:category>'
+                '</cp:coreProperties>')
+APP_DO_WORD = (_XML + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/'
+               'extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/'
+               'docPropsVTypes"><Template>Normal.dotm</Template><TotalTime>42</TotalTime>'
+               '<Pages>1</Pages><Application>Microsoft Office Word</Application>'
+               '<Company>Empresa Exemplo</Company><Manager>Gerente</Manager>'
+               '<AppVersion>16.0000</AppVersion></Properties>')
+MINIATURA = b"\xff\xd8\xff\xe0 miniatura jpeg de exemplo \xff\xd9"
+
+
+def docx_com_pacote_do_word(corpo_xml: str = "<w:p><w:r><w:t>Texto.</w:t></w:r></w:p>",
+                            notas_fim: str = NOTAS_FIM_COM_REAL, extra=None) -> bytes:
+    """Um .docx com as partes que o Word grava e que o EditDoc nao edita: customXml (item,
+    itemProps e relacoes), docProps/custom.xml, fontTable com fonte embutida, webSettings,
+    notas (separadoras e uma nota de fim de verdade), settings.xml do Word (com relacao
+    externa para o modelo), core.xml e app.xml do Word, e a miniatura. `extra`: partes a
+    trocar (None tira a parte)."""
+    partes = partes_de(bytes_de(Documento(paragrafos=[Paragrafo(runs=[Run("x")])])))
+    xml = partes["word/document.xml"].decode("utf-8")
+    inicio = xml.index("<w:body>") + len("<w:body>")
+    fim = xml.index("<w:sectPr>")
+    partes["word/document.xml"] = (xml[:inicio] + corpo_xml + xml[fim:]).encode("utf-8")
+    rels = partes["word/_rels/document.xml.rels"].decode("utf-8")
+    novas = "".join(f'<Relationship Id="{i}" Type="{t}" Target="{a}"/>' for i, t, a in (
+        ("rId80", RT_CUSTOM_XML, "../customXml/item1.xml"), ("rId81", RT_FONTES, "fontTable.xml"),
+        ("rId82", RT_WEB, "webSettings.xml"), ("rId83", RT_NOTAS, "footnotes.xml"),
+        ("rId84", RT_NOTAS_FIM, "endnotes.xml")))
+    partes["word/_rels/document.xml.rels"] = rels.replace(
+        "</Relationships>", novas + "</Relationships>").encode("utf-8")
+    pacote = partes["_rels/.rels"].decode("utf-8")
+    pacote = pacote.replace(
+        "</Relationships>",
+        f'<Relationship Id="rId8" Type="{RT_PROPRIEDADES}" Target="docProps/custom.xml"/>'
+        f'<Relationship Id="rId9" Type="{RT_MINIATURA}" Target="docProps/thumbnail.jpeg"/>'
+        "</Relationships>")
+    partes["_rels/.rels"] = pacote.encode("utf-8")
+    ct = partes["[Content_Types].xml"].decode("utf-8")
+    novos = ('<Default Extension="jpeg" ContentType="image/jpeg"/>'
+             '<Default Extension="odttf" ContentType="' + CT_FONTE + '"/>'
+             + "".join(f'<Override PartName="{p}" ContentType="{t}"/>' for p, t in (
+                 ("/customXml/itemProps1.xml", CT_CUSTOM_XML_PROPS), ("/word/fontTable.xml", CT_FONTES),
+                 ("/word/webSettings.xml", CT_WEB), ("/word/footnotes.xml", CT_NOTAS),
+                 ("/word/endnotes.xml", CT_NOTAS_FIM), ("/docProps/custom.xml", CT_PROPRIEDADES))))
+    partes["[Content_Types].xml"] = ct.replace("</Types>", novos + "</Types>").encode("utf-8")
+    partes.update({
+        "word/settings.xml": SETTINGS_DO_WORD.encode("utf-8"),
+        "word/_rels/settings.xml.rels": SETTINGS_RELS.encode("utf-8"),
+        "word/fontTable.xml": FONTES_DO_WORD.encode("utf-8"),
+        "word/_rels/fontTable.xml.rels": FONTES_RELS.encode("utf-8"),
+        "word/fonts/font1.odttf": FONTE_EMBUTIDA,
+        "word/webSettings.xml": WEB_DO_WORD.encode("utf-8"),
+        "word/footnotes.xml": NOTAS_SEPARADORAS.encode("utf-8"),
+        "word/endnotes.xml": notas_fim.encode("utf-8"),
+        "customXml/item1.xml": ITEM_CUSTOM_XML.encode("utf-8"),
+        "customXml/itemProps1.xml": ITEM_PROPS.encode("utf-8"),
+        "customXml/_rels/item1.xml.rels": ITEM_RELS.encode("utf-8"),
+        "docProps/custom.xml": PROPRIEDADES.encode("utf-8"),
+        "docProps/core.xml": CORE_DO_WORD.encode("utf-8"),
+        "docProps/app.xml": APP_DO_WORD.encode("utf-8"),
+        "docProps/thumbnail.jpeg": MINIATURA,
+    })
+    for nome, dados in (extra or {}).items():
+        if dados is None:
+            partes.pop(nome, None)
+        else:
+            partes[nome] = dados
+    return montar(partes)
+
+
+#: Estilos do Word com o estilo de caractere "Hyperlink" (azul sublinhado).
+ESTILOS_COM_LINK = ESTILOS_DO_WORD.replace(
+    "</w:styles>",
+    '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/>'
+    '<w:basedOn w:val="Fontepargpadro"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/>'
+    '<w:rPr><w:color w:val="0563C1" w:themeColor="hyperlink"/><w:u w:val="single"/></w:rPr>'
+    '</w:style></w:styles>')
+RT_LINK = _RT_DOC + "hyperlink"
+
+
+def _link_externo(rid: str, texto: str, extra: str = "") -> str:
+    return (f'<w:hyperlink r:id="{rid}" w:history="1"{extra}><w:r><w:rPr><w:rStyle w:val="Hyperlink"/>'
+            f'</w:rPr><w:t>{texto}</w:t></w:r></w:hyperlink>')
+
+
+#: Corpo com link externo, link interno para marcador, marcador entre paragrafos, link com
+#: dica e quadro, e link de e-mail.
+CORPO_COM_LINKS = (
+    '<w:p><w:r><w:t xml:space="preserve">Veja o </w:t></w:r>' + _link_externo("rId70", "site")
+    + '<w:r><w:t xml:space="preserve"> e a </w:t></w:r>'
+    '<w:hyperlink w:anchor="Conclusao" w:history="1"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/>'
+    '</w:rPr><w:t>conclusão</w:t></w:r></w:hyperlink><w:r><w:t>.</w:t></w:r></w:p>'
+    '<w:p>' + _link_externo("rId71", "dica", ' w:tooltip="Dica do link" w:tgtFrame="_blank"')
+    + '<w:r><w:t xml:space="preserve"> e </w:t></w:r>' + _link_externo("rId72", "e-mail") + '</w:p>'
+    '<w:bookmarkStart w:id="7" w:name="Entre"/><w:bookmarkEnd w:id="7"/>'
+    '<w:p><w:bookmarkStart w:id="3" w:name="Conclusao"/><w:r><w:t>Conclusão</w:t></w:r>'
+    '<w:bookmarkEnd w:id="3"/><w:r><w:t xml:space="preserve"> do texto.</w:t></w:r></w:p>')
+RELACOES_LINKS = [("rId70", RT_LINK, "https://exemplo.invalid/pagina?a=1&amp;b=2", "External"),
+                  ("rId71", RT_LINK, "https://exemplo.invalid/dica", "External"),
+                  ("rId72", RT_LINK, "mailto:fulano@exemplo.invalid", "External")]
+
+
+def docx_com_links(corpo_xml: str = CORPO_COM_LINKS, relacoes=None) -> bytes:
+    """.docx com hiperlinks externos e internos, marcadores e o estilo Hyperlink."""
+    partes = partes_de(docx_com_estilos_do_word(corpo_xml, ESTILOS_COM_LINK))
+    rels = partes["word/_rels/document.xml.rels"].decode("utf-8")
+    novas = "".join(f'<Relationship Id="{r[0]}" Type="{r[1]}" Target="{r[2]}" TargetMode="{r[3]}"/>'
+                    for r in (RELACOES_LINKS if relacoes is None else relacoes))
+    partes["word/_rels/document.xml.rels"] = rels.replace(
+        "</Relationships>", novas + "</Relationships>").encode("utf-8")
+    return montar(partes)
+
+
+def _fld(tipo: str) -> str:
+    return f'<w:r><w:fldChar w:fldCharType="{tipo}"/></w:r>'
+
+
+def _instr(texto: str) -> str:
+    return f'<w:r><w:instrText xml:space="preserve">{texto}</w:instrText></w:r>'
+
+
+def _linha_do_sumario(ancora: str, titulo: str, pagina: str) -> str:
+    return (f'<w:hyperlink w:anchor="{ancora}" w:history="1"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/>'
+            f'</w:rPr><w:t>{titulo}</w:t></w:r><w:r><w:tab/></w:r>' + _fld("begin")
+            + _instr(f" PAGEREF {ancora} \\h ") + _fld("separate")
+            + f"<w:r><w:t>{pagina}</w:t></w:r>" + _fld("end") + "</w:hyperlink>")
+
+
+#: Sumario (TOC) de tres paragrafos, com hiperlinks e PAGEREF dentro; os titulos com os
+#: marcadores; REF, DATE (sujo), campo simples (AUTHOR), IF com PAGE no codigo, XE sem
+#: resultado e um campo de formulario (FORMTEXT com w:ffData).
+CORPO_COM_CAMPOS = (
+    '<w:p>' + _fld("begin") + _instr(' TOC \\o "1-3" \\h \\z \\u ') + _fld("separate")
+    + _linha_do_sumario("_Toc1", "Introdução", "1") + '</w:p>'
+    '<w:p>' + _linha_do_sumario("_Toc2", "Conclusão", "2") + '</w:p>'
+    '<w:p>' + _fld("end") + '</w:p>'
+    '<w:p><w:pPr><w:pStyle w:val="Ttulo1"/></w:pPr><w:bookmarkStart w:id="1" w:name="_Toc1"/>'
+    '<w:r><w:t>Introdução</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>'
+    '<w:p><w:r><w:t xml:space="preserve">Ver </w:t></w:r>' + _fld("begin")
+    + _instr(" REF _Toc2 \\h ") + _fld("separate") + '<w:r><w:t>Conclusão</w:t></w:r>' + _fld("end")
+    + '<w:r><w:t xml:space="preserve">, em </w:t></w:r>'
+    '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>' + _instr(' DATE \\@ "dd/MM/yyyy" ')
+    + _fld("separate") + '<w:r><w:t>12/10/2026</w:t></w:r>' + _fld("end")
+    + '<w:r><w:t xml:space="preserve">, por </w:t></w:r>'
+    '<w:fldSimple w:instr=" AUTHOR \\* MERGEFORMAT "><w:r><w:t>Fulana</w:t></w:r></w:fldSimple>'
+    '<w:r><w:t>.</w:t></w:r></w:p>'
+    '<w:p>' + _fld("begin") + _instr(" IF ") + _fld("begin") + _instr(" PAGE ") + _fld("separate")
+    + '<w:r><w:t>1</w:t></w:r>' + _fld("end") + _instr(' = 1 "capa" "miolo" ') + _fld("separate")
+    + '<w:r><w:t>capa</w:t></w:r>' + _fld("end")
+    + '<w:r><w:t xml:space="preserve"> índice</w:t></w:r>' + _fld("begin")
+    + _instr(' XE "Índice" ') + _fld("end") + '</w:p>'
+    '<w:p><w:r><w:t xml:space="preserve">Nome: </w:t></w:r><w:r><w:fldChar w:fldCharType="begin">'
+    '<w:ffData><w:name w:val="Texto1"/><w:enabled/><w:calcOnExit w:val="0"/><w:textInput/></w:ffData>'
+    '</w:fldChar></w:r>' + _instr(" FORMTEXT ") + _fld("separate")
+    + '<w:r><w:t>preencha</w:t></w:r>' + _fld("end") + '</w:p>'
+    '<w:p><w:pPr><w:pStyle w:val="Ttulo1"/></w:pPr><w:bookmarkStart w:id="2" w:name="_Toc2"/>'
+    '<w:r><w:t>Conclusão</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>')
+
+
+def docx_com_campos(corpo_xml: str = CORPO_COM_CAMPOS) -> bytes:
+    """.docx com o sumario e os campos de CORPO_COM_CAMPOS (e o estilo Hyperlink)."""
+    return docx_com_links(corpo_xml, relacoes=[])

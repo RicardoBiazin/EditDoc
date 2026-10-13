@@ -11,7 +11,7 @@ o texto da acao para o botao e nao deixa encurtar: cada botao sincroniza com a
 acao por sinal.
 
 Abas (M6): Pagina Inicial (Area de transferencia, Fonte, Paragrafo, Estilos e Edicao),
-Inserir (Paginas, Tabelas, Ilustracoes, Cabecalho e Rodape), Layout (Configurar Pagina e
+Inserir (Paginas, Tabelas, Ilustracoes, Links, Cabecalho e Rodape), Layout (Configurar Pagina e
 Paragrafo: recuos e espacamento) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
 (M5) so' aparece durante a edicao do cabecalho, como a aba contextual do Word. Cada aba
 tem o seu recolhimento; a largura minima da faixa e' a da aba mais larga toda recolhida.
@@ -64,7 +64,7 @@ ROTULOS = {
     "localizar": "Localizar", "substituir": "Substituir",
     "selecionar_tudo": "Selecionar", "quebra_pagina": "Quebra",
     "excluir_tabela": "Excluir tabela", "inserir_imagem": "Imagem",
-    "tamanho_imagem": "Tamanho da imagem",
+    "tamanho_imagem": "Tamanho da imagem", "inserir_link": "Link", "remover_link": "Remover link",
     "primeira_diferente": "Primeira página diferente",
     "pares_impares": "Pares e ímpares diferentes",
     "ir_cabecalho": "Ir para o cabeçalho", "ir_rodape": "Ir para o rodapé",
@@ -463,6 +463,9 @@ class Faixa(QFrame):
         ilustracoes = GrupoFaixa(
             "Ilustrações", _duas_linhas([_botao(c, "inserir_imagem")], [_botao(c, "tamanho_imagem")]),
             _menu("Ilustrações", [c.acao("inserir_imagem"), c.acao("tamanho_imagem")]))
+        links = GrupoFaixa(
+            "Links", _duas_linhas([_botao(c, "inserir_link")], [_botao(c, "remover_link")]),
+            _menu("Links", [c.acao("inserir_link"), c.acao("remover_link"), c.acao("abrir_link")]))
         cabecalho = GrupoFaixa(
             "Cabeçalho e Rodapé", _duas_linhas(
                 [_menu("Cabeçalho", [c.acao("editar_cabecalho"), c.acao("remover_cabecalho")]),
@@ -471,8 +474,8 @@ class Faixa(QFrame):
             _menu("Cabeçalho e Rodapé", [c.acao(i) for i in (
                 "editar_cabecalho", "remover_cabecalho", "editar_rodape", "remover_rodape",
                 "numero_topo_centro", "numero_rodape_centro", "numero_x_de_y")]))
-        linha = LinhaDeGrupos([paginas, tabela, ilustracoes, cabecalho],
-                              [ilustracoes, paginas, tabela, cabecalho])
+        linha = LinhaDeGrupos([paginas, tabela, ilustracoes, links, cabecalho],
+                              [ilustracoes, links, paginas, tabela, cabecalho])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha

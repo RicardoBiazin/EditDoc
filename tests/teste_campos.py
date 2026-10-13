@@ -3,9 +3,9 @@
 - funcoes puras: formato do numero (decimal, romano, letras), opcao \\* da instrucao,
   numero inicial, variante da pagina (primeira, par, impar) e corpo empurrado pelo
   cabecalho;
-- leitor: campo complexo (fldChar) e simples (fldSimple) viram campo; DATE, campo que
-  atravessa paragrafos, campo sem fim e campo aninhado fundo demais ficam com o ultimo
-  resultado como texto, com o aviso CAMPO;
+- leitor: campo complexo (fldChar) e simples (fldSimple) viram campo; desde a 0.1.3 DATE,
+  o campo que atravessa paragrafos e o IF com PAGE dentro sao preservados (marcas de inicio
+  e fim, sem aviso); campo sem fim e campo aninhado fundo demais avisam (CAMPO);
 - escritor: o campo sai como campo complexo, passa no validador, e o validador acusa
   campo sem fim; ida e volta e idempotencia; a conferencia acusa campo que virou texto;
 - python-docx como oraculo: o Word ve o resultado e a instrucao;
@@ -91,7 +91,7 @@ def testar_corpo_empurrado() -> None:
 # -- leitor ---------------------------------------------------------------------------
 
 def testar_leitura() -> None:
-    secao("leitura: fldChar e fldSimple viram campo; outros ficam texto com aviso")
+    secao("leitura: fldChar e fldSimple viram campo; os outros sao preservados (0.1.3)")
     corpo = ("<w:p><w:r><w:t xml:space=\"preserve\">Página </w:t></w:r>"
              + fx.campo_complexo("PAGE   \\* MERGEFORMAT", "3", "<w:rPr><w:b/></w:rPr>")
              + "<w:r><w:t xml:space=\"preserve\"> de </w:t></w:r>"
@@ -104,12 +104,24 @@ def testar_leitura() -> None:
     checa(runs[1].negrito is True, "o campo fica com a formatacao do resultado (negrito)")
     checa_igual(avisos, [], "campo de pagina nao gera aviso")
 
+    # 0.1.3: DATE, REF, TOC... deixaram de virar texto fixo com o aviso CAMPO. As tres
+    # checagens abaixo eram "DATE fica so' como texto", "DATE gera CAMPO" e "CAMPO pede
+    # confirmacao"; passam a provar o campo preservado (marcas no fluxo, o resultado como
+    # texto) e que o CAMPO, agora so' para o campo que nao pode ser preservado, continua
+    # pedindo confirmacao. A ida e volta inteira esta' em teste_campos_gerais.py.
+    from editdoc.formato_docx.avisos import construir
+    from editdoc.modelo.documento import MarcaCampo
     corpo = "<w:p>" + fx.campo_complexo("DATE \\@ \"dd/MM/yyyy\"", "12/10/2026") + "</w:p>"
     modelo, avisos = ler(fx.docx_com_xml(corpo))
-    checa_igual([(r.texto, r.campo) for r in runs_do_primeiro(modelo)], [("12/10/2026", None)],
-                "DATE fica com o ultimo resultado como texto")
-    checa_igual(codigos(avisos), {"CAMPO": 1}, "DATE gera o aviso CAMPO")
-    checa(any(a.perde_ao_salvar for a in avisos), "o aviso CAMPO pede confirmacao ao salvar")
+    runs = runs_do_primeiro(modelo)
+    checa_igual([(r.texto, r.campo, type(r.marca).__name__ if r.marca else None) for r in runs],
+                [("", None, "MarcaCampo"), ("12/10/2026", None, None), ("", None, "MarcaCampo")],
+                "DATE vira campo preservado: inicio, o ultimo resultado como texto e fim")
+    checa(isinstance(runs[0].marca, MarcaCampo) and runs[0].marca.campo.tipo() == "DATE"
+          and runs[-1].marca.tipo == "fim", "a marca de inicio leva o codigo DATE; a outra e' o fim")
+    checa_igual(codigos(avisos), {}, "DATE nao gera mais o aviso CAMPO (o campo volta ao arquivo)")
+    checa(construir("CAMPO", 1).perde_ao_salvar,
+          "o aviso CAMPO (campo que nao pode ser preservado) continua pedindo confirmacao")
 
     corpo = ("<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText> PAGE "
              "</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
@@ -117,9 +129,12 @@ def testar_leitura() -> None:
              "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>")
     modelo, avisos = ler(fx.docx_com_xml(corpo))
     textos = ["".join(r.texto for r in p.runs) for p in modelo.paragrafos]
-    checa(textos[:2] == ["um", "dois"] and not any(r.campo for p in modelo.paragrafos for r in p.runs),
-          "campo que atravessa paragrafos: o texto fica, sem campo")
-    checa_igual(codigos(avisos), {"CAMPO": 1}, "e gera o aviso CAMPO")
+    # 0.1.3: o campo que atravessa paragrafos e' preservado (inicio no 1o, fim no 2o).
+    checa(textos[:2] == ["um", "dois"] and not any(r.campo for p in modelo.paragrafos for r in p.runs)
+          and modelo.paragrafos[0].runs[0].marca.tipo == "inicio"
+          and modelo.paragrafos[1].runs[-1].marca.tipo == "fim",
+          "campo que atravessa paragrafos: o texto fica, e o campo vira inicio e fim em paragrafos diferentes")
+    checa_igual(codigos(avisos), {}, "e nao gera mais o aviso CAMPO")
 
     corpo = "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:t>resto</w:t></w:r></w:p>"
     modelo, avisos = ler(fx.docx_com_xml(corpo))
@@ -129,8 +144,12 @@ def testar_leitura() -> None:
     profundo = "<w:p>" + "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>" * 20 + \
                "<w:r><w:t>dentro</w:t></w:r>" + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>" * 20 + "</w:p>"
     modelo, avisos = ler(fx.docx_com_xml(profundo))
-    checa(codigos(avisos).get("CAMPO", 0) >= 1 and runs_do_primeiro(modelo)[0].texto == "dentro",
-          "20 campos aninhados (limite 8): nao trava, o texto fica e ha' aviso")
+    # 0.1.3: antes o texto "dentro" ficava solto. Ele esta' no CODIGO dos campos (nao ha'
+    # separate), que o Word nao mostra; os 8 niveis do limite sao preservados e os outros 12
+    # avisam. A checagem passa a ser: nao trava, avisa, e o arquivo gravado e' valido.
+    dados, _av = escrever_com_avisos(modelo)
+    checa(codigos(avisos).get("CAMPO", 0) >= 1 and ordem.validar(fx.partes_de(dados)) == [],
+          "20 campos aninhados (limite 8): nao trava, ha' aviso e o arquivo gravado e' valido")
 
     aninhado = ("<w:p>" + "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>"
                 "<w:r><w:instrText> IF 1 = 1 </w:instrText></w:r>"
@@ -138,7 +157,11 @@ def testar_leitura() -> None:
                 + "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>sim</w:t></w:r>"
                 "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>")
     modelo, avisos = ler(fx.docx_com_xml(aninhado))
-    checa("CAMPO" in codigos(avisos), "IF com PAGE dentro: o IF nao e' entendido e avisa")
+    # 0.1.3: era "o IF nao e' entendido e avisa"; agora o IF volta com o PAGE dentro do codigo.
+    codigo = runs_do_primeiro(modelo)[0].marca.campo.codigo
+    checa("CAMPO" not in codigos(avisos) and codigo[0] == " IF 1 = 1 "
+          and codigo[1].instrucao().strip() == "PAGE" and codigo[1].resultado == "2",
+          "IF com PAGE dentro: o IF e' preservado, com o PAGE (e o resultado dele) no codigo")
     checa_igual("".join(r.texto for r in runs_do_primeiro(modelo) if not r.campo), "sim",
                 "o resultado do IF fica como texto")
 

@@ -34,6 +34,26 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   página). Na tela cada um aparece como um quadro com o nome ("Caixa de texto: …",
   "Gráfico", "Equação: …") no lugar dele no texto; Delete ou Backspace apagam o objeto
   inteiro, e Ctrl+Z o traz de volta.
+- **Hiperlinks** (desde a 0.1.3): o link do arquivo aparece com o estilo dele (azul
+  sublinhado) e volta ao arquivo com o endereço. **Ctrl+clique** abre o link: endereço da
+  Web e e-mail abrem direto no programa do Windows; arquivo, pasta de rede e outros
+  endereços só abrem depois de você confirmar; link que executa código (`javascript:`)
+  nunca abre. O link para um marcador do documento leva o cursor até ele. **Inserir >
+  Link** (Ctrl+K) insere um link no cursor ou na seleção, para um endereço ou para um
+  marcador do documento; com o cursor num link, Ctrl+K edita o link, e **Remover link**
+  tira o link e deixa o texto.
+- **Campos** (desde a 0.1.3): sumário, referências (REF, PAGEREF), data, autor, IF e
+  qualquer outro campo do Word voltam ao arquivo como campos, que o Word atualiza (F9).
+  Na tela, o último resultado aparece como texto comum, que pode ser editado, entre dois
+  colchetes finos e cinza que marcam o começo e o fim do campo (eles não saem na
+  impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
+  comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
+  e o total de páginas, como antes).
+- **Partes que o EditDoc não edita** voltam ao arquivo como vieram (desde a 0.1.3): as
+  propriedades personalizadas, os dados do SharePoint (`customXml`), a tabela de fontes
+  (com as fontes embutidas), as configurações da Web e as configurações do Word
+  (compatibilidade, proteção, variáveis do documento), além das propriedades do documento
+  (assunto, palavras-chave, empresa).
 - **Páginas**: A4, Carta e Ofício, retrato e paisagem, margens predefinidas ou
   personalizadas, zoom de 25% a 300% (o teto depende da escala da tela), uma página,
   várias páginas lado a lado ou largura da página.
@@ -64,7 +84,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.2-win64.zip` da página
+1. Baixe `EditDoc-0.1.3-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -102,6 +122,8 @@ Requer Windows 10 ou 11, 64 bits.
 | Alinhar à esquerda, centro, à direita, justificar | Ctrl+L, Ctrl+E, Ctrl+R, Ctrl+J |
 | Espaçamento 1,0, 1,5 e 2,0 | Ctrl+1, Ctrl+5, Ctrl+2 |
 | Quebra de página | Ctrl+Enter |
+| Inserir ou editar link | Ctrl+K |
+| Abrir o link | Ctrl+clique no link |
 | Estilos Normal, Título 1, 2 e 3 | Ctrl+Shift+N, Ctrl+Alt+1, 2 e 3 |
 | Painel de estilos | Ctrl+Alt+Shift+S |
 | Marcas de formatação | Ctrl+Shift+8 |
@@ -123,26 +145,31 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 
 - **Política de perda ao abrir `.docx`**: tudo o que o arquivo tem e o EditDoc não edita
   gera um aviso na barra amarela, com o botão Detalhes. Se salvar apagaria alguma coisa
-  (comentário, revisão, nota de rodapé, hiperlink, campo que não é número de página,
-  controle de conteúdo, seções com cabeçalhos diferentes, formatação que o EditDoc não
-  conhece...), o primeiro Salvar pede confirmação e oferece "Salvar cópia". Caixas de
-  texto, formas, gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em
-  formato que a tela não mostra (EMF, WMF, SVG, vinculadas) **não** se perdem desde a
-  0.1.2: o aviso diz que são preservados e o Salvar não pede confirmação por eles. Só o
-  objeto que não pode ser preservado inteiro (referência quebrada no arquivo, ou acima
-  dos limites: 2000 objetos, 4 MB de XML por objeto, 64 partes por objeto) sai do arquivo,
-  com aviso e confirmação. Os estilos que o EditDoc não altera e o tema voltam ao arquivo
-  como vieram.
-- Partes que o EditDoc ainda não regrava e que hoje saem **sem aviso**: as propriedades
-  personalizadas do documento (`docProps/custom.xml`), os dados anexados por SharePoint e
-  similares (`customXml`), a tabela de fontes, as configurações da Web e as do Word
-  (`settings.xml` é refeito). O texto e a aparência não dependem delas.
+  (comentário, revisão, nota de rodapé, controle de conteúdo, seções com cabeçalhos
+  diferentes, formatação que o EditDoc não conhece...), o primeiro Salvar pede
+  confirmação e oferece "Salvar cópia". **Não** se perdem: caixas de texto, formas,
+  gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em formato que a tela
+  não mostra (desde a 0.1.2); hiperlinks, marcadores, campos de qualquer tipo (sumário,
+  referências, data...) e as partes do arquivo que o EditDoc não edita (desde a 0.1.3).
+  Os estilos que o EditDoc não altera e o tema voltam como vieram. Ainda avisam, com
+  confirmação, só o que não pode voltar inteiro: objeto, link ou campo com referência
+  quebrada no arquivo, ou acima dos limites (2000 objetos; 20.000 campos, links ou
+  marcadores; instrução de campo com mais de 4096 caracteres; 8 campos um dentro do
+  outro), parte do arquivo com conteúdo inválido, as macros, a assinatura digital (que
+  deixaria de valer) e o campo que perdeu o começo ou o fim na edição. A miniatura de
+  pré-visualização do arquivo não é mantida (mostraria o conteúdo antigo), com aviso sem
+  confirmação.
+- Notas de rodapé e de fim: as notas separadoras do Word voltam ao arquivo; as notas de
+  verdade ainda não (com aviso e confirmação).
+- O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
+  atualize (F9) se o texto mudou. O controle de conteúdo que envolve o sumário no Word
+  (o quadro "Sumário") é achatado, com aviso; o sumário continua sendo campo.
 - Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
   objeto (a barra de status avisa); uma nota de rodapé, um comentário ou uma lista
   numerada **dentro** de uma caixa de texto perdem a referência ou a numeração ao salvar
   (com aviso), porque essas partes não voltam ao arquivo.
 - Fora desta versão: revisão com controle de alterações, comentários, notas de rodapé,
-  sumário e índices, mala direta, editar equações, formas e caixas de texto (elas são
+  gerar ou atualizar sumário e índices, mala direta, editar equações, formas e caixas de texto (elas são
   preservadas, não editadas), colunas, várias seções editáveis, ortografia, `.doc`, RTF,
   ODT e macros (nunca).
 - Numeração de listas: só marcadores e numeração simples (um nível).
@@ -180,7 +207,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.2-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.3-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

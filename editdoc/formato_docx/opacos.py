@@ -88,6 +88,9 @@ _CT_PROIBIDOS = {
     "application/vnd.openxmlformats-officedocument.custom-properties+xml",
     "application/vnd.openxmlformats-package.relationships+xml",
     "application/vnd.ms-office.vbaProject",
+    # Controles ActiveX (0.1.3): rodam codigo no Word; o objeto que os usa nao e' preservado.
+    "application/vnd.ms-office.activeX+xml",
+    "application/vnd.ms-office.activeX",
 }
 #: Nomes que o escritor usa (ou pode usar) para as partes dele.
 _NOMES_DO_ESCRITOR = re.compile(
