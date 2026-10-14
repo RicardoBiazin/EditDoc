@@ -7,6 +7,8 @@
   Override; o settings.xml volta com compat, rsids, docVars e a relacao externa do modelo,
   e so' o w:evenAndOddHeaders muda (na ordem do esquema); o core e o app voltam com os
   campos do Word, e titulo, autor e aplicativo reescritos;
+- ordem das relacoes preservadas pelo numero do rId (0.1.11): rId9 antes de rId10, e gravar
+  de novo nao troca os ids de webSettings e fontTable;
 - notas: as separadoras voltam; a nota de verdade nao, com o aviso NOTA, e o settings.xml
   continua citando so' o que existe;
 - o que nao pode voltar avisa: relacao quebrada (PARTE_PERDIDA), XML invalido, relacao
@@ -163,6 +165,44 @@ def testar_byte_a_byte() -> None:
           and app.find("{%s}AppVersion" % EP) is None,
           "app.xml: empresa e gerente ficam; o aplicativo passa a ser o EditDoc, sem a versao do Word")
     checa_igual(ordem.validar(gravado), [], "o pacote com tudo reescrito passa no validador")
+
+
+def testar_ordem_das_relacoes() -> None:
+    secao("ordem das relacoes preservadas pelo numero do rId (0.1.11): gravar de novo nao troca ids")
+    from editdoc.formato_docx import pacote
+
+    # rId95 (webSettings) e rId100 (fontTable): no texto "rId100" vem antes; no numero, depois.
+    origem = fx.partes_de(fx.docx_com_pacote_do_word())
+    rels = origem["word/_rels/document.xml.rels"].decode("utf-8")
+    origem["word/_rels/document.xml.rels"] = (rels.replace('Id="rId81"', 'Id="rId100"')
+                                              .replace('Id="rId82"', 'Id="rId95"').encode("utf-8"))
+    dados = fx.montar(origem)
+
+    def ordem_preservada(modelo) -> list[str]:
+        return [t.rsplit("/", 1)[1] for t, _a, _e in modelo.pacote.do_documento]
+
+    modelo, _ = ler(dados)
+    checa_igual(ordem_preservada(modelo), ["customXml", "webSettings", "fontTable"],
+                "a ordem segue o numero do rId (95 antes de 100)")
+    geracoes = [escrever(modelo)]
+    for _ in range(2):
+        geracoes.append(escrever(ler(geracoes[-1])[0]))
+    checa(all(ordem_preservada(ler(g)[0]) == ["customXml", "webSettings", "fontTable"]
+              for g in geracoes), "a ordem fica a mesma em tres gravacoes seguidas")
+    rels_de = [c14n(fx.partes_de(g)["word/_rels/document.xml.rels"]) for g in geracoes]
+    checa(rels_de[0] == rels_de[1] == rels_de[2],
+          "as relacoes do documento saem iguais (C14N) da primeira a' terceira gravacao")
+    checa_igual([pacote.ordem_do_rid((r,))[:2] for r in ("rId9", "rId10", "R3a", "rId2")],
+                [("rId", 9), ("rId", 10), ("R", -1), ("rId", 2)], "a chave do rId separa o numero")
+
+    # Contraprova: a ordem do texto (ate' a 0.1.10) poe o fontTable na frente.
+    original = pacote.ordem_do_rid
+    try:
+        pacote.ordem_do_rid = lambda item: item[0]
+        checa_igual(ordem_preservada(ler(dados)[0]), ["fontTable", "customXml", "webSettings"],
+                    "contraprova: pela ordem do texto, rId100 passa na frente")
+    finally:
+        pacote.ordem_do_rid = original
 
 
 def testar_notas() -> None:
@@ -376,6 +416,7 @@ def testar_janela() -> None:
 def main() -> int:
     testar_inventario()
     testar_byte_a_byte()
+    testar_ordem_das_relacoes()
     testar_notas()
     testar_o_que_nao_volta()
     testar_conferencia()

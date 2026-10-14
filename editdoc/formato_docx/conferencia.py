@@ -5,6 +5,7 @@ o que o usuario viu: mesma estrutura (paragrafos, tabelas, linhas, celulas e
 mesclas), mesmo texto, mesmas quebras, as mesmas imagens (pelos bytes) e os
 mesmos campos. Cabecalho e rodape (M5) passam pela mesma comparacao, um por tipo.
 Estilos (M6): o estilo de cada paragrafo e os estilos de caractere usados nele.
+O estilo de caractere de cada campo PAGE/NUMPAGES (0.1.11).
 Objetos opacos (0.1.2): cada um, no lugar, pela `opacos.assinatura` (o XML e o conteudo
 das partes que ele usa, sem depender dos nomes de parte e dos rIds renumerados). Uma
 parte referenciada que falta faz o leitor nao preservar o objeto, e a contagem acusa.
@@ -62,6 +63,17 @@ def _campos(paragrafo) -> tuple:
     return tuple(r.campo for r in paragrafo.runs if r.campo is not None)
 
 
+def _estilos(paragrafo) -> tuple:
+    """Os estilos de caractere usados no paragrafo e, desde a 0.1.11, o de cada campo.
+
+    O conjunto sozinho nao via o campo perder o estilo quando outro run do paragrafo tinha o
+    mesmo (o "Pagina 1 de 3" do rodape, todo em "Numero de pagina"): a 0.1.10 perdia o estilo
+    do campo na ponte Qt e a conferencia nao acusava.
+    """
+    return (tuple(sorted({r.estilo for r in paragrafo.runs if r.estilo})),
+            tuple(r.estilo for r in paragrafo.runs if r.campo is not None))
+
+
 def _links(paragrafo) -> tuple:
     """(destino, texto) de cada trecho de link, com os runs vizinhos de mesmo destino juntos."""
     saida: list[list] = []
@@ -99,7 +111,7 @@ def _itens(blocos, saida: list, onde: str) -> None:
             n_par += 1
             saida.append((f"{onde}paragrafo {n_par}", "p", texto_do_paragrafo(bloco),
                           bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
-                          bloco.estilo, tuple(sorted({r.estilo for r in bloco.runs if r.estilo})),
+                          bloco.estilo, _estilos(bloco),
                           _objetos(bloco), _links(bloco), _marcas(bloco),
                           (bloco.lista, bloco.lista_nivel)))
 

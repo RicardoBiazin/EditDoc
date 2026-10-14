@@ -11,6 +11,9 @@
 - python-docx como oraculo: o Word ve o resultado e a instrucao;
 - ponte Qt: o campo vira objeto e volta campo; digitar depois dele nao cria campo;
   inserir campo e' um passo de desfazer;
+- estilo de caractere do campo (0.1.11): passa pela ponte Qt e o arquivo grava (o resultado do
+  campo usava o numero de propriedade do estilo: o rodape "Pagina 1 de 3" em "Numero de pagina",
+  num documento com estilo de id "1", nao salvava); nenhum numero de propriedade repetido;
 - tela: o mesmo campo mostra 1, 2, 3... em cada pagina, e o total muda quando a
   paginacao muda.
 """
@@ -18,6 +21,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 from ajudantes import (checa, checa_igual, drenar_eventos, preparar_qt, pular, resumir, secao,
                        usar_fonte_windows)
@@ -272,6 +276,168 @@ def testar_ponte_qt() -> None:
     painel.close()
 
 
+#: Estilos como o do documento real que nao salvava (0.1.11): ids numericos ("1" a "3", que o
+#: Word gera para estilos de nome numerico) e o "Numero de pagina" de caractere.
+#: Sem a lista e a revisao de ESTILOS_DO_WORD (pedem numbering.xml e geram aviso).
+ESTILOS_COM_IDS_NUMERICOS = re.sub(r'<w:style [^>]*w:styleId="(?:Commarcadores|ComRevisao)".*?</w:style>',
+                                   "", fx.ESTILOS_DO_WORD).replace("</w:styles>", "".join(
+    f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{n}"><w:name w:val="{n}"/>'
+    f'<w:basedOn w:val="Normal"/></w:style>' for n in ("1", "2", "3")) + (
+    '<w:style w:type="character" w:styleId="Nmerodepgina"><w:name w:val="page number"/>'
+    '<w:basedOn w:val="Fontepargpadro"/></w:style>'
+    '<w:style w:type="paragraph" w:styleId="Rodap"><w:name w:val="footer"/>'
+    '<w:basedOn w:val="Normal"/></w:style></w:styles>'))
+
+
+def docx_rodape_com_estilo_no_campo() -> bytes:
+    """O caso do arquivo que nao salvava, gerado em codigo: rodape com tabela, e na celula
+    "Pagina: 0" + PAGE ("1") + " de 0" + NUMPAGES ("3"), tudo em "Numero de pagina"; e um
+    paragrafo do corpo com o campo sozinho no estilo (ai' a perda nao se esconde atras de
+    outro run com o mesmo estilo)."""
+    rpr = '<w:rPr><w:rStyle w:val="Nmerodepgina"/><w:sz w:val="16"/></w:rPr>'
+    celula = ('<w:p><w:pPr><w:pStyle w:val="Rodap"/></w:pPr>'
+              '<w:r><w:rPr><w:sz w:val="16"/></w:rPr><w:t>Página: 0</w:t></w:r>'
+              + fx.campo_complexo("PAGE", "1", rpr)
+              + f'<w:r>{rpr}<w:t xml:space="preserve"> de 0</w:t></w:r>'
+              + fx.campo_complexo("NUMPAGES", "3", rpr) + "</w:p>")
+    tabela = ('<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid>'
+              '<w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid><w:tr>'
+              '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr>'
+              '<w:p><w:pPr><w:pStyle w:val="Rodap"/></w:pPr><w:r><w:t>POP-001</w:t></w:r></w:p></w:tc>'
+              '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr>' + celula + "</w:tc>"
+              "</w:tr></w:tbl><w:p><w:pPr><w:pStyle w:val=\"Rodap\"/></w:pPr></w:p>")
+    rodape = fx.parte_faixa(tabela, "ftr")
+    corpo = ('<w:p><w:r><w:t>Corpo.</w:t></w:r></w:p>'
+             '<w:p>' + fx.campo_complexo("PAGE", "2", rpr) + "</w:p>")
+    return fx.docx_com_xml(
+        corpo, '<w:footerReference w:type="default" r:id="rId71"/>',
+        partes_extra={"word/footer7.xml": rodape,
+                      "word/styles.xml": ESTILOS_COM_IDS_NUMERICOS.encode("utf-8")},
+        relacoes_extra=[("rId71", fx.RT_FOOTER, "footer7.xml")],
+        tipos_extra=[("/word/footer7.xml", fx.CT_FOOTER)])
+
+
+def _estilos_dos_campos(modelo: Documento) -> list:
+    from editdoc.modelo.documento import Tabela
+    saida = []
+
+    def varrer(blocos):
+        for b in blocos:
+            if isinstance(b, Tabela):
+                for linha in b.linhas:
+                    for celula in linha.celulas:
+                        varrer(celula.blocos)
+            else:
+                saida.extend((r.campo, r.estilo) for r in b.runs if r.campo)
+    varrer(modelo.paragrafos)
+    for tipo in sorted(modelo.rodapes):
+        varrer(modelo.rodapes[tipo])
+    return saida
+
+
+def testar_estilo_do_campo() -> None:
+    secao("estilo de caractere do campo (0.1.11): passa pela ponte Qt e o arquivo grava")
+    import pathlib
+    import tempfile
+
+    from editdoc import configuracao
+    from editdoc.interface import dialogos_modais
+    from editdoc.interface.janela_principal import JanelaPrincipal
+    from editdoc.ponte_qt import campos
+    from editdoc.ponte_qt import estilos as pq_estilos
+
+    dados = docx_rodape_com_estilo_no_campo()
+    modelo, avisos = ler(dados)
+    checa_igual(avisos, [], "a fixture abre sem aviso")
+    esperado = [("PAGE", "Nmerodepgina"), ("PAGE", "Nmerodepgina"), ("NUMPAGES", "Nmerodepgina")]
+    checa_igual(_estilos_dos_campos(modelo), esperado, "o leitor ve o estilo de cada campo")
+    checa(campos.PROP_CAMPO_RESULTADO != pq_estilos.PROP_ESTILO_CAR,
+          "o resultado do campo nao usa o numero do estilo de caractere")
+
+    falhas: list[str] = []
+    originais = (dialogos_modais.avisar, dialogos_modais.pedir_falha_na_conferencia)
+    dialogos_modais.avisar = lambda _p, _t, texto: falhas.append(texto)
+    dialogos_modais.pedir_falha_na_conferencia = lambda _p, nome, _l: falhas.append(nome) or "fechar"
+
+    def salvar_pela_janela(pasta: pathlib.Path) -> tuple[bool, list]:
+        janela = JanelaPrincipal(configuracao.padrao())
+        janela.carregar(ler(dados)[0], [], None)
+        atual = janela._modelo_atual()
+        janela.painel.documento_corpo().setModified(True)
+        ok = janela._gravar(pasta / "rodape.docx", trocar=False)
+        janela.painel.sair_da_faixa()
+        janela.painel.documento_corpo().setModified(False)
+        janela.close()
+        return ok, _estilos_dos_campos(atual)
+
+    resultado_certo = campos.PROP_CAMPO_RESULTADO
+    try:
+        with tempfile.TemporaryDirectory(prefix="editdoc-campo-") as nome:
+            pasta = pathlib.Path(nome)
+            ok, vindos = salvar_pela_janela(pasta)
+            checa_igual(vindos, esperado, "da tela de volta ao modelo, o campo guarda o estilo")
+            checa(ok and not falhas, "o arquivo com campo em estilo de caractere grava")
+            relido = ler((pasta / "rodape.docx").read_bytes())[0]
+            checa_igual(_estilos_dos_campos(relido), esperado, "o estilo do campo esta' no arquivo")
+
+            # Contraprova: com o numero repetido da 0.1.10, o resultado "1" vira o estilo "1"
+            # e a conferencia recusa o arquivo (o defeito do documento real).
+            campos.PROP_CAMPO_RESULTADO = pq_estilos.PROP_ESTILO_CAR
+            (pasta / "rodape.docx").unlink()
+            ok, vindos = salvar_pela_janela(pasta)
+            checa(("PAGE", "1") in vindos, "contraprova: o resultado vira o estilo de id \"1\"")
+            checa(not ok and falhas == ["rodape.docx"] and not (pasta / "rodape.docx").exists(),
+                  "contraprova: a conferencia recusa e nada e' gravado")
+    finally:
+        campos.PROP_CAMPO_RESULTADO = resultado_certo
+        dialogos_modais.avisar, dialogos_modais.pedir_falha_na_conferencia = originais
+
+    # Contraprova da conferencia (0.1.11): o campo que perde o estilo, com outro run do mesmo
+    # estilo no paragrafo, era aceito; agora e' acusado.
+    sem_estilo = ler(dados)[0]
+    for r in sem_estilo.paragrafos[1].runs:
+        if r.campo:
+            r.estilo = None
+    sem_estilo.paragrafos[1].runs.append(Run(" fim", estilo="Nmerodepgina"))
+    com_estilo = ler(dados)[0]
+    com_estilo.paragrafos[1].runs.append(Run(" fim", estilo="Nmerodepgina"))
+    try:
+        conferencia.conferir(escrever(sem_estilo), com_estilo)
+        checa(False, "contraprova: o campo sem estilo passaria pela conferencia")
+    except conferencia.FalhaDeConferencia as erro:
+        checa("estilo" in str(erro), f"contraprova: o campo que perdeu o estilo e' acusado ({erro})")
+
+
+def testar_propriedades_unicas() -> None:
+    secao("propriedades de usuario do Qt: um numero para cada uma (0.1.11)")
+    import importlib
+    import pkgutil
+
+    import editdoc.ponte_qt as pacote_ponte
+
+    def repetidas(valores: dict[str, set[int]]) -> list:
+        # PROP_ESTILO (bloco) e PROP_CAMPO (caractere) dividem o + 4 sem colidir: formatos
+        # diferentes. Qualquer outra repeticao entre nomes diferentes e' defeito.
+        por_numero: dict[int, set[str]] = {}
+        for nome, numeros in valores.items():
+            for n in numeros:
+                por_numero.setdefault(n, set()).add(nome)
+        return sorted((n, sorted(nomes)) for n, nomes in por_numero.items()
+                      if len(nomes) > 1 and nomes != {"PROP_ESTILO", "PROP_CAMPO"})
+
+    valores: dict[str, set[int]] = {}
+    for info in pkgutil.iter_modules(pacote_ponte.__path__):
+        modulo = importlib.import_module(f"editdoc.ponte_qt.{info.name}")
+        for nome, valor in vars(modulo).items():
+            if nome.lstrip("_").startswith("PROP_") and isinstance(valor, int):
+                valores.setdefault(nome.lstrip("_"), set()).add(valor)
+    checa(len(valores) >= 20, f"as propriedades foram achadas ({len(valores)})")
+    checa_igual(repetidas(valores), [], "nenhum numero de propriedade repetido")
+    sabotado = dict(valores)
+    sabotado["PROP_CAMPO_RESULTADO"] = valores["PROP_ESTILO_CAR"]
+    checa(repetidas(sabotado) != [], "contraprova: o numero repetido da 0.1.10 e' acusado")
+
+
 def testar_valor_na_tela() -> None:
     secao("tela: o campo do corpo mostra o numero da sua pagina, e o total acompanha")
     from editdoc.interface.painel_documento import PainelDocumento
@@ -336,6 +502,8 @@ def main() -> int:
     if not usar_fonte_windows(9):
         return pular("Segoe UI nao esta instalada")
     testar_ponte_qt()
+    testar_estilo_do_campo()
+    testar_propriedades_unicas()
     testar_valor_na_tela()
     return resumir()
 

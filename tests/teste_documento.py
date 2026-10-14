@@ -1,6 +1,8 @@
 """Janelas e fluxo de arquivo: novo, abrir, editar, salvar, reabrir, salvar como, recentes,
 barra de aviso, perda confirmada, falha de gravacao injetada, arquivo alterado no disco,
-fechar com alteracao pendente e recusa de extensoes.
+fechar com alteracao pendente e recusa de extensoes. Falha na conferencia (0.1.11): mensagem
+sem jargao, copia de recuperacao gravada e copia nao conferida em outro arquivo (nunca por
+cima do original).
 
 Todo dialogo modal e' trocado por resposta programada (dialogos_modais). Nenhuma
 janela termina com alteracao pendente sem resposta: um modal aberto trava a suite.
@@ -321,15 +323,55 @@ def testar_falha_de_gravacao(tmp: pathlib.Path) -> None:
     def conferir_falha(_dados, _esperado):
         raise conferencia.FalhaDeConferencia("conteudo diferente")
 
+    # Desde a 0.1.11 a falha na conferencia abre o dialogo proprio (explica sem jargao e
+    # oferece a copia nao conferida), nao mais o `avisar`: as checagens de antes ficam
+    # (salvar falso, original intacto, documento sujo) e o `avisar` passa a ser proibido.
+    falhas: list[tuple[str, str]] = []
     original_conferir = conferencia.conferir
     try:
         conferencia.conferir = conferir_falha
-        with dialogos(avisar=lambda _p, _t, texto: avisos.append(texto)):
+        with dialogos(avisar=proibido("avisar"),
+                      pedir_falha_na_conferencia=lambda _p, nome, log: falhas.append(
+                          (nome, log)) or "fechar"):
             checa(janela.salvar() is False, "falha na conferencia: salvar retorna falso")
+        checa(arquivo.read_bytes() == original, "falha na conferencia: o original fica intacto")
+        checa(not (tmp / "falha.docx.ewnew").exists(), "falha na conferencia: o temporario nao sobra")
+        checa(janela.sujo(), "depois da falha, o documento continua sujo (nada foi perdido)")
+        checa_igual([n for n, _l in falhas], ["falha.docx"], "o dialogo da falha aparece uma vez")
+        texto = dialogos_modais.texto_da_falha_na_conferencia("falha.docx", falhas[0][1])
+        checa("conteudo diferente" not in texto and "NÃO foi alterado" in texto
+              and "continua aberto" in texto, "a mensagem e' clara, sem o detalhe tecnico")
+        checa(falhas[0][1].endswith(".log") and falhas[0][1] in texto,
+              "a mensagem diz onde esta' o detalhe (o log)")
+        checa(janela.recuperacao.sessao.existe(), "a falha grava a copia de recuperacao")
+
+        # Copia nao conferida em outro arquivo: grava, o original nao muda, o documento
+        # continua sujo e ligado ao original.
+        copia = tmp / "falha (não conferido).docx"
+        sugestoes: list[str] = []
+        with dialogos(avisar=proibido("avisar"),
+                      pedir_falha_na_conferencia=lambda *_a: "copia",
+                      pedir_salvar_arquivo=lambda _p, s: sugestoes.append(s) or str(copia)):
+            checa(janela.salvar() is False, "copia nao conferida: o documento nao conta como salvo")
+        checa(sugestoes and sugestoes[0].endswith("falha (não conferido).docx"),
+              "a sugestao de nome diz que a copia nao foi conferida")
+        checa(copia.exists() and "nao deve ir" in "".join(
+            r.texto for p in ler(copia.read_bytes())[0].paragrafos for r in p.runs),
+            "a copia nao conferida tem o texto da tela")
+        checa(arquivo.read_bytes() == original, "copia nao conferida: o original fica intacto")
+        checa(janela.sujo() and janela.caminho.resolve() == arquivo.resolve(),
+              "depois da copia, o documento continua sujo e no arquivo original")
+
+        # Contraprova: a copia nao pode ir por cima do original.
+        recusas: list[str] = []
+        with dialogos(avisar=lambda _p, _t, texto: recusas.append(texto),
+                      pedir_falha_na_conferencia=lambda *_a: "copia",
+                      pedir_salvar_arquivo=lambda *_a: str(arquivo)):
+            checa(janela.salvar() is False, "copia por cima do original: recusada")
+        checa(len(recusas) == 1 and "original" in recusas[0], "a recusa e' explicada")
+        checa(arquivo.read_bytes() == original, "a copia recusada nao toca o original")
     finally:
         conferencia.conferir = original_conferir
-    checa(arquivo.read_bytes() == original, "falha na conferencia: o original fica intacto")
-    checa(janela.sujo(), "depois da falha, o documento continua sujo (nada foi perdido)")
     janela.painel.document().setModified(False)
     janela_limpa(gerente)
 

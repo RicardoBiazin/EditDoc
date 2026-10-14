@@ -188,6 +188,13 @@ class Gerente:
         self.zerar = False
         #: primeira posicao refeita pela ultima conferencia (None = nada refeito)
         self.refeito_desde: int | None = None
+        #: a ultima conferencia refez blocos que voltaram exatamente como estavam no fim da
+        #: anterior (0.1.11): o que esta' pintado continua certo, nada sai do cache
+        self.refeito_igual = False
+        #: numero do bloco -> (linhas, texto) no fim da ultima conferencia que o refez, e a
+        #: altura do documento naquele momento
+        self._refeitos: dict[int, tuple] = {}
+        self._altura_refeitos: float | None = None
         self._lista_chave = None
         self._lista: list = []
         self._quadros: dict[int, object] = {}
@@ -518,6 +525,7 @@ class Gerente:
         mudou). True se algo foi refeito: `refeito_desde` diz a primeira posicao refeita (quem
         pinta tira do cache dali para baixo, 0.1.8)."""
         self.refeito_desde = None
+        self.refeito_igual = False
         if self.contexto is None or self._curando:
             return False
         doc = self.doc
@@ -528,6 +536,7 @@ class Gerente:
             return False
         mudou = False
         anteriores = None
+        refeitos: set[int] = set()
         for _rodada in range(6):
             faixas = self._conferir()
             if not faixas:
@@ -540,16 +549,51 @@ class Gerente:
                 self._alcance.update(self._alcances_conferidos)
                 break
             anteriores = faixas
-            for ini, fim in faixas:
+            # Faixas encostadas viram uma chamada so' (0.1.11): cada markContentsDirty refaz o
+            # trecho e reposiciona o resto do documento (medido no manual real: 13 blocos
+            # seguidos ao lado da reserva da capa, 1,5 ms por chamada).
+            for ini, fim in _juntar(faixas):
                 doc.markContentsDirty(ini, max(1, fim - ini))
-                self.refeito_desde = ini if self.refeito_desde is None                     else min(self.refeito_desde, ini)
+                self.refeito_desde = ini if self.refeito_desde is None \
+                    else min(self.refeito_desde, ini)
+                refeitos.update(_numeros_dos_blocos(doc, ini, fim))
             dl.blockBoundingRect(doc.lastBlock())
             mudou = True
         altura = dl.blockBoundingRect(doc.lastBlock()).bottom()
         self._estavel = (doc.revision(), round(altura), self.contexto.chave())
         if mudou:
             self._postos_chave = None
+            self._comparar_refeitos(refeitos, altura)
         return mudou
+
+    def _comparar_refeitos(self, refeitos: set[int], altura: float) -> None:
+        """`refeito_igual` (0.1.11): os blocos refeitos voltaram como no fim da conferencia
+        anterior, com a mesma altura do documento, e por isso a tela pintada continua certa.
+
+        Digitar antes das ancoras da capa do manual real empurra o float para a pagina 2; o
+        Qt desloca os blocos de baixo com o float de antes, a conferencia os refaz, e eles
+        voltam ao mesmo lugar de antes da tecla. Sem esta comparacao cada tecla refazia a tela
+        inteira (16 tiles, 60 de 95 ms por tecla)."""
+        doc = self.doc
+        dl = doc.documentLayout()
+        agora: dict[int, tuple] = {}
+        for n in refeitos:
+            bloco = doc.findBlockByNumber(n)
+            if bloco.isValid():
+                agora[n] = (_marca_das_linhas(bloco, dl.blockBoundingRect(bloco)),
+                            hash(bloco.text()))
+        self.refeito_igual = bool(agora) and self._altura_refeitos is not None \
+            and abs(altura - self._altura_refeitos) < 0.5 \
+            and all(self._refeitos.get(n) == chave for n, chave in agora.items())
+        if len(self._refeitos) > 4096:
+            self._refeitos.clear()
+        self._refeitos.update(agora)
+        self._altura_refeitos = altura
+
+    def esquecer_refeitos(self) -> None:
+        """A tela foi pintada de novo do zero (cache limpo): a comparacao recomeca."""
+        self._refeitos.clear()
+        self._altura_refeitos = None
 
     def _conferir(self) -> list[tuple[int, int]]:
         """Faixas (posicao inicial, final) do documento a refazer.
@@ -775,6 +819,24 @@ class Gerente:
                     ry - folga <= y <= ry + max(rh, 1) + folga:
                 return posto
         return None
+
+
+def _juntar(faixas: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Faixas (inicio, fim) ordenadas, com as que se tocam ou se cruzam juntas."""
+    saida: list[list[int]] = []
+    for ini, fim in sorted(faixas):
+        if saida and ini <= saida[-1][1]:
+            saida[-1][1] = max(saida[-1][1], fim)
+        else:
+            saida.append([ini, fim])
+    return [(a, b) for a, b in saida]
+
+
+def _numeros_dos_blocos(doc: QTextDocument, ini: int, fim: int) -> list[int]:
+    """Numeros dos blocos do quadro raiz entre as posicoes `ini` e `fim`."""
+    primeiro = doc.findBlock(ini).blockNumber()
+    ultimo = doc.findBlock(max(ini, fim - 1)).blockNumber()
+    return list(range(primeiro, ultimo + 1)) if primeiro >= 0 and ultimo >= primeiro else []
 
 
 def _marca_das_linhas(bloco, r: QRectF) -> tuple:

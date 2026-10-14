@@ -1,3 +1,63 @@
+## 0.1.11 - 2026-10-14
+
+Correções: documento que não salvava, digitação lenta no começo de um manual com capa e teste de
+desempenho que reprovava o build por carga da máquina.
+
+- **Documento que não salvava** (desde a 0.1.9, pelo menos). Num documento com estilos de id
+  numérico ("1", "2"..., que o Word cria para estilos de nome numérico) e o rodapé "Página 1 de
+  32" no estilo "Número de página", a conferência pós-gravação recusava o arquivo ("estilo
+  diferente no rodapé") e o usuário não conseguia salvar. Causa: na ponte Qt, o resultado
+  guardado do campo (`PROP_CAMPO_RESULTADO`) usava o mesmo número de propriedade do estilo de
+  caractere (`PROP_ESTILO_CAR`, UserProperty + 5). O resultado "1" apagava o estilo do campo e,
+  como "1" era o id de um estilo do documento, o campo voltava da tela com o estilo "1"; o
+  escritor não o gravava, e a releitura não batia. Em qualquer documento, o campo PAGE/NUMPAGES
+  perdia o estilo de caractere ao passar pela tela (a conferência não via, porque comparava só o
+  conjunto de estilos do parágrafo). Correção na origem: `PROP_CAMPO_RESULTADO` passa a
+  UserProperty + 34; a conferência compara também o estilo de cada campo; um teste varre as
+  propriedades de usuário de `ponte_qt` e acusa número repetido.
+- **Gravar de novo trocava ids**: as relações preservadas (webSettings, fontTable...) eram
+  ordenadas pelo texto do rId ("rId10" antes de "rId9"), e cada gravação trocava os ids de duas
+  delas. Agora a ordem é pelo número (`pacote.ordem_do_rid`); a segunda gravação sai igual à
+  primeira (C14N) em todas as partes, menos a data de modificação no core.xml.
+- **Quando a conferência falha**: a mensagem deixa de ser técnica ("A conferência do arquivo
+  gravado falhou") e explica que o original não foi alterado e que o documento continua aberto
+  com as alterações; a cópia de recuperação é gravada na hora; o botão "Salvar cópia não
+  conferida..." grava os mesmos bytes em outro arquivo (nunca por cima do original), para abrir
+  no Word. O motivo técnico continua no log, e a mensagem diz onde ele está. O mesmo vale para o
+  arquivo gravado que não pode ser lido de volta.
+- **Digitação no começo do manual real** (o ponto "sumário" do relatório da 0.1.10: p95 de 95
+  ms). O ponto medido era a posição 0, antes das âncoras da capa (o script procurava a linha do
+  sumário pelo último caractere, que é a marca do PAGEREF). Ali, cada tecla põe o float da capa,
+  que reserva a folha inteira, na página seguinte; o Qt desloca os 13 blocos do sumário com o
+  float de antes, a conferência dos flutuantes os refazia um a um (13 chamadas de
+  `markContentsDirty`, 24 ms) e a tela inteira saía do cache (16 tiles, 60 ms), embora os
+  blocos voltassem exatamente para onde estavam. Agora as faixas encostadas viram uma chamada
+  só e, quando os blocos refeitos voltam iguais ao fim da conferência anterior (linhas, texto e
+  altura do documento), nada sai do cache. P95: 99,4 → 7,9 ms. A linha do sumário de verdade mede
+  14,2 ms (14,2 na 0.1.10). Os outros pontos da tabela do gate ficam iguais
+  (docs/SPIKES.md "0.1.11").
+- **Teste de desempenho estável**: `tests/teste_desempenho.py` reprovou um build com a máquina
+  carregada (35,5 ms contra 10,8 ms do simples, numa medida só). Agora cada ponto vale a
+  mediana de 3 rodadas, intercaladas com o documento simples (a referência da mesma hora); a
+  folga relativa (2,5 vezes o simples, ou 5 vezes no ponto antes da capa) tem teto absoluto de
+  60 ms; e só o ponto que passou do limite mede de novo, até 2 rodadas. O critério tem
+  contraprovas sem relógio (pico isolado passa; 35 ms em toda rodada, 95 ms com o simples
+  lento e os 168 ms da 0.1.10 reprovam).
+
+Testes: `teste_campos.py` (campo com estilo de caractere num rodapé com tabela, num documento
+com estilos de id numérico, gerado em código: grava pela janela, o estilo volta na releitura;
+contraprova com o número repetido da 0.1.10 recusada pela conferência; contraprova da
+conferência com o campo sem estilo; propriedades de usuário sem número repetido, com
+contraprova), `teste_partes_pacote.py` (ordem pelo número do rId, três gravações iguais,
+contraprova pela ordem do texto), `teste_desempenho.py` (ponto antes das âncoras de uma capa
+que reserva a folha, com o sumário num controle de conteúdo: uma chamada de refazer por tecla,
+contra 18; 5,5 tiles por tecla, contra 16; tela com cache igual à refeita com o atalho usado;
+contraprovas de cada metade e da comparação; critério do p95). Checagens reescritas, com o
+motivo no teste: `teste_documento.py` (a falha na conferência abre o diálogo próprio, não mais
+o `avisar`; as checagens de antes ficam e o `avisar` passa a ser proibido) e
+`teste_desempenho.py` (o p95 de capa, sumário e corpo passa de uma medida com segunda
+tentativa para a mediana de 3 rodadas; o limite continua o gate ou 2,5 vezes o simples).
+
 ## 0.1.10 - 2026-10-14
 
 Notas de rodapé e de fim: lidas, editadas, numeradas, no pé da página e de volta ao arquivo.

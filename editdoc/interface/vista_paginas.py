@@ -499,6 +499,11 @@ class VistaPaginas(QAbstractScrollArea):
 
     # ----- cache de tiles -------------------------------------------------
     def _limpar_cache(self) -> None:
+        # O que for pintado agora sai do layout de agora: a comparacao dos blocos refeitos
+        # pela conferencia dos flutuantes (0.1.11) recomeca daqui.
+        layout = getattr(self, "layout_pag", None)
+        if layout is not None and getattr(layout, "flutuantes", None) is not None:
+            layout.flutuantes.esquecer_refeitos()
         self._cache.clear()
         self._bytes_no_cache = 0
         self._faixas_pintadas.clear()
@@ -914,7 +919,10 @@ class VistaPaginas(QAbstractScrollArea):
         layout = self.layout_pag
         if layout.atualizar_flutuantes():
             desde = layout.flutuantes.refeito_desde
-            if desde is None:
+            if layout.flutuantes.refeito_igual:
+                # Os blocos refeitos voltaram como estavam pintados (0.1.11): nada sai.
+                pass
+            elif desde is None:
                 self._limpar_cache()
                 self._altura_doc_anterior = None
             else:

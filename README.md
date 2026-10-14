@@ -182,6 +182,12 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   processo encerrado), ao abrir de novo aparece "Recuperação de documentos", com as
   cópias para abrir, salvar como ou descartar. Salvar ou fechar normalmente apaga a cópia.
   Também em Arquivo > Recuperar documentos.
+- **Salvar conferido**: o EditDoc grava um arquivo novo ao lado do original, lê de volta e
+  só então troca. Se a releitura não bater com o que está na tela, o original fica como
+  estava, o documento continua aberto com as alterações (e a cópia de recuperação é
+  gravada), e a mensagem oferece salvar essa cópia, sem a conferência, em outro arquivo
+  (nunca por cima do original) para abrir no Word. O detalhe técnico vai para o log
+  (`%APPDATA%\EditDoc\editdoc.log`).
 - **Preferências** (Arquivo > Opções): fonte e tamanho do documento novo, papel padrão,
   unidade da régua (centímetros ou polegadas), intervalo da recuperação automática,
   abrir o PDF depois de exportar, quantos documentos o menu Abrir recente mostra (e
@@ -196,7 +202,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.10-win64.zip` da página
+1. Baixe `EditDoc-0.1.11-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -379,7 +385,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.10-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.11-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

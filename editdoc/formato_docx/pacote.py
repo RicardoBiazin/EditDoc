@@ -248,6 +248,18 @@ def _configuracoes(dados: bytes, relacoes: dict, fecho: _Fecho, coletor, parse,
     return _xml(raiz), tuple(mantidas)
 
 
+def ordem_do_rid(item) -> tuple:
+    """Chave de ordem de (rId, ...) pelo NUMERO do id: rId9 antes de rId10.
+
+    A ordem das relacoes preservadas e' a ordem em que o escritor as numera. Ate' a 0.1.10 a
+    ordem era a do texto ("rId10" < "rId9"): a parte que a primeira gravacao numerava rId10
+    passava na frente na segunda, e cada gravacao trocava os ids de webSettings e fontTable.
+    """
+    rid = item[0]
+    numero = rid.lstrip("rIdRID")
+    return (rid[: len(rid) - len(numero)], int(numero) if numero.isdigit() else -1, rid)
+
+
 def capturar(*, coletor, lim: dict, nomes: set[str], ler_parte, relacoes_de, tipo_de, parse,
              alvo_doc: str, rels_pacote: dict, rels_doc: dict, raiz_doc,
              tema_tratado: bool, proibidos: set[str], notas_lidas=frozenset()) -> PacoteOriginal:
@@ -259,7 +271,7 @@ def capturar(*, coletor, lim: dict, nomes: set[str], ler_parte, relacoes_de, tip
     configuracoes = None
     rels_config: tuple = ()
     do_documento: list[tuple[str, str]] = []
-    for rid, (tipo, alvo, externo) in sorted(rels_doc.items()):
+    for rid, (tipo, alvo, externo) in sorted(rels_doc.items(), key=ordem_do_rid):
         sufixo = _sufixo(tipo)
         if rid in citados or sufixo in _CONTEUDO:
             continue  # o texto cita (imagem, cabecalho, link...) ou nao aparece no Word
@@ -297,7 +309,7 @@ def capturar(*, coletor, lim: dict, nomes: set[str], ler_parte, relacoes_de, tip
             coletor.somar("PARTE_PERDIDA")
     propriedades = aplicativo = None
     do_pacote: list[tuple[str, str]] = []
-    for rid, (tipo, alvo, externo) in sorted(rels_pacote.items()):
+    for rid, (tipo, alvo, externo) in sorted(rels_pacote.items(), key=ordem_do_rid):
         if tipo.endswith(_PACOTE_ESCRITAS):
             if tipo.endswith("/core-properties") and not externo and alvo in nomes:
                 propriedades = _xml_valido(ler_parte(alvo), alvo, parse)

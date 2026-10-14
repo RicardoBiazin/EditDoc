@@ -939,14 +939,10 @@ class JanelaPrincipal(QMainWindow):
             gravacao.gravar_bytes(alvo, dados, conferir=conferencia.conferidor(modelo))
         except conferencia.FalhaDeConferencia as erro:
             log.error("conferencia do arquivo gravado falhou: %s", erro)
-            dialogos_modais.avisar(self, "Salvar", "A conferência do arquivo gravado falhou. "
-                                   "O original NÃO foi alterado.")
-            return False
+            return self._falha_na_conferencia(alvo, dados)
         except ErroDocx as erro:
             log.error("arquivo gravado nao pode ser lido: %s", erro.codigo)
-            dialogos_modais.avisar(self, "Salvar", "O arquivo gravado não pode ser lido de volta. "
-                                   "O original NÃO foi alterado.")
-            return False
+            return self._falha_na_conferencia(alvo, dados)
         except gravacao.SemEspaco as erro:
             dialogos_modais.avisar(self, "Salvar", str(erro))
             return False
@@ -978,6 +974,42 @@ class JanelaPrincipal(QMainWindow):
             self.statusBar().showMessage(
                 f"Cópia salva em {alvo.name}. O documento continua em {self._nome()}.", 6000)
         return True
+
+    def _falha_na_conferencia(self, alvo: pathlib.Path, dados: bytes) -> bool:
+        """A releitura do arquivo gravado nao bateu (0.1.11): nada foi substituido.
+
+        Explica sem jargao (o detalhe ja' foi para o log), grava a copia de recuperacao e
+        oferece salvar os mesmos bytes, sem a conferencia, em OUTRO arquivo. Devolve False:
+        o documento nao foi salvo e continua "alterado".
+        """
+        self.recuperacao.gravar_agora()
+        escolha = dialogos_modais.pedir_falha_na_conferencia(
+            self, alvo.name, str(log_interno.caminho_do_log()))
+        if escolha != "copia":
+            return False
+        sugestao = str(alvo.with_name(f"{alvo.stem} (não conferido).docx"))
+        escolhido = dialogos_modais.pedir_salvar_arquivo(self, sugestao)
+        if not escolhido:
+            return False
+        destino = pathlib.Path(escolhido)
+        protegidos = {p.resolve() for p in (alvo, self.caminho) if p is not None}
+        if destino.resolve() in protegidos:
+            dialogos_modais.avisar(self, "Salvar", "A cópia não conferida não pode substituir o "
+                                   "arquivo original. Escolha outro nome ou outra pasta.")
+            return False
+        try:
+            gravacao.gravar_bytes(destino, dados)
+        except OSError as erro:
+            log.error("copia nao conferida em %s falhou: %s", destino, erro)
+            dialogos_modais.avisar(self, "Salvar", "Não foi possível gravar a cópia. Verifique "
+                                   "se há espaço em disco e se a pasta aceita gravação. "
+                                   "O original NÃO foi alterado.")
+            return False
+        log.warning("copia nao conferida gravada em %s", destino)
+        self.statusBar().showMessage(
+            f"Cópia não conferida salva em {destino.name}. O documento continua em "
+            f"{self._nome()}, ainda não salvo.", 8000)
+        return False
 
     def pode_fechar(self) -> bool:
         """Sem alteracao, sim. Com alteracao, pergunta: salvar, descartar ou cancelar."""

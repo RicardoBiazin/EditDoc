@@ -590,12 +590,84 @@ tabela da 0.1.8 e não muda com as notas; fica como pendência de medição. O g
 (8,0 e 10,5 ms) passa. Teste de regressão: `teste_notas.py` mede o p95 com 100 notas contra um
 documento sem notas na mesma hora (gate de 16 ms ou até 2,5 vezes o sem notas).
 
+## 0.1.11: o ponto "sumário" de 95 ms e o teste de tempo
+
+Feito em 14/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6 6.11.2,
+offscreen, Segoe UI e Calibri carregadas), com o roteiro da 0.1.10 (`gate.py` e
+`gate_todos.py`, no rascunho, fora do repositório): janela 1400 × 950, p95 de 80 teclas com
+`viewport().grab()`, um processo por ponto, mediana de 3 rodadas; a coluna 0.1.10 é o código
+da 0.1.10 extraído do git.
+
+### O ponto medido
+
+O cenário "sumário" do script procurava o primeiro bloco com tabulação cujo último caractere é
+um dígito. A linha do sumário termina na marca de fim do PAGEREF (U+FFFC), então nenhuma
+servia e o cursor ia para a posição 0: o começo do primeiro parágrafo, ANTES das âncoras da
+capa. Os 95 ms eram desse ponto. O script ganhou o cenário "linha do sumário" (tira as marcas
+antes de olhar o dígito): 14,2 ms nas duas versões.
+
+### Perfil (cProfile, 80 teclas na posição 0, 0.1.10)
+
+| Etapa | ms por tecla |
+|---|---|
+| Tiles refeitos (16 por tecla, a tela inteira) | 60 |
+| Conferência dos flutuantes (13 `markContentsDirty`, 1,5 ms cada) | 24 |
+| Tecla (texto e relayout do Qt) | 6 |
+
+A capa reserva a folha inteira (a reserva que passa do pé da página é cortada nele). Com texto
+antes das âncoras, o Qt põe o float na página 2; o layout incremental desloca os 13 blocos do
+sumário (dentro de um controle de conteúdo) com o float de antes (topo 13674, dentro do
+retângulo do float), a conferência acha as linhas erradas e os refaz um a um, e eles voltam a
+533, exatamente onde estavam antes da tecla. A tela inteira saía do cache por
+`refeito_desde`. Correção: as faixas encostadas viram uma chamada só (`flutuantes._juntar`) e,
+se os blocos refeitos têm as mesmas linhas e o mesmo texto do fim da conferência anterior, com a
+mesma altura do documento (`Gerente.refeito_igual`), a vista não tira nada do cache. Medido:
+1 chamada e 5,5 tiles por tecla na fixture (eram 18 e 16); a tela com cache é igual à refeita do
+zero (teste com o atalho usado e contraprovas).
+
+### Tabela do gate (p95 em ms)
+
+| Documento | Onde digita | 0.1.10 | 0.1.11 |
+|---|---|---|---|
+| manual real | parágrafo das âncoras (capa, fim) | 11,2 | 10,6 |
+| idem | ponto "sumário" da 0.1.10 (posição 0, antes das âncoras) | 99,4 | 7,9 |
+| idem | linha do sumário (de verdade) | 14,2 | 14,2 |
+| idem | corpo, 1/3 do documento | 5,0 | 5,2 |
+| idem | corpo, 2/3 do documento | 5,1 | 5,1 |
+| capítulo real de 4 páginas | capa | 3,7 | 3,7 |
+| idem | corpo | 4,5 | 4,5 |
+| 600 parágrafos, sem objetos | 1º parágrafo | 3,6 | 3,7 |
+| 600 parágrafos, DPR 1 a 300% | 1º parágrafo | 4,5 | 5,0 |
+| 600 parágrafos, DPR 2 a 150% | 1º parágrafo | 11,9 | 12,0 |
+| 300 parágrafos com 100 notas de rodapé | corpo, 1/3 do documento | 8,4 | 8,7 |
+| idem | digitando dentro de uma nota | 10,3 | 10,5 |
+
+A linha do sumário (14,2 ms) passa no gate com pouca folga: a tecla que muda o número de linhas
+do parágrafo refaz da linha para baixo (uns 7 tiles); não mudou nesta versão.
+
+Fixture do teste (`teste_desempenho.manual_capa_cheia`): o manual sintético com o título da
+capa de 15000 twips (a reserva vira a folha) e o sumário num `w:sdt` da galeria "Table of
+Contents". Na 0.1.10: 168 ms, 18 chamadas e 16 tiles por tecla; na 0.1.11, parada, 15 ms (3,3
+vezes o documento simples: o sumário refeito e os tiles da linha, que cruzam o sumário). Por
+isso a folga desse ponto no teste é 5 vezes o simples, com o teto absoluto.
+
+### Teste de tempo estável
+
+Na máquina carregada (jogos e navegador abertos), o simples vai de 4,7 a 12 ms e o manual
+acompanha; uma medida só reprovou o build (35,5 ms contra 10,8). `testar_p95`: 3 rodadas, cada
+uma com o simples e todos os pontos intercalados; vale a mediana de cada lado; limite = o gate
+(16 ms) ou a folga relativa (2,5 vezes o simples, mais 2 ms), com teto absoluto de 60 ms; o
+ponto que passou do limite mede de novo (simples e ponto), até 2 rodadas. Medido nesta máquina,
+carregada: capa 25,8, sumário 24,6, corpo 14,6 e antes da capa 39,9 ms, com o simples a 11,5
+(todos passam); parada, todos abaixo de 16. O teste leva cerca de 65 s (o teto da suíte é 180).
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,
-  editada, convertida, com marca personalizada). Medir o ponto "sumário" do manual real (95 ms
-  na 0.1.9 e na 0.1.10 no script desta versão).
+  editada, convertida, com marca personalizada). O ponto "sumário" de 95 ms foi medido e
+  corrigido na 0.1.11 (era a posição 0, antes das âncoras da capa).
+- 0.1.11: abrir no Word, sem reparo, o arquivo que não salvava até a 0.1.10, gravado pela 0.1.11.
 - Abrir uma amostra `.docx` gerada pelo spike no Word, sem reparo. As amostras estão
   em `%TEMP%\claude\...\scratchpad\spike-docx`, fora do repositório.
 - Cache de página: medido no Gate do M3 (acima). Adotado com teto de zoom.

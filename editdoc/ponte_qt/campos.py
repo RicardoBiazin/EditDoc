@@ -38,10 +38,14 @@ log = log_interno.obter(__name__)
 #: Tipo de objeto do campo no Qt (QTextFormat.UserObject + 1).
 TIPO_CAMPO = QTextFormat.ObjectTypes.UserObject.value + 1
 _USUARIO = QTextFormat.Property.UserProperty.value
-#: Formato do campo: a instrucao ("PAGE", "NUMPAGES \\* roman"...).
+#: Formato do campo: a instrucao ("PAGE", "NUMPAGES \\* roman"...). O mesmo numero de
+#: `estilos.PROP_ESTILO`, mas aquele so' vai no formato de BLOCO: no caractere nao colide.
 PROP_CAMPO = _USUARIO + 4
 #: Formato do campo: o ultimo resultado guardado no arquivo (volta ao .docx).
-PROP_CAMPO_RESULTADO = _USUARIO + 5
+#: Ate' a 0.1.10 era + 5, o mesmo numero de `estilos.PROP_ESTILO_CAR` no formato de caractere:
+#: o resultado apagava o estilo de caractere do campo e, quando o resultado ("1") era o id de
+#: um estilo do documento, virava esse estilo e a conferencia recusava o arquivo (0.1.11).
+PROP_CAMPO_RESULTADO = _USUARIO + 34
 #: Pixels de layout (twips) por ponto.
 _TWIPS_POR_PONTO = 20
 #: No corpo, a largura do campo e' a do maior valor entre as primeiras paginas.

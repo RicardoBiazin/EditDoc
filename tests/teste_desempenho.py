@@ -14,14 +14,21 @@ que nao dependem do relogio vem primeiro (sao as que pegam a regressao em qualqu
 - objetos flutuantes e cabecalho/rodape pintados uma vez e reaproveitados na tela; o PDF e a
   impressao continuam pintando de verdade;
 - pontilhado da tabulacao num drawText so'; tamanho das marcas guardado por fonte;
-- p95 da digitacao (80 teclas, cada uma com a pintura) na capa, no sumario e no corpo: no gate
-  (16 ms) ou, numa maquina mais lenta, perto do p95 de um documento simples do mesmo tamanho.
+- antes das ancoras da capa (0.1.11, o ponto de 95 ms do manual real): capa que reserva a folha
+  inteira e sumario num controle de conteudo; a conferencia refaz o sumario numa chamada por
+  tecla e, quando ele volta igual, a tela pintada fica no cache;
+- p95 da digitacao (80 teclas, cada uma com a pintura) na capa, no sumario, no corpo e antes da
+  capa: no gate (16 ms) ou, numa maquina mais lenta, perto do p95 de um documento simples do
+  mesmo tamanho. Desde a 0.1.11: mediana de 3 rodadas intercaladas com o simples (a referencia
+  da mesma hora), folga relativa com teto absoluto, e so' o ponto que passou do limite mede de
+  novo (ate' 2 rodadas). O criterio tem contraprovas sem relogio (`testar_criterio_do_p95`).
 
 Cada verificacao estrutural tem a contraprova: com a correcao desligada, ela acusa.
 """
 
 from __future__ import annotations
 
+import statistics
 import time
 
 from ajudantes import (checa, checa_igual, drenar_eventos, preparar_qt, resumir, secao,
@@ -52,7 +59,7 @@ def _docx(corpo_xml: str, base: Documento, relacoes, partes) -> bytes:
                                         documento=base)
 
 
-def _sumario(linhas: int) -> str:
+def _sumario(linhas: int, controle: bool = False) -> str:
     tab = ('<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9000"/></w:tabs></w:pPr>')
     corpo = ('<w:p><w:r><w:t>Sumário</w:t></w:r></w:p><w:p>' + tab + fx._fld("begin")
              + fx._instr(' TOC \\o "1-3" \\h \\z \\u ') + fx._fld("separate")
@@ -60,11 +67,21 @@ def _sumario(linhas: int) -> str:
     for i in range(1, linhas):
         corpo += ('<w:p>' + tab + fx._linha_do_sumario(f"_Toc{i}", f"Seção {i} do manual", str(3 + i))
                   + '</w:p>')
-    return corpo + '<w:p>' + fx._fld("end") + '</w:p>'
+    corpo += '<w:p>' + fx._fld("end") + '</w:p>'
+    if controle:
+        # Como o Word grava o sumario (0.1.11): dentro de um controle de conteudo da galeria
+        # "Table of Contents".
+        corpo = ('<w:sdt><w:sdtPr><w:id w:val="-1350000"/><w:docPartObj>'
+                 '<w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj>'
+                 '</w:sdtPr><w:sdtContent>' + corpo + '</w:sdtContent></w:sdt>')
+    return corpo
 
 
-def manual_sintetico(paragrafos: int = 260) -> bytes:
-    """Capa com objetos, sumario e corpo; cabecalho da primeira pagina vazio."""
+def manual_sintetico(paragrafos: int = 260, titulo_tw: int = 11000, controle: bool = False) -> bytes:
+    """Capa com objetos, sumario e corpo; cabecalho da primeira pagina vazio.
+
+    `titulo_tw`: altura do titulo que empurra o texto. Com 15000 a reserva passa do pe' da
+    pagina e vira a folha inteira, como no manual real (`manual_capa_cheia`)."""
     texto = [Paragrafo(runs=[Run(f"Parágrafo {i}. {tf.TEXTO}")]) for i in range(paragrafos)]
     base = Documento(
         pagina=PAGINA_MANUAL, paragrafos=texto,
@@ -80,9 +97,9 @@ def manual_sintetico(paragrafos: int = 260) -> bytes:
                         quebra="<wp:wrapNone/>", atras=True)
             # O titulo empurra o texto do paragrafo para baixo dele (wrapTopAndBottom): o bloco da
             # ancora fica quase da altura da folha, como no manual real.
-            + tf.ancora(92, tf.URI_FORMA, tf.forma(8000 * EMU, 11000 * EMU, cor="FFFFFF",
+            + tf.ancora(92, tf.URI_FORMA, tf.forma(8000 * EMU, titulo_tw * EMU, cor="FFFFFF",
                                                    texto="Manual do sistema"),
-                        8000 * EMU, 11000 * EMU, h=("page", "posOffset", 3400 * EMU),
+                        8000 * EMU, titulo_tw * EMU, h=("page", "posOffset", 3400 * EMU),
                         v=("paragraph", "posOffset", 720 * EMU), quebra="<wp:wrapTopAndBottom/>")
             + tf.ancora(93, tf.URI_FORMA, tf.forma(3400 * EMU, 900 * EMU, texto="Portal"),
                         3400 * EMU, 900 * EMU, h=("page", "posOffset", 840 * EMU),
@@ -90,7 +107,15 @@ def manual_sintetico(paragrafos: int = 260) -> bytes:
             + '</w:p>')
     rels = [("rId81", fx.RT_IMAGEM, "media/capa.png")]
     partes = {"word/media/capa.png": fx.png(600, 850, (170, 20, 60))}
-    return _docx(capa + _sumario(12), base, rels, partes)
+    return _docx(capa + _sumario(12, controle), base, rels, partes)
+
+
+def manual_capa_cheia() -> bytes:
+    """O ponto que media 95 ms no manual real (0.1.11): a reserva do titulo da capa passa do pe'
+    da pagina (vira a folha inteira) e o sumario, com TOC, links, PAGEREF e pontilhado, esta' num
+    controle de conteudo. Digitar ANTES das ancoras da capa poe o float na pagina 2; o Qt desloca
+    os blocos do sumario com o float de antes, e a conferencia os refaz a cada tecla."""
+    return manual_sintetico(titulo_tw=15000, controle=True)
 
 
 def documento_simples(paragrafos: int = 260) -> bytes:
@@ -116,6 +141,8 @@ def _fechar(painel) -> None:
 
 def _ponto(painel, nome: str) -> int:
     doc = painel.documento_corpo()
+    if nome == "inicio":
+        return doc.firstBlock().position()  # antes das ancoras da capa
     if nome == "capa":
         b = doc.firstBlock()
         return b.position() + b.length() - 1
@@ -250,6 +277,107 @@ def testar_tiles() -> None:
     _fechar(painel)
 
 
+# -- antes das ancoras da capa (0.1.11) ------------------------------------------------------
+
+def _marcacoes_por_tecla(painel, pos: int, teclas: int = 8) -> float:
+    """markContentsDirty por tecla digitando em `pos` (a conferencia refazendo trechos)."""
+    from editdoc.ponte_qt.imagens import DocumentoQt
+    _ir(painel, pos)
+    _tecla(painel)
+    painel.viewport().grab()
+    conta = [0]
+
+    def contar(self, *a):
+        conta[0] += 1
+        return QTextDocument.markContentsDirty(self, *a)
+
+    DocumentoQt.markContentsDirty = contar
+    try:
+        for _ in range(teclas):
+            _tecla(painel)
+            painel.viewport().grab()
+    finally:
+        del DocumentoQt.markContentsDirty
+    for _ in range(teclas + 1):
+        painel.undo()
+    painel.viewport().grab()
+    return conta[0] / teclas
+
+
+def testar_antes_da_capa() -> None:
+    secao("antes das ancoras da capa, com o sumario num controle de conteudo (95 ms no real)")
+    from editdoc.ponte_qt import flutuantes as pq_flutuantes
+    painel = _painel(manual_capa_cheia())
+    g = painel.layout_pag.flutuantes
+    marcacoes = _marcacoes_por_tecla(painel, 0)
+    tiles = _tiles_por_tecla(painel, 0)
+    checa(marcacoes <= 2.0, f"a conferencia refaz o sumario numa chamada por tecla ({marcacoes:.1f}; "
+                            "eram 18, uma por bloco, na 0.1.10)")
+    checa(tiles <= 8.0, f"{tiles:.1f} tiles por tecla (a tela inteira, 16, na 0.1.10)")
+    iguais = []
+    original_comparar = pq_flutuantes.Gerente._comparar_refeitos
+
+    def anotar(self, refeitos, altura):
+        original_comparar(self, refeitos, altura)
+        iguais.append(self.refeito_igual)
+
+    pq_flutuantes.Gerente._comparar_refeitos = anotar
+    try:
+        from PySide6.QtCore import Qt
+        K = Qt.Key
+        teclas = [K.Key_A, K.Key_B, K.Key_C, K.Key_Backspace, K.Key_D, K.Key_E] * 3
+        ruins = _sequencia_confere(painel, 0, teclas, a_cada=3)
+    finally:
+        pq_flutuantes.Gerente._comparar_refeitos = original_comparar
+    checa(any(iguais), f"o sumario refeito volta igual e fica no cache ({sum(iguais)} de "
+                       f"{len(iguais)} conferencias)")
+    checa_igual(ruins, 0, "a tela com cache e' igual a' refeita do zero (a cada 3 teclas, com o "
+                          "cache aproveitado entre elas)")
+    # Contraprovas: cada metade da correcao desligada.
+    original_juntar = pq_flutuantes._juntar
+    pq_flutuantes._juntar = lambda faixas: list(faixas)
+    try:
+        separadas = _marcacoes_por_tecla(painel, 0)
+    finally:
+        pq_flutuantes._juntar = original_juntar
+    checa(separadas >= 5.0, f"contraprova: sem juntar as faixas, {separadas:.1f} chamadas por tecla")
+    pq_flutuantes.Gerente._comparar_refeitos = lambda self, r, a: None
+    try:
+        sem_comparar = _tiles_por_tecla(painel, 0)
+    finally:
+        pq_flutuantes.Gerente._comparar_refeitos = original_comparar
+    checa(sem_comparar >= tiles + 6, f"contraprova: sem comparar os blocos refeitos, "
+                                     f"{sem_comparar:.1f} tiles por tecla")
+    checa(g is painel.layout_pag.flutuantes, "o mesmo gerente durante o teste")
+    _fechar(painel)
+    # A comparacao dos blocos refeitos (contraprovas sem relogio): igual so' com a conferencia
+    # anterior guardada, a mesma altura do documento e as mesmas linhas e o mesmo texto.
+    painel = _painel(manual_capa_cheia())
+    g = painel.layout_pag.flutuantes
+    doc = painel.documento_corpo()
+    altura = doc.documentLayout().blockBoundingRect(doc.lastBlock()).bottom()
+    blocos = {1, 2, 3, 4}
+    g.esquecer_refeitos()
+    g._comparar_refeitos(blocos, altura)
+    checa(not g.refeito_igual, "contraprova: sem conferencia anterior guardada, nada e' igual")
+    g._comparar_refeitos(blocos, altura)
+    checa(g.refeito_igual, "os mesmos blocos, na mesma altura do documento: iguais")
+    g._comparar_refeitos(blocos, altura + 300)
+    checa(not g.refeito_igual, "contraprova: o documento mudou de altura")
+    g._comparar_refeitos(blocos, altura + 300)
+    linhas, _texto = g._refeitos[2]
+    g._refeitos[2] = (linhas, hash("outro texto"))
+    g._comparar_refeitos(blocos, altura + 300)
+    checa(not g.refeito_igual, "contraprova: o texto de um bloco refeito mudou")
+    g._refeitos[3] = ((-1,) + g._refeitos[3][0][1:], g._refeitos[3][1])
+    g._comparar_refeitos(blocos, altura + 300)
+    checa(not g.refeito_igual, "contraprova: as linhas de um bloco refeito mudaram de lugar")
+    painel._limpar_cache()
+    g._comparar_refeitos(blocos, altura + 300)
+    checa(not g.refeito_igual, "contraprova: depois de limpar o cache da tela, a comparacao recomeca")
+    _fechar(painel)
+
+
 # -- cache igual ao quadro novo --------------------------------------------------------------
 
 def _diferentes(a, b) -> int:
@@ -263,12 +391,18 @@ def _diferentes(a, b) -> int:
     return n
 
 
-def _sequencia_confere(painel, pos: int, teclas) -> int:
-    """Quantas teclas deixaram a tela com cache diferente da tela refeita do zero."""
+def _sequencia_confere(painel, pos: int, teclas, a_cada: int = 1) -> int:
+    """Quantas teclas deixaram a tela com cache diferente da tela refeita do zero.
+
+    `a_cada` > 1 (0.1.11): confere so' a cada tantas teclas, e as do meio pintam com o cache
+    que sobrou da anterior (limpar o cache a cada tecla nunca deixaria o cache ser reaproveitado)."""
     _ir(painel, pos)
     ruins = 0
-    for k in teclas:
+    for i, k in enumerate(teclas):
         _tecla(painel, k)
+        if (i + 1) % a_cada:
+            painel.viewport().grab()
+            continue
         com = painel.viewport().grab().toImage()
         painel._limpar_cache()
         sem = painel.viewport().grab().toImage()
@@ -473,11 +607,59 @@ def _p95_digitando(painel, pos: int, teclas: int = 80) -> float:
 #: mais lenta que a do gate. Medido nesta maquina, a frio: o manual custa ~2x o simples (sumario
 #: com links, PAGEREF e pontilhado; capa com objetos). Na 0.1.7 o sumario custava 20x (94 ms).
 FATOR_DO_SIMPLES = 2.5
+#: Teto absoluto da folga relativa (0.1.11): numa maquina tao carregada que o simples passa de
+#: 23 ms, a folga relativa deixaria passar uma regressao de verdade. As regressoes que este teste
+#: ja' pegou mediam 47 a 168 ms (sumario da 0.1.7; antes da capa na 0.1.10, nesta fixture).
+TETO_MS = 60.0
+#: Rodadas por ponto (0.1.11): simples e manual intercalados, e vale a MEDIANA de cada lado.
+#: Ate' a 0.1.10 era uma medida (com uma segunda tentativa): um pico de carga numa das 80 teclas
+#: da medida do manual reprovou o build (35,5 ms contra 10,8 ms do simples).
+RODADAS = 3
+#: Rodadas a mais, so' para o ponto que passou do limite, cada uma com o simples de novo.
+RODADAS_EXTRA = 2
+
+
+def avaliar(manual: list[float], simples: list[float],
+            fator: float = FATOR_DO_SIMPLES) -> tuple[bool, float, float, float]:
+    """(passou, mediana do manual, mediana do simples, limite). Ver as constantes acima."""
+    m, s = statistics.median(manual), statistics.median(simples)
+    limite = max(GATE_MS, min(TETO_MS, s * fator + 2.0))
+    return m <= limite, m, s, limite
+
+
+def testar_criterio_do_p95() -> None:
+    secao("criterio do p95 (0.1.11): pico isolado nao reprova; regressao de verdade reprova")
+    # O caso do build abortado: uma medida com pico (35,5 ms) entre medidas normais.
+    checa(avaliar([35.5, 9.8, 10.4], [10.8, 4.9, 5.2])[0],
+          "um pico numa das rodadas nao reprova (mediana)")
+    checa(avaliar([8.0, 9.0, 7.5], [3.5, 3.8, 3.6])[0], "no gate passa, qualquer que seja o simples")
+    # Contraprovas: regressao que aparece em toda rodada.
+    checa(not avaliar([35.0, 36.2, 34.8], [10.8, 4.9, 5.2])[0],
+          "contraprova: 35 ms em toda rodada, com o simples a 5 ms, reprova")
+    checa(not avaliar([95.0, 96.1, 97.3], [30.0, 31.0, 29.5])[0],
+          "contraprova: 95 ms reprova mesmo com o simples lento (teto absoluto)")
+    checa(not avaliar([168.0, 170.0, 165.0], [4.0, 4.1, 4.2], FATOR_ANTES_DA_CAPA)[0],
+          "contraprova: o ponto antes da capa da 0.1.10 (168 ms) reprova, mesmo com a folga dele")
+
+
+#: Folga do ponto antes das ancoras da capa (0.1.11). Cada tecla ali refaz o sumario inteiro (a
+#: conferencia, numa chamada) e os tiles da linha, que cruzam o sumario atras da capa: medido
+#: nesta maquina, 15 ms contra 4,7 do simples (3,3x) parada, e 4x carregada. Na 0.1.10, 168 ms
+#: (36x). As verificacoes sem relogio (`testar_antes_da_capa`) pegam cada metade da correcao.
+FATOR_ANTES_DA_CAPA = 5.0
+
+#: Pontos do p95: (nome, fixture, ponto da fixture, folga sobre o simples).
+PONTOS_P95 = (("capa", manual_sintetico, "capa", FATOR_DO_SIMPLES),
+              ("sumario", manual_sintetico, "sumario", FATOR_DO_SIMPLES),
+              ("corpo", manual_sintetico, "corpo", FATOR_DO_SIMPLES),
+              ("antes das ancoras da capa (sumario em controle de conteudo)", manual_capa_cheia,
+               "inicio", FATOR_ANTES_DA_CAPA))
 
 
 def testar_p95() -> None:
-    secao("p95 da digitacao (80 teclas com a pintura): capa, sumario e corpo")
-    manual, simples = manual_sintetico(), documento_simples()
+    secao("p95 da digitacao (80 teclas com a pintura): capa, sumario, corpo e antes da capa")
+    simples = documento_simples()
+    fixtures = {f: f() for f in {p[1] for p in PONTOS_P95}}
 
     def medir(docx: bytes, nome: str) -> float:
         # Um painel por medida, fechado e destruido depois: um segundo painel aberto (com o
@@ -490,19 +672,27 @@ def testar_p95() -> None:
             painel.deleteLater()
             drenar_eventos()
 
-    for nome in ("capa", "sumario", "corpo"):
-        # Duas tentativas: a maquina de desenvolvimento roda outras coisas, e um pico de carga
-        # no meio das 80 teclas nao e' o editor. A referencia e' medida logo antes, na mesma hora.
-        for tentativa in range(2):
-            referencia = medir(simples, "corpo")
-            p95 = medir(manual, nome)
-            limite = max(GATE_MS, referencia * FATOR_DO_SIMPLES + 2.0)
-            if p95 <= limite:
-                break
-        print(f"         {nome}: p95 {p95:.1f} ms (documento simples: {referencia:.1f} ms; "
-              f"tentativa {tentativa + 1})")
-        checa(p95 <= limite, f"{nome}: p95 {p95:.1f} ms no gate ({GATE_MS:.0f} ms) ou ate' "
-                             f"{FATOR_DO_SIMPLES}x o documento simples ({referencia:.1f} ms)")
+    # Cada rodada mede o simples (a referencia da mesma hora) e todos os pontos, intercalados.
+    medidas = {p[0]: [] for p in PONTOS_P95}
+    referencias = {p[0]: [] for p in PONTOS_P95}
+    for _rodada in range(RODADAS):
+        ref = medir(simples, "corpo")
+        for nome, fixture, ponto, _fator in PONTOS_P95:
+            medidas[nome].append(medir(fixtures[fixture], ponto))
+            referencias[nome].append(ref)
+    for nome, fixture, ponto, fator in PONTOS_P95:
+        passou, m, s, limite = avaliar(medidas[nome], referencias[nome], fator)
+        extra = 0
+        while not passou and extra < RODADAS_EXTRA:
+            # So' o ponto que passou do limite mede de novo, com a referencia de novo.
+            extra += 1
+            referencias[nome].append(medir(simples, "corpo"))
+            medidas[nome].append(medir(fixtures[fixture], ponto))
+            passou, m, s, limite = avaliar(medidas[nome], referencias[nome], fator)
+        print(f"         {nome}: p95 {[round(v, 1) for v in medidas[nome]]} ms, mediana {m:.1f} "
+              f"(simples: mediana {s:.1f}; limite {limite:.1f}; rodadas a mais: {extra})")
+        checa(passou, f"{nome}: mediana do p95 {m:.1f} ms no gate ({GATE_MS:.0f} ms) ou ate' "
+                      f"{fator}x o simples ({s:.1f} ms), com teto de {TETO_MS:.0f} ms")
 
 
 def main() -> int:
@@ -513,9 +703,11 @@ def main() -> int:
     usar_fontes_do_documento()
     # O relogio primeiro: as conferencias de pixel abaixo esquentam a maquina (medido: o p95 do
     # documento simples vai de 5 para 10 ms depois delas).
+    testar_criterio_do_p95()
     testar_p95()
     testar_conferencia()
     testar_tiles()
+    testar_antes_da_capa()
     testar_cache_igual()
     testar_caches_de_pintura()
     testar_pontilhado_e_marcas()

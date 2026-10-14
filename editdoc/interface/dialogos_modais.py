@@ -86,6 +86,28 @@ def pedir_perda(pai: QWidget | None, nome: str, linhas: list[str]) -> str:
     return "cancelar"
 
 
+def texto_da_falha_na_conferencia(nome: str, log: str) -> str:
+    """O que o usuario le quando a releitura do arquivo gravado nao bate (0.1.11)."""
+    return (f"Não foi possível salvar \"{nome}\".\n\n"
+            "Antes de substituir um arquivo, o EditDoc grava uma cópia e a lê de volta. "
+            "Desta vez a cópia lida não ficou igual ao documento na tela, e por isso nada foi "
+            "substituído: o arquivo original NÃO foi alterado, e o documento continua aberto "
+            "aqui, com as suas alterações.\n\n"
+            "Você pode salvar essa cópia, sem a conferência, em outro arquivo e abri-la no Word "
+            "para conferir. O detalhe técnico foi registrado no log do EditDoc:\n" + log)
+
+
+def pedir_falha_na_conferencia(pai: QWidget | None, nome: str, log: str) -> str:
+    """'copia' (salvar a copia nao conferida em outro arquivo) ou 'fechar'."""
+    caixa = _caixa(pai, "Salvar", texto_da_falha_na_conferencia(nome, log),
+                   QMessageBox.Icon.Warning)
+    copia = caixa.addButton("Salvar cópia não conferida...", QMessageBox.ButtonRole.ActionRole)
+    fechar = caixa.addButton("Fechar", QMessageBox.ButtonRole.RejectRole)
+    caixa.setDefaultButton(fechar)
+    caixa.exec()
+    return "copia" if caixa.clickedButton() is copia else "fechar"
+
+
 def pedir_sobrescrever(pai: QWidget | None, nome: str) -> bool:
     """True para gravar por cima de uma alteracao feita no disco por outro programa."""
     texto = (f"\"{nome}\" foi alterado por outro programa depois de aberto aqui.\n\n"

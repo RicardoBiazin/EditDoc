@@ -638,6 +638,13 @@ imagens viravam "Imagem flutuante". O arquivo já saía certo; só a aparência 
   anterior, as linhas são aceitas como estão (`_aceitas`, pela assinatura das linhas do
   bloco) e só voltam a ser conferidas se mudarem. Antes, cada tecla refazia isso 6 vezes e
   conferia até o fim do documento.
+- Blocos refeitos que voltam iguais (0.1.11): digitar antes das âncoras de uma capa que
+  reserva a folha inteira põe o float na página seguinte; o Qt desloca os blocos de baixo
+  com o float de antes e a conferência os refaz, a cada tecla, para o mesmo lugar de antes.
+  As faixas encostadas viram uma chamada só de `markContentsDirty` (`_juntar`), e
+  `Gerente.refeito_igual` diz que os blocos refeitos têm as mesmas linhas e o mesmo texto do
+  fim da conferência anterior, com a mesma altura do documento: a vista não tira nada do
+  cache. Limpar o cache da vista zera essa comparação (`esquecer_refeitos`).
 - Interação: clique no objeto seleciona (contorno com alças); o de trás só fora do texto.
   Delete e Backspace apagam, com desfazer; duplo clique na caixa abre o editor da 0.1.5.
 
@@ -797,6 +804,11 @@ aqui até as versões que os implementam; NOTA, desde a 0.1.10, é só a nota qu
 (sem referência no corpo, acima dos limites, referência fora do corpo). Nenhuma parte do pacote sai sem
 aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
 NOTA, MINIATURA). COMENTARIO desde a 0.1.6 é só o comentário que não pode ser lido.
+
+Conferência que falha (0.1.11): o arquivo gravado não substitui o original. A janela grava a
+cópia de recuperação, explica sem jargão (`dialogos_modais.pedir_falha_na_conferencia`; o
+motivo técnico vai para o log) e oferece salvar os mesmos bytes, sem a conferência, em outro
+arquivo, nunca no caminho do original nem no do destino. O documento continua "alterado".
 
 ## Ribbon
 
