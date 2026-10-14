@@ -17,8 +17,8 @@ from PySide6.QtWidgets import QComboBox, QFontComboBox, QTextEdit
 
 from editdoc.edicao import imagens, tabelas
 from editdoc.edicao.estado import ler
-from editdoc.interface.comandos import (ALINHAMENTOS, EDICAO_DE_FAIXA, ESPACAMENTOS, LINK,
-                                        LISTA_NUMERADA, TABELA, Comandos)
+from editdoc.interface.comandos import (ALINHAMENTOS, COMENTARIO, EDICAO_DE_FAIXA, ESPACAMENTOS,
+                                        LINK, LISTA_NUMERADA, TABELA, Comandos)
 from editdoc.ponte_qt import links
 
 
@@ -94,6 +94,21 @@ class AtualizadorDeEstado(QObject):
         editando = getattr(self._editor, "editando_faixa", lambda: None)() is not None
         for id_ in EDICAO_DE_FAIXA:
             c.acao(id_).setEnabled(editando)
+        # Comentarios (0.1.6): no corpo; responder, editar, resolver e excluir so' num trecho
+        # comentado. "Resolver" fica marcado na conversa resolvida.
+        atual = None
+        if hasattr(self._editor, "documento_corpo"):
+            from editdoc.edicao import comentarios as ed_comentarios
+            atual = ed_comentarios.no_cursor(self._editor)
+            cat = ed_comentarios.catalogo(self._editor)
+            c.acao("novo_comentario").setEnabled(not editando)
+            tem = bool(cat.itens)
+            for id_ in ("excluir_todos_comentarios", "comentario_anterior", "comentario_proximo"):
+                c.acao(id_).setEnabled(tem)
+            raiz = cat.obter(cat.raiz(atual)) if atual is not None else None
+            c.acao("resolver_comentario").setChecked(bool(raiz is not None and raiz.resolvido))
+        for id_ in COMENTARIO:
+            c.acao(id_).setEnabled(atual is not None)
 
         with QSignalBlocker(self._familia), QSignalBlocker(self._tamanho):
             if estado.familia and self._familia.currentFont().family() != estado.familia:

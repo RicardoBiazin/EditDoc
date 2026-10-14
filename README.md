@@ -17,7 +17,7 @@ O EditDoc não é afiliado à Microsoft. Word é marca registrada da Microsoft.
 ## O que ele faz
 
 Ao abrir, aparece uma janela com a faixa de opções no alto (Arquivo, Desfazer e Refazer,
-e as abas Página Inicial, Inserir, Layout e Exibir), a régua, e o documento como folhas
+e as abas Página Inicial, Inserir, Layout, Revisão e Exibir), a régua, e o documento como folhas
 brancas sobre um fundo cinza, com as margens, o cabeçalho e o rodapé de cada página. Na
 barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
@@ -33,6 +33,26 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   imagens, as planilhas dos gráficos e a posição na página). Na tela cada um aparece como
   um quadro com o nome ("Gráfico", "Equação: …") no lugar dele no texto; Delete ou
   Backspace apagam o objeto inteiro, e Ctrl+Z o traz de volta.
+- **Comentários** (desde a 0.1.6): os comentários do Word aparecem no **painel de
+  comentários** à direita (Revisão > Mostrar comentários), um cartão por conversa, com
+  autor, data, texto, as respostas e o estado "Resolvido"; o trecho comentado fica realçado
+  em amarelo claro (só na tela: não sai no PDF, na impressão nem no `.txt`). Clicar no cartão
+  seleciona o trecho; o cursor num trecho comentado destaca o cartão. **Revisão > Novo
+  comentário** (**Ctrl+Alt+M**) comenta a seleção (sem seleção, a palavra do cursor);
+  **Responder**, **Editar** (negrito, itálico, sublinhado e links), **Resolver** ou
+  **Reabrir**, **Excluir** (com as respostas), **Excluir todos**, **Anterior** e **Próximo**
+  estão na aba Revisão, no cartão e no botão direito. Comentário com campo ou menção (o "@"
+  do Word) abre só para leitura, com o motivo; responder e resolver continuam valendo. O
+  autor e as iniciais vêm de Arquivo > Opções (vazio = o usuário do Windows). Apagar todo o
+  trecho comentado leva o comentário junto, como no Word; apagar só uma ponta deixa o
+  comentário no que sobrou. Tudo se desfaz com Ctrl+Z. As partes do Word (`comments.xml`,
+  respostas e resolvido, ids e datas UTC, `people.xml`) voltam iguais quando você não mexe
+  nelas.
+- **Referências de estilo** (desde a 0.1.6): o estilo que o arquivo cita sem definir (os
+  estilos internos do Word, como o da marca de comentário ou o "Sumário 2") volta como veio,
+  com a aparência padrão do Word na tela; o estilo de tabela com formatação condicional
+  (cabeçalho colorido, faixas alternadas) volta ao arquivo, e o fundo das faixas e do
+  cabeçalho aparece na tela e no PDF.
 - **Texto das caixas de texto** (desde a 0.1.5): a caixa aparece do tamanho dela, com o
   texto dentro. **Duplo clique** na caixa (ou Enter com a caixa selecionada, ou **Editar
   texto da caixa** no botão direito) abre o editor do texto, com negrito (Ctrl+B), itálico
@@ -124,7 +144,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.5-win64.zip` da página
+1. Baixe `EditDoc-0.1.6-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -164,6 +184,7 @@ Requer Windows 10 ou 11, 64 bits.
 | Espaçamento 1,0, 1,5 e 2,0 | Ctrl+1, Ctrl+5, Ctrl+2 |
 | Quebra de página | Ctrl+Enter |
 | Inserir ou editar link | Ctrl+K |
+| Novo comentário | Ctrl+Alt+M |
 | Abrir o link | Ctrl+clique no link |
 | Estilos Normal, Título 1, 2 e 3 | Ctrl+Shift+N, Ctrl+Alt+1, 2 e 3 |
 | Painel de estilos | Ctrl+Alt+Shift+S |
@@ -174,7 +195,7 @@ Requer Windows 10 ou 11, 64 bits.
 | Sair da edição do cabeçalho e do rodapé | Esc |
 
 **Faixa pelo teclado**, como no Word: **Alt** (apertar e soltar) ou **F10** mostra uma letra
-em cada aba (P Página Inicial, N Inserir, L Layout, E Exibir, H Cabeçalho e Rodapé,
+em cada aba (P Página Inicial, N Inserir, L Layout, R Revisão, E Exibir, H Cabeçalho e Rodapé,
 A Arquivo, 1 Desfazer, 2 Refazer). A letra da aba mostra as letras dos botões dela, e a
 letra do botão executa o comando. Com o foco na faixa, as setas andam entre abas e
 botões, Enter ou Espaço apertam o botão e Esc volta ao documento. **F6** e **Shift+F6**
@@ -186,7 +207,7 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 
 - **Política de perda ao abrir `.docx`**: tudo o que o arquivo tem e o EditDoc não edita
   gera um aviso na barra amarela, com o botão Detalhes. Se salvar apagaria alguma coisa
-  (comentário, revisão, nota de rodapé, controle de conteúdo, seções com cabeçalhos
+  (revisão, nota de rodapé, controle de conteúdo de linha de tabela, seções com cabeçalhos
   diferentes, formatação que o EditDoc não conhece...), o primeiro Salvar pede
   confirmação e oferece "Salvar cópia". **Não** se perdem: caixas de texto, formas,
   gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em formato que a tela
@@ -194,7 +215,12 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   referências, data...) e as partes do arquivo que o EditDoc não edita (desde a 0.1.3);
   a numeração de listas inteira, com os níveis, os formatos, os símbolos e a lista ligada
   ao estilo (desde a 0.1.4); a formatação de texto, parágrafo e tabela que o EditDoc não
-  edita e os controles de conteúdo de parágrafo e de bloco (desde a 0.1.5).
+  edita e os controles de conteúdo de parágrafo e de bloco (desde a 0.1.5); os
+  comentários, com respostas, resolvido e pessoas, e as referências a estilos que o arquivo
+  cita sem definir, além do estilo de tabela com formatação condicional (desde a 0.1.6).
+  Comentário ainda avisa só quando não pode ser lido (danificado, acima de 5000, ancorado
+  só no cabeçalho, no rodapé ou numa caixa de texto) ou quando a edição apagou a marca de
+  referência dele sem levá-lo junto. A impressão e o PDF saem sem os comentários.
   Os estilos que o EditDoc não altera e o tema voltam como vieram. Ainda avisam, com
   confirmação, só o que não pode voltar inteiro: objeto, link ou campo com referência
   quebrada no arquivo, ou acima dos limites (2000 objetos; 20.000 campos, links ou
@@ -263,7 +289,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.5-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.6-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

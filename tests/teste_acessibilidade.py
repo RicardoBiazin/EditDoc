@@ -247,7 +247,8 @@ def testar_teclado_da_faixa() -> None:
     checa(janela.painel.hasFocus(), "o foco comeca no documento")
     QTest.keyClick(janela.painel, Key.Key_F10)
     checa(barra.hasFocus() and teclado.ativo, "F10 leva o foco as abas da faixa")
-    checa_igual(sorted(teclado.dicas_visiveis()), sorted(["A", "1", "2", "P", "N", "L", "E"]),
+    # 0.1.6: a aba Revisao (comentarios) entrou, com a letra R do Word.
+    checa_igual(sorted(teclado.dicas_visiveis()), sorted(["A", "1", "2", "P", "N", "L", "R", "E"]),
                 "as dicas das abas e do topo aparecem")
     _tecla(Key.Key_Right)
     checa_igual(janela.faixa.aba_atual(), "Inserir", "seta para a direita troca de aba")

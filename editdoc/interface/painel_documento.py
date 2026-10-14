@@ -34,6 +34,11 @@ selecionada ou "Editar texto da caixa" no menu de contexto abrem o editor do tex
 Propriedades preservadas (0.1.5, ponte_qt/propriedades.py): copiar leva os extras dos trechos
 e dos blocos (realce, tabulacoes, bordas...) em MIME_PROPRIEDADES, e colar no EditDoc os
 devolve. Digitar herda o formato do vizinho e o Enter copia o do bloco, com os extras juntos.
+
+Comentarios (0.1.6, edicao/comentarios.py): apagar uma selecao com ancoras segue a regra do
+Word (`_remover_selecao`): o comentario cujo trecho inteiro (ou a referencia) foi apagado vai
+junto; o que perdeu so' uma ponta fica ancorado no que sobrou. As ancoras nao tem largura e
+o teclado as pula, como as dos marcadores. `comentariosAlterados` avisa o painel lateral.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ from PySide6.QtGui import (QAction, QDesktopServices, QImage, QKeyEvent, QKeySeq
                            QTextDocumentFragment, QTextFormat)
 from PySide6.QtWidgets import QApplication, QMenu
 
+from editdoc.edicao import comentarios as ed_comentarios
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao import links as ed_links
@@ -60,6 +66,7 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.folhas import escala_do_zoom
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import campos as pq_campos
+from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import imagens as pq_imagens
 from editdoc.ponte_qt import links as pq_links
 from editdoc.ponte_qt import listas as pq_listas
@@ -122,6 +129,8 @@ class PainelDocumento(VistaPaginas):
     mensagem = Signal(str)
     #: Entrou ou saiu da edicao do cabecalho e do rodape (a faixa mostra a aba propria).
     modoFaixaAlterado = Signal()
+    #: Os comentarios mudaram (0.1.6): o painel lateral redesenha.
+    comentariosAlterados = Signal()
 
     def __init__(self, fonte: str, tamanho: float, parent=None) -> None:
         layout = LayoutPaginado(Pagina(), fonte, float(tamanho))
@@ -186,14 +195,34 @@ class PainelDocumento(VistaPaginas):
     def undo(self) -> None:
         doc = self.document()
         if doc.isUndoAvailable():
+            antes = self._assinatura_comentarios()
             doc.undo(self._cursor)
-            self._depois_de_mover()
+            self._depois_do_desfazer(antes)
 
     def redo(self) -> None:
         doc = self.document()
         if doc.isRedoAvailable():
+            antes = self._assinatura_comentarios()
             doc.redo(self._cursor)
-            self._depois_de_mover()
+            self._depois_do_desfazer(antes)
+
+    def _assinatura_comentarios(self):
+        return pq_comentarios.assinatura(self.documento_corpo())[:2]
+
+    def _depois_do_desfazer(self, antes) -> None:
+        if self._assinatura_comentarios() != antes:
+            # O catalogo de comentarios voltou (0.1.6): o realce e o painel mudam junto.
+            self._limpar_cache()
+            self.comentariosAlterados.emit()
+        self._depois_de_mover()
+
+    def _remover_selecao(self) -> None:
+        """Apaga a selecao; com ancoras de comentario, pela regra do Word (0.1.6)."""
+        if self._edicao is not None or not ed_comentarios.remover_selecao(self._cursor):
+            self._cursor.removeSelectedText()
+        else:
+            self._limpar_cache()
+            self.comentariosAlterados.emit()
 
     def selectAll(self) -> None:
         self._cursor.select(QTextCursor.SelectionType.Document)
@@ -237,7 +266,7 @@ class PainelDocumento(VistaPaginas):
     def cut(self) -> None:
         self.copy()
         if self._cursor.hasSelection():
-            self._cursor.removeSelectedText()
+            self._remover_selecao()
             self._depois_de_mover()
 
     def paste(self) -> None:
@@ -257,7 +286,7 @@ class PainelDocumento(VistaPaginas):
             frag = QTextDocumentFragment.fromPlainText(md.text())
         self._cursor.beginEditBlock()
         if self._cursor.hasSelection():
-            self._cursor.removeSelectedText()
+            self._remover_selecao()
         self._limpar_estrutural()
         inicio_colado = self._cursor.position()
         no_inicio_vazio = self._cursor.block().length() <= 1
@@ -574,11 +603,12 @@ class PainelDocumento(VistaPaginas):
             self._cursor.setBlockFormat(bf)
 
     def _inserir(self, texto: str) -> None:
-        estrutural = self._estrutural()
+        # Selecao com ancora de comentario (0.1.6): apagar e digitar sao um passo so'.
+        estrutural = self._estrutural() or (self._cursor.hasSelection() and self._edicao is None)
         if estrutural:
             self._cursor.beginEditBlock()
         if self._cursor.hasSelection():
-            self._cursor.removeSelectedText()
+            self._remover_selecao()
         self._limpar_estrutural()
         formato = self._cursor.charFormat()
         # Logo depois de um link, o texto digitado nao entra no link (0.1.3).
@@ -641,7 +671,7 @@ class PainelDocumento(VistaPaginas):
             return
         self._cursor.beginEditBlock()
         if self._cursor.hasSelection():
-            self._cursor.removeSelectedText()
+            self._remover_selecao()
         self._limpar_estrutural()
         # Enter no fim de um Titulo: o paragrafo novo usa o estilo seguinte (`next`) (M6).
         no_fim = self._cursor.atBlockEnd() and self._cursor.currentTable() is None
@@ -712,10 +742,10 @@ class PainelDocumento(VistaPaginas):
 
     def _apagar(self, anterior: bool, palavra: bool = False) -> None:
         if self._cursor.hasSelection():
-            self._cursor.removeSelectedText()
+            self._remover_selecao()
         elif palavra:
             self._cursor.movePosition(M.WordLeft if anterior else M.WordRight, Selecionar)
-            self._cursor.removeSelectedText()
+            self._remover_selecao()
         elif anterior and ed_listas.backspace_no_inicio(self):
             # Lista (0.1.4): no inicio do item, tira o numero (e de novo o recuo).
             pass

@@ -590,6 +590,8 @@ def escrever_estilos(est: Estilos | None, listas: set | None = None) -> bytes:
     por_id = {_atr(el, "styleId"): el for el in raiz.findall(q("style"))}
     for e in est.itens.values():
         el = por_id.get(e.id)
+        if e.virtual and not e.alterado:
+            continue  # referencia preservada (0.1.6): o arquivo nao tinha a definicao
         if el is not None and e.no_arquivo and not e.alterado:
             continue  # volta como veio
         if e.tipo not in ("paragrafo", "caractere"):

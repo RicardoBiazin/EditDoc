@@ -35,6 +35,7 @@ from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_COR
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
 from editdoc.modelo.numeracao import tipos_dos_paragrafos
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
+from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
@@ -305,6 +306,10 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
         tabela.margens_celula_tw = tuple(int(m) for m in margens)
     extras = dado.get("extras")
     tabela.extras = extras if isinstance(extras, str) and extras else None
+    estilo = dado.get("estilo")
+    if isinstance(estilo, str) and estilo and res is not None \
+            and getattr(res.estilos.obter(estilo), "tipo", None) == "tabela":
+        tabela.estilo = estilo  # 0.1.6: o estilo de origem volta
     cabecalho = tf.headerRowCount()
     linhas, colunas = qt.rows(), qt.columns()
     for r in range(linhas):
@@ -357,5 +362,8 @@ def extrair(documento_qt: QTextDocument) -> Documento:
     paragrafos = _blocos(documento_qt.rootFrame().begin(), largura_corpo,
                          res=pq_estilos.Resolvedor(estilos))
     doc = Documento(paragrafos=paragrafos, estilos=estilos, numeracao=listas.catalogo(documento_qt))
+    # Comentarios (0.1.6): o catalogo vigente (as ancoras ja' vieram como marcas).
+    cat = pq_comentarios.catalogo(documento_qt)
+    doc.comentarios = cat if cat.itens or cat.xml_comentarios is not None else None
     tipos_dos_paragrafos(doc)
     return doc

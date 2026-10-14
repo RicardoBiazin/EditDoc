@@ -52,11 +52,20 @@ def padrao() -> dict:
         "abrir_pdf_depois": False,
         "recentes_maximo": MAXIMO_RECENTES,
         "tema": "sistema",
+        # Comentarios (0.1.6): autor e iniciais. Vazio = o usuario do Windows
+        # (edicao/comentarios.autor_das_preferencias).
+        "nome_usuario": "",
+        "iniciais": "",
     }
 
 
 def _fonte_valida(v) -> bool:
     return 0 < len(v.strip()) <= 100 and v.isprintable()
+
+
+def _texto_valido(maximo: int):
+    """Texto livre de uma linha (vazio vale: e' o padrao)."""
+    return lambda v: len(v) <= maximo and v.isprintable()
 
 
 #: chave -> funcao que diz se o valor (ja' do tipo certo) vale.
@@ -70,6 +79,8 @@ _VALIDOS = {
     "recuperacao_minutos": lambda v: 1 <= v <= 120,
     "recentes_maximo": lambda v: 0 <= v <= LIMITE_RECENTES,
     "tema": lambda v: v in TEMAS,
+    "nome_usuario": _texto_valido(255),
+    "iniciais": _texto_valido(9),
 }
 
 

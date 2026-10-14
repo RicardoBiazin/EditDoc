@@ -525,19 +525,53 @@ Implementados na 0.1.5.
   (fundo branco e preto) para a transparência, bitmap no máximo 1800 px. A vinculada a
   arquivo externo nunca é lida.
 
+## Comentários e referências de estilo (0.1.6)
+
+Implementados na 0.1.6.
+
+- Modelo: `MarcaComentario("inicio"|"fim"|"referencia", id)` no fluxo, como as marcas de
+  campo; `Documento.comentarios` (`modelo/comentarios.py`, fora da comparação) com os
+  `Comentario` (imutáveis: autor, iniciais, `w:date`, conteúdo em parágrafos, pai,
+  resolvido, `paraId`, `durableId`, `dateUtc`, o XML de origem e as relações externas dele)
+  e os bytes das partes de origem.
+- Leitura: o `comments.xml` antes do corpo (o conteúdo pelo leitor de parágrafos, com as
+  relações da parte); as partes estendidas por paraId/durableId; âncora só no corpo; o
+  comentário sem referência no corpo sai, com COMENTARIO.
+- Escrita: sem mudança, os bytes de origem; senão, o XML de origem de cada comentário não
+  mudado (rIds dos links remapeados, mantendo o Id quando livre) e o gerado para o resto.
+  Partes estendidas: as de origem e, se o catálogo mudou (novo, excluído, resposta,
+  resolvido), as três. `comentarios.preparar` (escritor e conferência) dá paraId/durableId
+  deterministas a quem não tem e põe o autor novo no `people.xml`, que continua uma parte
+  preservada do pacote.
+- Qt (`ponte_qt/comentarios.py`): âncoras são marcas sem largura (`TIPO_MARCADOR`, o
+  teclado pula); o catálogo vai no quadro raiz (PROP_COMENTARIOS = UserProperty + 30) como
+  chaves de um registro, e entra no desfazer; o realce é uma seleção extra da pintura da
+  folha, só na tela. `edicao/comentarios.py` tem os comandos e a regra de apagar do Word.
+- Referências de estilo: `Estilo.virtual` (referência preservada): o leitor registra o id
+  citado sem definição (`Estilos.preservar_referencia`), o escritor grava a referência e não
+  a definição, o validador aceita só esses ids (`ordem.validar(..., estilos_preservados)`).
+  `ESTILOS_LATENTES_WORD` dá a aparência padrão do Word; `garantir` materializa o virtual
+  que o EditDoc passa a usar. Tabela: `Tabela.estilo` e o `tblLook` voltam;
+  `Celula.fundo_estilo` (fora da comparação e do JSON) é o fundo condicional da tela.
+
+Limites: "Imprimir marcações" não existe (impressão e PDF sem comentários); comentário em
+cabeçalho, rodapé ou caixa de texto não é preservado; copiar e colar texto comentado não
+leva o comentário; da formatação condicional de tabela, só o fundo aparece na tela.
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
 0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3; definições de
 numeração, desde a 0.1.4; formatação que o modelo não representa e controles de conteúdo de
-parágrafo e de bloco, desde a 0.1.5) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
+parágrafo e de bloco, desde a 0.1.5; comentários editáveis e referências de estilo sem
+definição, desde a 0.1.6) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
 LISTA_NIVEL só para referência quebrada, nível fora de 0 a 8 ou numeração acima dos
 limites, e LISTA_EM_CAIXA só quando a numeração do arquivo não pôde ser lida. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
 confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
-não pede confirmação. Comentários, revisões, notas de rodapé de verdade e controles de
+não pede confirmação. Revisões, notas de rodapé de verdade e controles de
 conteúdo de linha ou célula de tabela entram aqui até as versões que os implementam. Nenhuma parte do pacote sai sem
 aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
-NOTA, MINIATURA).
+NOTA, MINIATURA). COMENTARIO desde a 0.1.6 é só o comentário que não pode ser lido.
 
 ## Ribbon
 
@@ -561,6 +595,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | M8 Polimento | 0.1.0 (feito) | recuperação automática, preferências, acessibilidade, documentação final |
 | Listas | 0.1.4 (feito) | numbering.xml inteiro, números como o Word, galeria, vários níveis, teclado |
 | Sem perda | 0.1.5 (feito) | rPr/pPr/tabela preservados, controles de conteúdo, texto da caixa editável, EMF/WMF/TIFF/SVG na tela |
+| Comentários | 0.1.6 (feito) | comments.xml e partes estendidas, painel, aba Revisão, referências de estilo preservadas |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em
@@ -568,7 +603,7 @@ modo contínuo, com paginação só na impressão.
 
 ## Fora da 0.1.0
 
-Revisão com controle de alterações, comentários, notas de rodapé, gerar e atualizar
+Revisão com controle de alterações, notas de rodapé (comentários desde a 0.1.6), gerar e atualizar
 índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações e formas (preservadas sem
 edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas, seções múltiplas editáveis, ortografia (prevista para a
 0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).

@@ -457,6 +457,16 @@ def validar_partes_xml(partes: dict[str, bytes]) -> list[str]:
                 problemas += [f"{nome}: {p}" for p in validar_estrutura(raiz)]
             if nome == "word/document.xml":
                 problemas += [f"{nome}: {p}" for p in validar_secao(raiz)]
+    if "word/comments.xml" in partes:
+        # Comentarios (0.1.6): o w:comment de origem volta como veio (w14, rsid...): a ordem
+        # aceita filho de extensao, como no styles.xml; campos e marcadores valem por parte.
+        nome = "word/comments.xml"
+        raiz = etree.fromstring(partes[nome])
+        opacos = dentro_de_opacos(raiz)
+        problemas += [f"{nome}: {p}" for p in validar_ordem(raiz, True)]
+        problemas += [f"{nome}: {p}" for p in validar_xml_space(raiz)]
+        problemas += [f"{nome}: {p}" for p in _validar_campos(raiz, opacos)]
+        problemas += [f"{nome}: {p}" for p in validar_marcadores(raiz, opacos)]
     return problemas
 
 
@@ -485,19 +495,24 @@ def validar_secao(raiz) -> list[str]:
     return problemas
 
 
-def validar_estilos(partes: dict[str, bytes]) -> list[str]:
+def validar_estilos(partes: dict[str, bytes], preservados=()) -> list[str]:
     """Todo w:pStyle e w:rStyle (M6) aponta para um estilo do styles.xml, do tipo certo.
 
     O Word troca a referencia quebrada pelo Normal sem avisar: o paragrafo perde o estilo
     calado. O escritor so' grava estilo que esta' no catalogo; isto prova.
+
+    `preservados` (0.1.6): ids que o arquivo de origem citava sem definir (o "CommentReference"
+    latente do Word) e que voltam como vieram; so' esses passam sem definicao.
     """
     if "word/styles.xml" not in partes:
         return []
     estilos = etree.fromstring(partes["word/styles.xml"])
     tipos = {s.get(q("styleId")): s.get(q("type")) or "paragraph"
              for s in estilos.iter(q("style"))}
+    preservados = set(preservados)
     problemas: list[str] = []
     nomes = ["word/document.xml"] + sorted(n for n in partes if eh_faixa(n))
+    nomes += [n for n in ("word/comments.xml",) if n in partes]
     for nome in nomes:
         if nome not in partes:
             continue
@@ -508,13 +523,17 @@ def validar_estilos(partes: dict[str, bytes]) -> list[str]:
                 if el in opacos:
                     continue  # caixa de texto preservada: o estilo e' o do arquivo de origem
                 sid = el.get(q("val"))
-                if tipos.get(sid) != tipo:
+                if tipos.get(sid) != tipo and not (sid in preservados and sid not in tipos):
                     problemas.append(f"{nome}: {tag} '{sid}' sem estilo de {tipo} no styles.xml")
     return problemas
 
 
-def validar(partes: dict[str, bytes]) -> list[str]:
-    """Tudo: pacote e partes. Lista vazia quando o arquivo esta' de acordo."""
+def validar(partes: dict[str, bytes], estilos_preservados=()) -> list[str]:
+    """Tudo: pacote e partes. Lista vazia quando o arquivo esta' de acordo.
+
+    `estilos_preservados`: ver `validar_estilos` (0.1.6)."""
     from editdoc.formato_docx import numeracao  # import tardio: numeracao usa as ordens daqui
-    return (validar_pacote(partes) + validar_partes_xml(partes) + validar_estilos(partes)
-            + numeracao.validar(partes))
+    from editdoc.formato_docx import comentarios  # 0.1.6
+    return (validar_pacote(partes) + validar_partes_xml(partes)
+            + validar_estilos(partes, estilos_preservados)
+            + numeracao.validar(partes) + comentarios.validar(partes))

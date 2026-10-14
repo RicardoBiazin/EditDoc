@@ -51,6 +51,7 @@ from dataclasses import replace
 
 from lxml import etree
 
+from editdoc.formato_docx import comentarios as fx_comentarios
 from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos
@@ -65,9 +66,10 @@ from editdoc.formato_docx.ordem import caminho_dos_rels
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import (FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO,
                                    normalizar_instrucao, tipo_do_campo)
+from editdoc.modelo import comentarios as mod_comentarios
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Campo, Celula,
-                                      Documento, Imagem, Linha, Link, MarcaCampo, MarcaConteudo,
-                                      Marcador,
+                                      Documento, Imagem, Linha, Link, MarcaCampo,
+                                      MarcaComentario, MarcaConteudo, Marcador,
                                       Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
@@ -110,6 +112,8 @@ LIMITES_PADRAO = {
     **fx_pacote.LIMITES,
     # Numeracao de listas (0.1.4): definicoes, niveis e tamanho do texto do numero.
     **mod_numeracao.LIMITES,
+    # Comentarios (0.1.6): quantos, o tamanho de cada um e do comments.xml, e respostas.
+    **mod_comentarios.LIMITES,
 }
 
 #: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
@@ -125,8 +129,8 @@ _LADOS_TABELA = (("top", "sup"), ("left", "esq"), ("start", "esq"), ("bottom", "
 _VALIGN = {"top": "topo", "center": "centro", "bottom": "base"}
 _JC_TABELA = {"left": "esquerda", "start": "esquerda", "center": "centro",
               "right": "direita", "end": "direita"}
-#: Filhos de tblPr do estilo que o escritor impoe ("Table Grid"): nao valem na tabela gravada.
-#: Desde a 0.1.5 o resto (tblOverlap, tblpPr, shd...) vai para os extras da tabela.
+#: Filhos de tblPr que o laco abaixo nao le: desde a 0.1.6 o tblLook e o tamanho das faixas
+#: vao para os extras da tabela (e voltam); a revisao sai, com aviso.
 _TBLPR_NEUTRAS = {"tblLook", "tblStyleRowBandSize", "tblStyleColBandSize", "tblPrChange"}
 
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -141,8 +145,7 @@ _JC = {"left": "esquerda", "start": "esquerda", "center": "centro",
 
 _CONTEINERES_INLINE = {"hyperlink", "fldSimple", "smartTag", "customXml", "dir", "bdo",
                        "moveTo", "ins"}
-_IGNORADOS_INLINE = {"pPr", "proofErr", "permStart",
-                     "permEnd", "commentRangeStart", "commentRangeEnd", "lastRenderedPageBreak"}
+_IGNORADOS_INLINE = {"pPr", "proofErr", "permStart", "permEnd", "lastRenderedPageBreak"}
 _IGNORADOS_BLOCO = {"sectPr", "permStart", "permEnd",
                     "tblPr", "tblGrid", "sdtPr", "sdtEndPr", "tcPr", "trPr"}
 
@@ -254,10 +257,16 @@ class _Contexto:
         self.descartar: list[Run] = []
         #: controles de conteudo preservados (0.1.5)
         self.total_conteudos = 0
+        #: comentarios (0.1.6): a historia que se le ("corpo", "faixa" ou "comentario") e os
+        #: w:id lidos do comments.xml. Ancora fora do corpo (cabecalho, rodape, o proprio
+        #: comentario) nao vale: o comentario sem referencia no corpo sai, com aviso.
+        self.historia = "corpo"
+        self.comentarios_ids: set[int] = set()
 
     def estilo_existe(self, sid, tipo: str) -> bool:
-        estilo = self.estilos.obter(sid) if sid else None
-        return estilo is not None and estilo.tipo == tipo
+        """O estilo vale: existe com o tipo, ou (0.1.6) o arquivo o cita sem definir e a
+        referencia passa a ser preservada (`Estilos.preservar_referencia`)."""
+        return self.estilos.preservar_referencia(sid, tipo)
 
 
 # -- objetos opacos -------------------------------------------------------------
@@ -309,9 +318,10 @@ def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
             if fonte:
                 run.fonte = fonte
         elif loc == "rStyle":
+            # Estilo que o styles.xml nao define (o "CommentReference" latente do Word): desde
+            # a 0.1.6 a referencia e' preservada. ESTILO so' para id invalido ou de outro tipo.
             sid = _atr(f, "val")
-            estilo = ctx.estilos.obter(sid)
-            if estilo is not None and estilo.tipo == "caractere":
+            if ctx.estilo_existe(sid, "caractere"):
                 run.estilo = sid
             elif sid not in (None, "DefaultParagraphFont"):
                 c.somar("ESTILO")
@@ -334,8 +344,7 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
             _ler_numpr(f, out, ctx)
         elif loc == "pStyle":
             sid = _atr(f, "val")
-            estilo = ctx.estilos.obter(sid)
-            if estilo is not None and estilo.tipo == "paragrafo":
+            if ctx.estilo_existe(sid, "paragrafo"):
                 # O estilo padrao fica None: e' o que vale sem w:pStyle.
                 out["estilo"] = None if sid == ctx.estilos.id_padrao() else sid
             elif sid is not None:
@@ -526,6 +535,9 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     elif loc == "instrText":
         if ctx.campos and ctx.campos[-1]["fase"] == "instr":
             topo = ctx.campos[-1]
+            if "rpr_codigo" not in topo:
+                # 0.1.6: o rPr do run do codigo (o do primeiro instrText) volta ao arquivo.
+                topo["rpr_codigo"] = fx_props.rpr_canonico(partes.rpr, ctx.estilo_existe)
             texto = f.text or ""
             topo["tamanho"] += len(texto)
             if topo["tamanho"] > ctx.lim["instrucao_campo"]:
@@ -543,7 +555,15 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     elif loc in ("pict", "object"):
         partes.objeto(f, ctx)
     elif loc == "commentReference":
-        c.somar("COMENTARIO")
+        # Comentario (0.1.6): a referencia vira marca no fluxo, com a formatacao do run (o
+        # rStyle "CommentReference"). Fora do corpo, ou sem o comentario, nao vale.
+        ident = _id_de_comentario(f, ctx)
+        if ident is not None and _destino_do_texto(ctx) is None:
+            partes.descarregar()
+            partes.saida.append(replace(partes.base, texto="",
+                                        marca=MarcaComentario("referencia", ident)))
+    elif loc == "annotationRef":
+        return  # a marca do inicio do comentario (dentro do comments.xml): o escritor a refaz
     elif loc in ("footnoteReference", "endnoteReference"):
         c.somar("NOTA")
     else:
@@ -592,7 +612,8 @@ def _fld_char(f, partes: _Pedacos, ctx: _Contexto) -> None:
                    "sujo": _onoff_atr(f, "dirty"), "travado": _onoff_atr(f, "fldLock"),
                    "extra": etree.tostring(f) if len(f) else b"", "resultado": [],
                    "separou": False, "tamanho": 0, "run": None, "saida": partes.saida,
-                   "provisorios": []}
+                   "provisorios": [],
+                   "rpr_begin": fx_props.rpr_canonico(partes.rpr, ctx.estilo_existe)}
         if not ignorado:
             ctx.total_campos += 1
             if not no_codigo:
@@ -604,6 +625,7 @@ def _fld_char(f, partes: _Pedacos, ctx: _Contexto) -> None:
         if pilha and pilha[-1]["fase"] == "instr":
             pilha[-1]["fase"] = "resultado"
             pilha[-1]["separou"] = True
+            pilha[-1]["rpr_separador"] = fx_props.rpr_canonico(partes.rpr, ctx.estilo_existe)
             _descartar_provisorios(pilha[-1], ctx)
     elif tipo == "end":
         if not pilha:
@@ -615,10 +637,14 @@ def _fld_char(f, partes: _Pedacos, ctx: _Contexto) -> None:
                 ctx.coletor.somar("CAMPO")
             # Com marca no fluxo, `_limpar_marcas` a tira e conta o aviso.
             return
+        rpr_codigo = e.get("rpr_codigo")
+        rpr_separador = e.get("rpr_separador")
         campo = Campo(codigo=_juntar_codigo(e["codigo"]), sujo=e["sujo"], travado=e["travado"],
                       sem_resultado=not e["separou"],
                       resultado="".join(e["resultado"]) if e["no_codigo"] else "",
-                      extra=e["extra"])
+                      extra=e["extra"],
+                      rpr_codigo=rpr_codigo if rpr_codigo != e["rpr_begin"] else None,
+                      rpr_separador=rpr_separador if rpr_separador != e["rpr_begin"] else None)
         if e["no_codigo"]:
             pai = pilha[-1] if pilha else None
             if pai is not None and pai["fase"] == "instr":
@@ -846,6 +872,11 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
         elif loc in ("bookmarkStart", "bookmarkEnd"):
             if _destino_do_texto(ctx) is None:
                 _marcador(f, loc, ctx, saida)
+        elif loc in ("commentRangeStart", "commentRangeEnd"):
+            ident = _id_de_comentario(f, ctx)
+            if ident is not None and _destino_do_texto(ctx) is None:
+                saida.append(Run(marca=MarcaComentario(
+                    "inicio" if loc == "commentRangeStart" else "fim", ident)))
         elif loc == "fldSimple":
             _campo_simples(f, ctx, saida)
         elif loc in ("ins", "moveTo"):
@@ -1009,6 +1040,17 @@ def _blocos(elemento, paras: list[Bloco], ctx: _Contexto, achatar: bool = False)
             c.somar("REVISAO")
         elif loc in ("bookmarkStart", "bookmarkEnd"):
             _marcador(f, loc, ctx, ctx.marcas_pendentes)
+        elif loc in ("commentRangeStart", "commentRangeEnd"):
+            # Ancora entre paragrafos (0.1.6): o fim fica no fim do paragrafo de cima; o
+            # inicio, no comeco do paragrafo seguinte (como os marcadores).
+            ident = _id_de_comentario(f, ctx)
+            if ident is not None:
+                marca = Run(marca=MarcaComentario(
+                    "inicio" if loc == "commentRangeStart" else "fim", ident))
+                if loc == "commentRangeEnd" and paras and isinstance(paras[-1], Paragrafo):
+                    paras[-1].runs.append(marca)
+                else:
+                    ctx.marcas_pendentes.append(marca)
         elif loc in _IGNORADOS_BLOCO or loc == "tblPrEx":
             continue
         else:
@@ -1160,6 +1202,9 @@ def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
                 continue
             if loc == "tblStyle":
                 estilo_id = _atr(f, "val")
+                # 0.1.6: o estilo volta como veio (a referencia sem definicao tambem).
+                if estilo_id != fx_estilos.ESTILO_TABELA and ctx.estilo_existe(estilo_id, "tabela"):
+                    tabela.estilo = estilo_id  # "Table Grid" e' o None (o padrao do escritor)
             elif loc == "tblW":
                 tipo = _atr(f, "type") or "dxa"
                 valor = _inteiro(_atr(f, "w")) or 0
@@ -1206,11 +1251,9 @@ def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
         if getattr(bordas, campo) is None:
             setattr(bordas, campo, Borda(estilo="nenhuma", oitavos_pt=0))
     tabela.bordas = bordas
+    # Formatacao condicional do estilo (linha de cabecalho, faixas...): desde a 0.1.6 o estilo e
+    # o tblLook voltam ao arquivo; o fundo de cada celula vai para a tela (`_fundos_do_estilo`).
     cadeia = _estilo_de_tabela(ctx, estilo_id)
-    if any(e.find(q("tblStylePr")) is not None or e.find(q("tcPr")) is not None
-           or e.find(q("rPr")) is not None for e in cadeia):
-        # Estilo com formatacao condicional (linha de cabecalho colorida, faixas...).
-        c.somar("ESTILO")
 
     # -- tblGrid
     grade = tbl.find(q("tblGrid"))
@@ -1248,7 +1291,108 @@ def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
         falta = len(tabela.colunas_tw) - colunas_da_linha(linha)
         if falta > 0:
             linha.celulas.append(Celula(blocos=[Paragrafo()], colunas=falta))
+    if cadeia:
+        _fundos_do_estilo(tabela, tbl_pr, cadeia)
     return tabela
+
+
+#: Tipos de w:tblStylePr na ordem em que o Word os aplica (o de depois vence).
+_ORDEM_CONDICIONAL = ("band1Vert", "band2Vert", "band1Horz", "band2Horz", "firstCol", "lastCol",
+                      "firstRow", "lastRow", "nwCell", "neCell", "swCell", "seCell")
+#: tblLook legado (w:val em hexa): bit -> atributo.
+_LOOK_BITS = {0x0020: "firstRow", 0x0040: "lastRow", 0x0080: "firstColumn", 0x0100: "lastColumn",
+              0x0200: "noHBand", 0x0400: "noVBand"}
+
+
+def _look(tbl_pr) -> dict:
+    """O que o w:tblLook liga. Sem ele, o padrao do Word para tabela nova (04A0)."""
+    el = tbl_pr.find(q("tblLook")) if tbl_pr is not None else None
+    saida = {"firstRow": True, "lastRow": False, "firstColumn": True, "lastColumn": False,
+             "noHBand": False, "noVBand": True}
+    if el is None:
+        return saida
+    val = _atr(el, "val")
+    if val is not None and all(_atr(el, k) is None for k in saida):
+        try:
+            bits = int(val, 16)
+        except ValueError:
+            return saida
+        return {nome: bool(bits & bit) for bit, nome in _LOOK_BITS.items()}
+    for k in saida:
+        v = _atr(el, k)
+        if v is not None:
+            saida[k] = v.lower() in ("1", "true", "on")
+    return saida
+
+
+def _fundos_do_estilo(tabela: Tabela, tbl_pr, cadeia: list) -> None:
+    """O fundo que a formatacao condicional do estilo da' a cada celula (0.1.6), para a tela:
+    o da tabela inteira, as faixas alternadas, a primeira e a ultima coluna e linha e os cantos,
+    nessa ordem (o de depois vence), respeitando o tblLook. So' o sombreamento: o negrito do
+    cabecalho viraria formatacao direta ao salvar (registrado como limite)."""
+    look = _look(tbl_pr)
+    banda_linhas = banda_colunas = 1
+    fundos: dict = {}
+    base = None
+    for estilo in reversed(cadeia):  # da base para o proprio: o proprio vence
+        tb = estilo.find(q("tblPr"))
+        if tb is not None:
+            for nome, alvo in (("tblStyleRowBandSize", "l"), ("tblStyleColBandSize", "c")):
+                el = tb.find(q(nome))
+                v = _inteiro(_atr(el, "val")) if el is not None else None
+                if v is not None and 1 <= v <= 1000:
+                    if alvo == "l":
+                        banda_linhas = v
+                    else:
+                        banda_colunas = v
+        shd = estilo.find(q("tcPr") + "/" + q("shd"))
+        if shd is not None:
+            base = fx_props.cor_de_sombreamento(shd)
+        for cond in estilo.findall(q("tblStylePr")):
+            tipo = _atr(cond, "type")
+            shd = cond.find(q("tcPr") + "/" + q("shd"))
+            if tipo in _ORDEM_CONDICIONAL and shd is not None:
+                fundos[tipo] = fx_props.cor_de_sombreamento(shd)
+    if base is None and not fundos:
+        return
+    if tbl_pr is not None:
+        for nome in ("tblStyleRowBandSize", "tblStyleColBandSize"):
+            el = tbl_pr.find(q(nome))
+            v = _inteiro(_atr(el, "val")) if el is not None else None
+            if v is not None and 1 <= v <= 1000:
+                if nome == "tblStyleRowBandSize":
+                    banda_linhas = v
+                else:
+                    banda_colunas = v
+    n_linhas = len(tabela.linhas)
+    n_colunas = len(tabela.colunas_tw)
+    for r, linha in enumerate(tabela.linhas):
+        coluna = 0
+        for celula in linha.celulas:
+            fim = coluna + max(1, celula.colunas) - 1
+            primeira_l = look["firstRow"] and r == 0
+            ultima_l = look["lastRow"] and r == n_linhas - 1
+            primeira_c = look["firstColumn"] and coluna == 0
+            ultima_c = look["lastColumn"] and fim == n_colunas - 1
+            vale = set()
+            if not look["noVBand"] and not primeira_c and not ultima_c:
+                k = (coluna - (1 if look["firstColumn"] else 0)) // banda_colunas
+                vale.add("band1Vert" if k % 2 == 0 else "band2Vert")
+            if not look["noHBand"] and not primeira_l and not ultima_l:
+                k = (r - (1 if look["firstRow"] else 0)) // banda_linhas
+                vale.add("band1Horz" if k % 2 == 0 else "band2Horz")
+            for nome, ok in (("firstCol", primeira_c), ("lastCol", ultima_c),
+                             ("firstRow", primeira_l), ("lastRow", ultima_l),
+                             ("nwCell", primeira_l and primeira_c), ("neCell", primeira_l and ultima_c),
+                             ("swCell", ultima_l and primeira_c), ("seCell", ultima_l and ultima_c)):
+                if ok:
+                    vale.add(nome)
+            fundo = base
+            for tipo in _ORDEM_CONDICIONAL:
+                if tipo in vale and tipo in fundos:
+                    fundo = fundos[tipo]
+            celula.fundo_estilo = fundo
+            coluna = fim + 1
 
 
 def _linha(tr, tcs: list, ctx: _Contexto) -> Linha:
@@ -1409,12 +1553,14 @@ def _ler_faixa(rid: str, onde: str, ctx: _Contexto, tamanho_de, relacoes_de) -> 
     ignoraveis_doc = ctx.ignoraveis
     ctx.relacoes = relacoes_de(alvo)
     ctx.ignoraveis = opacos.ignoraveis_da_raiz(raiz)
+    ctx.historia = "faixa"
     try:
         blocos: list[Bloco] = []
         _blocos(raiz, blocos, ctx)
     finally:
         ctx.relacoes = relacoes_doc
         ctx.ignoraveis = ignoraveis_doc
+        ctx.historia = "corpo"
     _fechar_historia(blocos, ctx)
     return blocos
 
@@ -1538,6 +1684,168 @@ def _profundidade(raiz) -> int:
         for filho in no:
             pilha.append((filho, nivel + 1))
     return maximo
+
+
+# -- comentarios (0.1.6) ------------------------------------------------------------------
+
+def _id_de_comentario(f, ctx: _Contexto) -> int | None:
+    """O w:id da ancora, se ela vale: no corpo e citando um comentario lido."""
+    ident = _inteiro(_atr(f, "id"))
+    if ident is None or ctx.historia != "corpo" or ident not in ctx.comentarios_ids:
+        return None
+    return ident
+
+
+def _r_ids(el) -> list[str]:
+    return [valor for x in el.iter() if isinstance(x.tag, str)
+            for chave, valor in x.attrib.items() if chave.startswith("{%s}" % R_NS)]
+
+
+def _original_do_comentario(el, relacoes: dict) -> tuple[bytes | None, tuple]:
+    """O XML de origem do comentario e as relacoes externas (links) que ele cita. Relacao
+    interna (imagem) ou quebrada: o comentario e' gerado de novo pelo escritor."""
+    usadas = []
+    for rid in _r_ids(el):
+        rel = relacoes.get(rid)
+        if rel is None or not rel[2]:
+            return None, ()
+        if (rid, rel[0], rel[1]) not in usadas:
+            usadas.append((rid, rel[0], rel[1]))
+    return etree.tostring(el), tuple(usadas)
+
+
+def _ler_comentarios(relacoes: dict, ctx: _Contexto, ler_parte, relacoes_de, tamanho_de,
+                     profundidade: int):
+    """word/comments.xml e as partes estendidas -> Comentarios (sem os que nao tem ancora: isso
+    se ve depois do corpo). None se o documento nao tem comentarios."""
+    alvos: dict = {}
+    tipos: dict = {}
+    for _rid, (tipo, alvo, externo) in sorted(relacoes.items()):
+        chave = fx_comentarios.SUFIXOS.get(tipo.rstrip("/").rsplit("/", 1)[-1])
+        if chave is None or externo or alvo not in ctx.nomes or chave in alvos:
+            continue
+        alvos[chave] = alvo
+        tipos[chave] = tipo
+    if "comentarios" not in alvos:
+        return None
+    c = ctx.coletor
+    lim = ctx.lim
+    alvo = alvos["comentarios"]
+    _validar_nome(alvo)
+    try:
+        if tamanho_de(alvo) > lim["comentarios_bytes"]:
+            raise ValueError("comments.xml grande demais")
+        dados = ler_parte(alvo)
+        raiz = _parse(dados, alvo, profundidade)
+        if _local(raiz) != (W, "comments") or _profundidade(raiz) > profundidade:
+            raise ValueError("comments.xml invalido")
+    except (ErroDocx, ValueError):
+        c.somar("COMENTARIO")
+        return None
+    elementos = [el for el in raiz if _local(el) == (W, "comment")]
+    if len(elementos) > lim["comentarios"]:
+        c.somar("COMENTARIO", len(elementos))
+        return None
+
+    def parte_estendida(chave):
+        nome = alvos.get(chave)
+        if nome is None:
+            return None, None
+        try:
+            _validar_nome(nome)
+            bruto = ler_parte(nome)
+            return bruto, _parse(bruto, nome, profundidade)
+        except ErroDocx:
+            return None, None
+
+    xml_est, raiz_est = parte_estendida("estendido")
+    xml_ids, raiz_ids = parte_estendida("ids")
+    xml_ext, raiz_ext = parte_estendida("extensivel")
+    estendido = fx_comentarios.ler_estendido(raiz_est)
+    duraveis = fx_comentarios.ler_ids(raiz_ids)
+    datas_utc = fx_comentarios.ler_extensivel(raiz_ext)
+
+    relacoes_doc, ignoraveis_doc = ctx.relacoes, ctx.ignoraveis
+    ctx.relacoes = relacoes_de(alvo)
+    ctx.ignoraveis = opacos.ignoraveis_da_raiz(raiz)
+    ctx.historia = "comentario"
+    itens: list = []
+    pais: dict = {}
+    try:
+        for el in elementos:
+            ident = _inteiro(_atr(el, "id"))
+            tamanho = len(etree.tostring(el))
+            if ident is None or ident in ctx.comentarios_ids or tamanho > lim["comentario_bytes"] \
+                    or len(el.findall(q("p"))) > lim["comentario_paragrafos"]:
+                c.somar("COMENTARIO")
+                continue
+            blocos: list[Bloco] = []
+            _blocos(el, blocos, ctx)
+            _fechar_historia(blocos, ctx)
+            if not blocos:
+                blocos = [Paragrafo()]
+            blocos = normalizar(Documento(paragrafos=blocos)).paragrafos
+            para = fx_comentarios.para_id_do_comentario(el)
+            duravel = duraveis.get(para) if para else None
+            pai_para, resolvido = estendido.get(para, (None, False)) if para else (None, False)
+            ctx.comentarios_ids.add(ident)
+            pais[ident] = pai_para
+            original, rels_originais = _original_do_comentario(el, ctx.relacoes)
+            itens.append(mod_comentarios.Comentario(
+                id=ident, autor=(_atr(el, "author") or "")[:255],
+                iniciais=(_atr(el, "initials") or "")[:9], data=(_atr(el, "date") or "")[:64],
+                paragrafos=tuple(blocos), resolvido=resolvido, para_id=para,
+                duravel=duravel, data_utc=datas_utc.get(duravel) if duravel else None,
+                original=original, relacoes=rels_originais))
+    finally:
+        ctx.relacoes, ctx.ignoraveis = relacoes_doc, ignoraveis_doc
+        ctx.historia = "corpo"
+    # Respostas: paraIdParent -> o comentario daquele paraId. Ciclo ou fundo demais: sobe.
+    por_para = {x.para_id: x.id for x in itens if x.para_id}
+    ligados = {}
+    for x in itens:
+        pai = por_para.get(pais.get(x.id)) if pais.get(x.id) else None
+        ligados[x.id] = pai if pai != x.id else None
+    for x in itens:
+        vistos = {x.id}
+        atual = ligados[x.id]
+        nivel = 0
+        while atual is not None:
+            if atual in vistos or nivel >= lim["comentario_profundidade"]:
+                ligados[x.id] = None
+                break
+            vistos.add(atual)
+            atual = ligados.get(atual)
+            nivel += 1
+    itens = [replace(x, pai=ligados[x.id]) for x in itens]
+    return mod_comentarios.Comentarios(
+        itens=itens, xml_comentarios=dados, xml_estendido=xml_est, xml_ids=xml_ids,
+        xml_extensivel=xml_ext, originais=tuple(mod_comentarios.estado(x) for x in itens),
+        tipos_rel=tipos)
+
+
+def _comentarios_ancorados(cat, paras: list, coletor: Coletor):
+    """So' ficam os comentarios com referencia no corpo; as ancoras dos outros saem. O que sai
+    conta COMENTARIO (perda: o Word nao mostraria, mas o arquivo tinha)."""
+    if cat is None:
+        return None
+    referidos = set()
+    for p in paragrafos_de(paras):
+        for r in p.runs:
+            if isinstance(r.marca, MarcaComentario) and r.marca.tipo == "referencia":
+                referidos.add(r.marca.id)
+    fora = [x.id for x in cat.itens if x.id not in referidos]
+    if fora:
+        coletor.somar("COMENTARIO", len(fora))
+        tirar = set(fora)
+        for p in paragrafos_de(paras):
+            if any(isinstance(r.marca, MarcaComentario) and r.marca.id in tirar for r in p.runs):
+                p.runs = [r for r in p.runs if not (isinstance(r.marca, MarcaComentario)
+                                                    and r.marca.id in tirar)]
+        itens = [replace(x, pai=None if x.pai in tirar else x.pai)
+                 for x in cat.itens if x.id not in tirar]
+        cat = replace(cat, itens=itens)
+    return cat if cat.itens else None
 
 
 def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
@@ -1725,6 +2033,9 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                     if _onoff_atr(estilo, "default"):
                         ctx.estilo_tabela_padrao = _atr(estilo, "styleId")
 
+        # Comentarios (0.1.6): o comments.xml antes do corpo (as ancoras citam os w:id).
+        comentarios = _ler_comentarios(relacoes, ctx, ler_parte, relacoes_de, tamanho_de,
+                                       profundidade)
         paras: list[Bloco] = []
         _blocos(corpo, paras, ctx)
         _fechar_historia(paras, ctx)
@@ -1770,9 +2081,10 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             alvo_doc=alvo_doc, rels_pacote=relacoes_de(""), rels_doc=relacoes, raiz_doc=raiz,
             tema_tratado=tema is not None, proibidos=reescritas)
 
+    comentarios = _comentarios_ancorados(comentarios, paras, coletor)
     doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
                                rodapes=rodapes, estilos=ctx.estilos, pacote=pacote,
-                               numeracao=ctx.numeracao, **meta))
+                               numeracao=ctx.numeracao, comentarios=comentarios, **meta))
     mod_numeracao.tipos_dos_paragrafos(doc)
     return doc, coletor.avisos()
 

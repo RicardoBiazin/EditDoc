@@ -13,9 +13,10 @@ from __future__ import annotations
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFontComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                               QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from editdoc import APP, configuracao
+from editdoc.modelo.comentarios import iniciais_de
 
 UNIDADES = (("cm", "Centímetros"), ("pol", "Polegadas"))
 TEMAS = (("sistema", "Igual ao Windows"), ("claro", "Claro"), ("escuro", "Escuro"))
@@ -85,6 +86,26 @@ class DialogoOpcoes(QDialog):
         f_salvar.addLayout(linha)
         f_salvar.addWidget(self.abrir_pdf)
 
+        # -- usuario (0.1.6): autor e iniciais dos comentarios
+        from editdoc.edicao.comentarios import nome_do_windows
+        windows = nome_do_windows()
+        self.nome_usuario = QLineEdit(v["nome_usuario"])
+        self.nome_usuario.setMaxLength(255)
+        self.nome_usuario.setPlaceholderText(windows)
+        self.nome_usuario.setAccessibleName("Nome de usuário")
+        self.nome_usuario.setAccessibleDescription(
+            "Autor dos comentários. Vazio usa o nome do usuário do Windows")
+        self.iniciais = QLineEdit(v["iniciais"])
+        self.iniciais.setMaxLength(9)
+        self.iniciais.setPlaceholderText(iniciais_de(windows))
+        self.iniciais.setAccessibleName("Iniciais")
+        self.iniciais.setAccessibleDescription(
+            "Iniciais dos comentários. Vazio usa as iniciais do nome")
+        usuario = QGroupBox("Usuário (comentários)")
+        f_usuario = QFormLayout(usuario)
+        f_usuario.addRow("&Nome de usuário:", self.nome_usuario)
+        f_usuario.addRow("Inic&iais:", self.iniciais)
+
         # -- recentes
         self.recentes = QSpinBox()
         self.recentes.setRange(0, configuracao.LIMITE_RECENTES)
@@ -106,7 +127,7 @@ class DialogoOpcoes(QDialog):
         self.botoes = botoes
 
         vertical = QVBoxLayout(self)
-        for grupo in (novo, exibir, salvar, recentes):
+        for grupo in (novo, exibir, usuario, salvar, recentes):
             vertical.addWidget(grupo)
         vertical.addWidget(botoes)
         self.fonte.setFocus()
@@ -140,5 +161,7 @@ class DialogoOpcoes(QDialog):
             "recuperacao_minutos": self.minutos.value(),
             "abrir_pdf_depois": self.abrir_pdf.isChecked(),
             "recentes_maximo": self.recentes.value(),
+            "nome_usuario": " ".join(self.nome_usuario.text().split())[:255],
+            "iniciais": "".join(self.iniciais.text().split())[:9],
             "limpar_recentes": self.limpar_recentes,
         }

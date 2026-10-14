@@ -216,7 +216,7 @@ def preparar_janela(janela):
     nomear(janela.painel_estilos.lista, "Lista de estilos",
            "Escolha um estilo para aplicá-lo ao parágrafo do cursor")
     nomear(janela.faixa, "Faixa de opções", "Alt ou F10 leva o teclado para a faixa")
-    for dock in (janela.dock_estilos, janela.dock_navegacao):
+    for dock in (janela.dock_estilos, janela.dock_navegacao, janela.dock_comentarios):
         titulo = dock.windowTitle()
         for botao in dock.findChildren(QAbstractButton):
             if botao.objectName() == "qt_dockwidget_closebutton":

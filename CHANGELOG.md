@@ -1,3 +1,70 @@
+## 0.1.6 - 2026-10-14
+
+Comentários do Word editáveis e referências de estilo sem perda.
+
+Defeito: num `.docx` real com comentários o EditDoc avisava "2 comentários ... saem do
+arquivo ao salvar" e "2 referências de estilo não puderam ser aplicadas": os comentários
+(`comments.xml`, respostas, resolvido, `people.xml`) sumiam ao salvar e o `rStyle`
+"CommentReference" (estilo latente do Word, sem definição no `styles.xml`) virava Normal.
+Noutro arquivo, o `rStyle` dos runs do código do campo TOC (2 ocorrências) sumia. Causas: o
+leitor não tinha modelo para comentários (contava o aviso e descartava), só aceitava
+referência de estilo que o `styles.xml` definisse, e o escritor gravava o código do campo
+com o `rPr` do begin.
+
+- Comentários (`modelo/comentarios.py`, `formato_docx/comentarios.py`): âncoras no fluxo
+  (`MarcaComentario`: início, fim e referência, inclusive aninhados, sobre o mesmo trecho e
+  atravessando parágrafos) e o catálogo no documento, com autor, iniciais, data, conteúdo
+  (lido pelo leitor de parágrafos: formatação, links, campos, marcadores), resposta
+  (`paraIdParent`), resolvido (`done`), `durableId` e `dateUtc`. Sem mudança, as cinco partes
+  voltam iguais (c14n; o `comments.xml` byte a byte, com as relações dos links). O
+  comentário que o EditDoc não mudou volta com o XML de origem (o link mantém o rId); o novo
+  ou editado é gerado com `annotationRef` e `w14:paraId`. Criar, responder ou resolver grava
+  as três partes estendidas coerentes (também num documento antigo, que só tinha o
+  `comments.xml`: o comentário de origem ganha o `paraId`); o autor novo entra uma vez no
+  `people.xml` (as entradas repetidas de origem ficam).
+- Tela: painel de comentários (dock à direita, cartões com respostas e resolvido, nomes
+  acessíveis, região do F6), realce amarelo claro do trecho (só na tela), aba **Revisão**
+  com o grupo Comentários (Novo, Excluir/Excluir todos, Anterior, Próximo, Mostrar,
+  Responder, Resolver; dica de tecla R). Novo comentário: **Ctrl+Alt+M**. Editor do texto
+  com N/I/S e links; com campo ou marcador, só leitura com o motivo. Opções: "Nome de
+  usuário" e "Iniciais" (vazio = usuário do Windows). Datas: `w:date` na hora local (como o
+  Word grava) e `dateUtc` em UTC. Um desfazer por comando.
+- Apagar texto com âncoras (`edicao/comentarios.remover_selecao`), como o Word: a seleção
+  que leva a referência, ou todo o texto comentado, leva o comentário (e as respostas); a
+  que leva só uma ponta reancora no que sobrou. Antes de gravar, `marcas.equilibrar` deixa
+  início, fim e referência coerentes; o comentário sem referência sai com o aviso novo
+  COMENTARIO_INCOMPLETO.
+- Validador: âncora cita comentário que existe, uma referência por comentário, início antes
+  do fim, ids únicos; `commentsExtended` cita `paraId` existente (e o pai), `commentsIds`
+  com `durableId` único, `commentsExtensible` cita `durableId` do `commentsIds`. Conferência
+  pós-gravação compara cada comentário. Limites: 5000 comentários, 1 MB por comentário,
+  32 MB de `comments.xml`, 2000 parágrafos por comentário, 32 níveis de resposta (ciclo ou
+  fundo demais sobe ao topo). COMENTARIO fica para o que não pode ser lido (danificado,
+  acima dos limites, ancorado só no cabeçalho, rodapé ou numa caixa de texto).
+- Referências de estilo (`Estilo.virtual`): `rStyle`, `pStyle` e `tblStyle` sem definição
+  voltam como vieram, sem acrescentar definição ao `styles.xml`; o validador aceita só os
+  ids preservados. Na tela, os latentes conhecidos do Word (`ESTILOS_LATENTES_WORD`:
+  comentário, hiperlink, notas, cabeçalho, rodapé, legenda, TOC1 a TOC9, títulos, menção...)
+  têm a aparência padrão do Word, sem virar formatação direta ao salvar; id desconhecido não
+  muda a aparência. ESTILO só para id inválido ou citado com outro tipo.
+- Campo: o `rPr` dos runs do código (`instrText`) e do `separate` volta (`Campo.rpr_codigo`,
+  `rpr_separador`).
+- Tabela: o estilo de origem (`Tabela.estilo`), o `tblLook` e o tamanho das faixas voltam
+  (antes: "Table Grid" imposto e aviso ESTILO); os `cnfStyle` já voltavam pelos extras. O
+  fundo da formatação condicional (cabeçalho, última linha, colunas, faixas, cantos,
+  respeitando o `tblLook`) aparece na tela e no PDF e não vira sombreamento direto.
+- Medido no Qt 6.11.2: dentro de um bloco de edição aberto a revisão do documento não muda e
+  o `contentsChange` só vem no fim; a varredura das âncoras (10 ms em 3000 parágrafos) é
+  acompanhada pelo sinal (1,4 ms por tecla).
+- Testes: `teste_comentarios.py` (114) e `teste_estilos_referencias.py` (44). Checagens
+  reescritas, com o motivo no teste: a lista de abas e de dicas de tecla ganhou "Revisão" e
+  "R" (`teste_galeria`, `teste_acessibilidade`); a referência a comentário dentro de caixa de
+  texto deixou de contar COMENTARIO por referência (sem `comments.xml` não há o que perder),
+  e uma verificação nova prova o aviso quando o comentário existe (`teste_objetos_opacos`).
+- Pendente: "Imprimir marcações" (comentários na impressão e no PDF); negrito e cor da
+  linha de cabeçalho vindos da formatação condicional da tabela (viraria formatação direta
+  ao salvar); bordas condicionais na tela.
+
 ## 0.1.5 - 2026-10-13
 
 Formatação sem perda, texto das caixas de texto editável e imagens EMF, WMF, TIFF e SVG na

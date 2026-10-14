@@ -65,8 +65,9 @@ _CHOICE = "{%s}Choice" % MC_NS
 _RELID_O = "{%s}relid" % O_NS
 _PREFIXO_R = "{%s}" % R_NS
 #: Referencias a partes que nao voltam ao arquivo: saem de dentro do objeto, com aviso.
+#: O comentario que perde a referencia (0.1.6) sai no leitor, que conta o aviso COMENTARIO.
 _REFERENCIAS_SOLTAS = {q("footnoteReference"): "NOTA", q("endnoteReference"): "NOTA",
-                       q("commentReference"): "COMENTARIO", q("commentRangeStart"): None,
+                       q("commentReference"): None, q("commentRangeStart"): None,
                        q("commentRangeEnd"): None}
 #: Tipos de conteudo que um objeto nunca leva junto (partes que o EditDoc escreve, ou
 #: que pertencem ao documento inteiro).
@@ -97,7 +98,8 @@ _CT_PROIBIDOS = {
 #: Nomes que o escritor usa (ou pode usar) para as partes dele.
 _NOMES_DO_ESCRITOR = re.compile(
     r"(\[Content_Types\]\.xml|_rels/.*|.*\.rels|word/(document|styles|numbering|settings)\.xml"
-    r"|word/(header|footer)\d+\.xml|word/theme/theme1\.xml|docProps/.*)", re.IGNORECASE)
+    r"|word/(header|footer)\d+\.xml|word/theme/theme1\.xml|docProps/.*"
+    r"|word/comments(Extended|Ids|Extensible)?\.xml)", re.IGNORECASE)
 _MEDIDA_VML = re.compile(r"(?:^|;)\s*(width|height)\s*:\s*([0-9.]+)\s*(pt|in|cm|mm|px)?", re.I)
 _EMU_POR_UNIDADE = {"pt": 12700, "in": 914400, "cm": 360000, "mm": 36000, "px": 9525, None: 9525}
 _EMU_MAXIMO = 176 * 360000  # o maior papel (176 cm), como no leitor

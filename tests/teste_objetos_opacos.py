@@ -353,9 +353,41 @@ def testar_limites() -> None:
                                    '<w:commentRangeStart w:id="0"/><w:r><w:commentReference w:id="0"/></w:r>')
     modelo, avisos = ler(fx.docx_com_corpo_de_objetos("<w:p>" + nota + "</w:p>", [fx.RELACOES_OBJETOS[-1]]))
     obj = next(objetos_de(modelo), None)
+    # Reescrita na 0.1.6: o aviso COMENTARIO deixou de ser por referencia tirada do objeto. O
+    # leitor le os comentarios e conta o comentario que fica sem ancora no corpo; aqui o
+    # arquivo nao tem comments.xml, entao nao ha' comentario a perder. A referencia continua
+    # saindo do objeto, e a nota continua com aviso.
     checa(obj is not None and b"footnoteReference" not in obj.xml and b"comment" not in obj.xml
-          and codigos(avisos).get("NOTA") == (2, True) and codigos(avisos).get("COMENTARIO") == (2, True),
-          "nota e comentario dentro da caixa: a referencia sai (com aviso), a caixa fica")
+          and codigos(avisos).get("NOTA") == (2, True) and "COMENTARIO" not in codigos(avisos),
+          "nota e comentario dentro da caixa: a referencia sai, a caixa fica; sem comments.xml, "
+          "nada a perder")
+    import zipfile as _zip
+    import io as _io
+    pacote = fx.docx_com_corpo_de_objetos("<w:p>" + nota + "</w:p>", [fx.RELACOES_OBJETOS[-1]])
+    origem = _zip.ZipFile(_io.BytesIO(pacote))
+    saida = _io.BytesIO()
+    comentarios = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments '
+                   'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   '<w:comment w:id="0" w:author="A"><w:p><w:r><w:t>so na caixa</w:t></w:r></w:p>'
+                   '</w:comment></w:comments>').encode("utf-8")
+    with _zip.ZipFile(saida, "w") as z:
+        for nome in origem.namelist():
+            dados = origem.read(nome)
+            if nome == "word/_rels/document.xml.rels":
+                dados = dados.replace(b"</Relationships>", (
+                    '<Relationship Id="rIdC1" Type="http://schemas.openxmlformats.org/'
+                    'officeDocument/2006/relationships/comments" Target="comments.xml"/>'
+                    '</Relationships>').encode("utf-8"))
+            elif nome == "[Content_Types].xml":
+                dados = dados.replace(b"</Types>", (
+                    '<Override PartName="/word/comments.xml" ContentType="application/vnd.'
+                    'openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>'
+                    ).encode("utf-8"))
+            z.writestr(nome, dados)
+        z.writestr("word/comments.xml", comentarios)
+    modelo, avisos = ler(saida.getvalue())
+    checa(codigos(avisos).get("COMENTARIO") == (1, True) and modelo.comentarios is None,
+          "com o comments.xml, o comentario ancorado so' na caixa sai, com o aviso COMENTARIO")
     lista = fx.caixa_de_texto(extra='<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/>'
                                     '</w:numPr></w:pPr>')
     com_lista = fx.docx_com_corpo_de_objetos("<w:p>" + lista + "</w:p>", [fx.RELACOES_OBJETOS[-1]])

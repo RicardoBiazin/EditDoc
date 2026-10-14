@@ -10,9 +10,11 @@ Leitura (`capturar`): toda relacao do documento que nao e' citada no texto (r:id
 relacao do pacote (_rels/.rels) e' classificada:
 
 - o que o escritor grava (estilos, configuracoes, numeracao, tema simples, core, app);
-- o que tem aviso proprio e nao volta: comentarios (COMENTARIO), macros e personalizacoes
-  de teclado e barras (MACROS), assinatura digital (ASSINATURA: deixaria de valer), a
-  miniatura (MINIATURA: mostraria o conteudo antigo);
+- os comentarios (comments.xml e as tres partes estendidas), que desde a 0.1.6 o leitor e o
+  escritor tratam (`formato_docx/comentarios.py`); o people.xml continua aqui, preservado;
+- o que tem aviso proprio e nao volta: macros e personalizacoes de teclado e barras
+  (MACROS), assinatura digital (ASSINATURA: deixaria de valer), a miniatura (MINIATURA:
+  mostraria o conteudo antigo);
 - notas de rodape e de fim: voltam so' as separadoras (o Word exige as que o settings.xml
   cita); as notas de verdade nao voltam e tem o aviso NOTA;
 - o resto volta byte a byte, com o fecho das relacoes (fontTable com as fontes embutidas,
@@ -53,7 +55,7 @@ LIMITES = {
 _RT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
 #: Relacoes do documento que o escritor grava ele mesmo.
 _ESCRITAS = {"styles", "settings", "numbering"}
-#: Relacoes do documento com aviso proprio, que nao voltam.
+#: Relacoes dos comentarios: o leitor e o escritor tratam (0.1.6); aqui ficam de fora.
 _COMENTARIOS = {"comments", "commentsExtended", "commentsIds", "commentsExtensible"}
 _MACROS = {"vbaProject", "keyMapCustomizations", "attachedToolbars", "vbaData", "wordVbaData"}
 #: Relacoes de conteudo (citadas por r:id no texto). Sem citacao, nao aparecem no Word.
@@ -86,7 +88,8 @@ CT_PROIBIDOS = {
 #: renomeada).
 _NOMES_DO_ESCRITOR = re.compile(
     r"(\[Content_Types\]\.xml|.*\.rels|word/(document|styles|numbering|settings)\.xml"
-    r"|word/(header|footer)\d+\.xml|docProps/(core|app)\.xml)", re.IGNORECASE)
+    r"|word/(header|footer)\d+\.xml|docProps/(core|app)\.xml"
+    r"|word/comments(Extended|Ids|Extensible)?\.xml)", re.IGNORECASE)
 
 #: Ordem dos filhos de w:settings (CT_Settings), para pôr o w:evenAndOddHeaders no lugar.
 ORDEM_SETTINGS = [
@@ -270,10 +273,7 @@ def capturar(*, coletor, lim: dict, nomes: set[str], ler_parte, relacoes_de, tip
         if sufixo in _ESCRITAS or (sufixo == "theme" and tema_tratado):
             continue
         if sufixo in _COMENTARIOS:
-            if sufixo == "comments" and not externo and alvo in nomes and \
-                    coletor.contagem("COMENTARIO") == 0:
-                coletor.somar("COMENTARIO")
-            continue
+            continue  # comentarios (0.1.6): o leitor os le, com os avisos do que nao vale
         if sufixo in _MACROS:
             if coletor.contagem("MACROS") == 0:
                 coletor.somar("MACROS")

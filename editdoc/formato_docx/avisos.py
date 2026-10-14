@@ -16,6 +16,13 @@ Desde a 0.1.4 a numeracao de listas (numbering.xml inteiro, niveis, formatos, si
 marcadores de figura, lista ligada ao estilo) volta ao arquivo: LISTA e LISTA_NIVEL so'
 aparecem para referencia quebrada, nivel fora de 0 a 8 ou numeracao acima dos limites.
 
+Desde a 0.1.6 os comentarios (comments.xml, respostas, resolvido, people.xml) e as
+referencias a estilos que o styles.xml nao define voltam ao arquivo: COMENTARIO so' aparece
+para comentario que nao pode ser lido (danificado, acima dos limites, sem referencia no
+corpo), COMENTARIO_INCOMPLETO e' aviso de gravacao (o usuario apagou a referencia de um
+comentario de um jeito que nao o levou junto), e ESTILO so' para id de estilo invalido ou
+citado com outro tipo.
+
 Desde a 0.1.3, hiperlinks, campos (DATE, REF, TOC...), marcadores e as partes do pacote
 que o EditDoc nao edita (custom.xml, customXml, fontTable, webSettings, settings.xml) voltam
 ao arquivo: HIPERLINK, CAMPO e PARTE_PERDIDA so' aparecem para o que nao pode voltar
@@ -162,8 +169,13 @@ CATALOGO: dict[str, tuple] = {
                   "O arquivo sai com o papel A4 e as margens padrão.",
         True),
     "COMENTARIO": (
-        lambda n: f"{n} {_plural(n, 'comentário não é editado', 'comentários não são editados')} "
-                  "nesta versão e sai do arquivo ao salvar.",
+        lambda n: f"{n} {_plural(n, 'comentário não pôde ser lido', 'comentários não puderam ser lidos')} "
+                  "(danificado, sem referência no texto do corpo ou acima dos limites do EditDoc) e "
+                  f"{_plural(n, 'sai', 'saem')} do arquivo ao salvar.",
+        True),
+    "COMENTARIO_INCOMPLETO": (
+        lambda n: f"{n} {_plural(n, 'comentário perdeu', 'comentários perderam')} a marca de "
+                  f"referência no texto e {_plural(n, 'sai', 'saem')} do arquivo ao salvar.",
         True),
     "REVISAO": (
         lambda n: f"{n} {_plural(n, 'alteração controlada foi aceita', 'alterações controladas foram aceitas')}: "
@@ -185,7 +197,7 @@ CATALOGO: dict[str, tuple] = {
         True),
     "ESTILO": (
         lambda n: f"{n} {_plural(n, 'referência de estilo não pôde ser aplicada', 'referências de estilo não puderam ser aplicadas')} "
-                  "(estilo que não existe no arquivo ou formatação condicional de tabela). "
+                  "(nome de estilo inválido, ou um estilo citado com outro tipo). "
                   "O texto fica com o estilo Normal ao salvar.",
         True),
     "FORMATACAO": (

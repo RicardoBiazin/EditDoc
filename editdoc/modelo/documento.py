@@ -181,6 +181,11 @@ class Campo:
     sem_resultado: bool = False
     resultado: str = ""
     extra: bytes = b""
+    # 0.1.6: o w:rPr (forma canonica) dos runs do codigo (instrText) e do separate, quando
+    # diferem do run do begin (o rStyle "Vinculo de indice" do sumario do Word). None = o do
+    # begin. Fora da comparacao: e' aparencia do codigo, que o Word nao mostra.
+    rpr_codigo: str | None = field(default=None, compare=False)
+    rpr_separador: str | None = field(default=None, compare=False)
 
     def instrucao(self) -> str:
         """A instrucao em texto; o campo de dentro aparece entre chaves, como no Word."""
@@ -233,6 +238,15 @@ class MarcaConteudo:
     par: int = field(default=0, compare=False)
 
 
+@dataclass(frozen=True)
+class MarcaComentario:
+    """Ancora de um comentario no fluxo do texto (0.1.6): o inicio e o fim do trecho comentado
+    (w:commentRangeStart e w:commentRangeEnd) e a referencia (o run com w:commentReference).
+    `id` e' o w:id, a chave no catalogo (`Documento.comentarios`, modelo/comentarios.py)."""
+    tipo: Literal["inicio", "fim", "referencia"]
+    id: int
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -259,7 +273,7 @@ class Run:
     link: Link | None = None
     # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador; desde a 0.1.5 tambem de
     # controle de conteudo (MarcaConteudo). texto == "".
-    marca: MarcaCampo | Marcador | MarcaConteudo | None = None
+    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | None = None
     # Propriedades de run que o modelo nao representa (0.1.5): o XML original delas (um w:rPr
     # em forma canonica, `formato_docx/propriedades.py`). None = nenhuma.
     extras: str | None = None
@@ -353,6 +367,10 @@ class Celula:
     # Propriedades da celula que o modelo nao representa (0.1.5): tcMar, textDirection,
     # noWrap... (um w:tcPr em forma canonica). None = nenhuma.
     extras: str | None = None
+    # Fundo que a formatacao condicional do estilo da tabela da' a celula (0.1.6: cabecalho,
+    # faixas alternadas...), "RRGGBB". So' para a tela e o PDF: o arquivo leva o estilo e o
+    # tblLook, e o Word calcula de novo. Fora da comparacao.
+    fundo_estilo: str | None = field(default=None, compare=False)
 
 
 @dataclass
@@ -378,8 +396,13 @@ class Tabela:
     # Margens internas padrao das celulas (w:tblCellMar), em twips: sup, esq, inf, dir.
     margens_celula_tw: tuple[int, int, int, int] | None = None
     # Propriedades da tabela que o modelo nao representa (0.1.5): tblpPr (tabela flutuante),
-    # sombreamento, espacamento entre celulas, legenda... (um w:tblPr em forma canonica).
+    # sombreamento, espacamento entre celulas, legenda... (um w:tblPr em forma canonica). Desde
+    # a 0.1.6 o w:tblLook (que partes da formatacao condicional valem) tambem.
     extras: str | None = None
+    # Estilo da tabela (0.1.6, w:tblStyle): o id do arquivo de origem, que volta como veio (a
+    # formatacao condicional do estilo continua valendo no Word). None = "Table Grid", o da
+    # tabela criada no EditDoc.
+    estilo: str | None = None
 
 
 Bloco = Union[Paragrafo, Tabela]
@@ -406,6 +429,9 @@ class Documento:
     # Numeracao de listas (0.1.4): o catalogo do numbering.xml (modelo/numeracao.py) ou None.
     # Fora da comparacao, como os estilos: o paragrafo compara o numId e o nivel.
     numeracao: object = field(default=None, compare=False, repr=False)
+    # Comentarios (0.1.6): o catalogo (modelo/comentarios.py) ou None. Fora da comparacao: as
+    # ancoras estao no fluxo (MarcaComentario) e a conferencia compara o conteudo a parte.
+    comentarios: object = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

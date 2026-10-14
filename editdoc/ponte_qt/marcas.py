@@ -10,7 +10,10 @@ modelo em JSON numa propriedade de usuario:
   em azul-acinzentado; o sdtPr vai no JSON (base64);
 - inicio e fim de marcador (TIPO_MARCADOR): sem largura e sem pintura, como no Word com os
   marcadores ocultos. O painel pula essas marcas nas setas, no Backspace e no Delete, para
-  que o usuario nao as apague sem ver.
+  que o usuario nao as apague sem ver;
+- ancoras de comentario (0.1.6, `MarcaComentario`: inicio, fim e referencia): o mesmo objeto
+  sem largura do marcador (e o mesmo pulo no teclado). O trecho comentado e' realcado pela
+  pintura da folha na tela (`ponte_qt/comentarios.py`), nunca na impressao.
 
 O HTML do Qt nao leva o objeto de tipo proprio (medido no 6.11 com os objetos opacos):
 copiar e colar leva o texto do resultado, sem as marcas. O manipulador herda de
@@ -28,7 +31,8 @@ from PySide6.QtGui import (QColor, QFontMetricsF, QPen, QPyTextObject, QTextChar
                            QTextCursor, QTextDocument, QTextFormat)
 
 from editdoc import log_interno
-from editdoc.modelo.documento import CARACTERE_OBJETO, Campo, MarcaCampo, MarcaConteudo, Marcador
+from editdoc.modelo.documento import (CARACTERE_OBJETO, Campo, MarcaCampo, MarcaComentario,
+                                      MarcaConteudo, Marcador)
 from editdoc.ponte_qt.campos import fonte_de
 
 log = log_interno.obter(__name__)
@@ -62,7 +66,8 @@ def _campo_para_dict(campo: Campo) -> dict:
     return {"codigo": [x if isinstance(x, str) else _campo_para_dict(x) for x in campo.codigo],
             "sujo": campo.sujo, "travado": campo.travado, "sem_resultado": campo.sem_resultado,
             "resultado": campo.resultado,
-            "extra": base64.b64encode(campo.extra).decode("ascii") if campo.extra else ""}
+            "extra": base64.b64encode(campo.extra).decode("ascii") if campo.extra else "",
+            "rpr_codigo": campo.rpr_codigo, "rpr_separador": campo.rpr_separador}
 
 
 def _campo_de_dict(dado, nivel: int = 0) -> Campo | None:
@@ -82,13 +87,19 @@ def _campo_de_dict(dado, nivel: int = 0) -> Campo | None:
     except (ValueError, TypeError):
         extra = b""
     resultado = dado.get("resultado")
+    rpr_codigo, rpr_separador = dado.get("rpr_codigo"), dado.get("rpr_separador")
     return Campo(codigo=tuple(codigo), sujo=dado.get("sujo") is True,
                  travado=dado.get("travado") is True,
                  sem_resultado=dado.get("sem_resultado") is True,
-                 resultado=resultado if isinstance(resultado, str) else "", extra=extra)
+                 resultado=resultado if isinstance(resultado, str) else "", extra=extra,
+                 rpr_codigo=rpr_codigo if isinstance(rpr_codigo, str) and rpr_codigo else None,
+                 rpr_separador=rpr_separador if isinstance(rpr_separador, str) and rpr_separador
+                 else None)
 
 
 def json_da_marca(marca) -> str:
+    if isinstance(marca, MarcaComentario):
+        return json.dumps({"comentario": marca.tipo, "id": int(marca.id)})
     if isinstance(marca, Marcador):
         return json.dumps({"marcador": marca.tipo, "nome": marca.nome}, ensure_ascii=False)
     if isinstance(marca, MarcaConteudo):
@@ -106,6 +117,11 @@ def marca_de_json(texto):
     except (TypeError, ValueError):
         return None
     if not isinstance(dado, dict):
+        return None
+    if dado.get("comentario") in ("inicio", "fim", "referencia"):
+        ident = dado.get("id")
+        if isinstance(ident, int) and not isinstance(ident, bool):
+            return MarcaComentario(dado["comentario"], ident)
         return None
     if dado.get("marcador") in ("inicio", "fim") and isinstance(dado.get("nome"), str) \
             and dado["nome"]:
@@ -147,7 +163,8 @@ def formato_de_marca(base: QTextCharFormat, marca) -> QTextCharFormat:
     for prop in (QTextFormat.Property.ImageName, QTextFormat.Property.ImageWidth,
                  QTextFormat.Property.ImageHeight, QTextFormat.Property.TextToolTip):
         cf.clearProperty(prop)
-    cf.setObjectType(TIPO_MARCADOR if isinstance(marca, Marcador) else TIPO_MARCA_CAMPO)
+    cf.setObjectType(TIPO_MARCADOR if isinstance(marca, (Marcador, MarcaComentario))
+                     else TIPO_MARCA_CAMPO)
     cf.setProperty(PROP_MARCA, json_da_marca(marca))
     return cf
 
@@ -166,7 +183,7 @@ def posicoes_de_marcadores(doc: QTextDocument, nome: str | None = None) -> list[
             frag = it.fragment()
             if frag.isValid() and eh_marcador(frag.charFormat()):
                 m = marca_de(frag.charFormat())
-                if m is not None and (nome is None or m.nome == nome):
+                if isinstance(m, Marcador) and (nome is None or m.nome == nome):
                     saida.extend((frag.position() + i, m) for i, c in enumerate(frag.text())
                                  if c == CARACTERE_OBJETO)
             it += 1

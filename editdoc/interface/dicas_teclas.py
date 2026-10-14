@@ -33,8 +33,8 @@ from editdoc.interface import acessibilidade
 
 Key = Qt.Key
 #: Letras das abas, na ordem de faixa.ABAS (a contextual do cabecalho por ultimo).
-LETRAS_DAS_ABAS = {"Página Inicial": "P", "Inserir": "N", "Layout": "L", "Exibir": "E",
-                   "Cabeçalho e Rodapé": "H"}
+LETRAS_DAS_ABAS = {"Página Inicial": "P", "Inserir": "N", "Layout": "L", "Revisão": "R",
+                   "Exibir": "E", "Cabeçalho e Rodapé": "H"}
 _SETAS = (Key.Key_Left, Key.Key_Right, Key.Key_Up, Key.Key_Down)
 #: Controles que usam as setas eles mesmos (mudar valor, mover o cursor do texto).
 _USAM_SETAS = (QComboBox, QAbstractSpinBox, QLineEdit)
@@ -279,6 +279,8 @@ class TecladoFaixa(QObject):
             candidatos.append(j.navegacao.arvore)
         if j.dock_estilos.isVisible():
             candidatos.append(j.painel_estilos.lista)
+        if getattr(j, "dock_comentarios", None) is not None and j.dock_comentarios.isVisible():
+            candidatos.append(j.painel_comentarios._area)  # 0.1.6
         candidatos.append(j.controle_zoom)
         return [w for w in candidatos if w.isVisible()]
 

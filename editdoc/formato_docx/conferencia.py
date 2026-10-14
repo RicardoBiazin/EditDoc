@@ -12,6 +12,9 @@ Hiperlinks, campos e marcadores (0.1.3): o destino de cada trecho de link e as m
 campo (com o codigo) e de marcador de cada paragrafo, depois de `marcas.equilibrar`; e o
 conteudo das partes preservadas do pacote (`pacote.assinatura`).
 Listas (0.1.4): o numId e o nivel de cada paragrafo (o numbering.xml passa pelo validador).
+Comentarios (0.1.6): as ancoras de cada paragrafo (com as outras marcas) e, de cada
+comentario, o autor, as iniciais, a data, o pai, o resolvido, os ids das partes estendidas e
+o conteudo (texto, estilos, links e marcas, paragrafo a paragrafo).
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 
+from editdoc.formato_docx import comentarios as fx_comentarios
 from editdoc.formato_docx import opacos
 from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.erros import ErroDocx
@@ -78,7 +82,8 @@ def _itens(blocos, saida: list, onde: str) -> None:
     n_par = 0
     for bloco in blocos:
         if isinstance(bloco, Tabela):
-            saida.append((f"{onde}tabela", "tabela", len(bloco.linhas), len(bloco.colunas_tw)))
+            saida.append((f"{onde}tabela", "tabela", len(bloco.linhas), len(bloco.colunas_tw),
+                          bloco.estilo))
             for i, linha in enumerate(bloco.linhas):
                 saida.append((f"{onde}linha {i + 1}", "linha", len(linha.celulas), linha.cabecalho))
                 for j, celula in enumerate(linha.celulas):
@@ -95,6 +100,20 @@ def _itens(blocos, saida: list, onde: str) -> None:
                           (bloco.lista, bloco.lista_nivel)))
 
 
+def _comentarios(doc: Documento) -> tuple:
+    """O que se compara de cada comentario (0.1.6), na ordem do catalogo."""
+    cat = doc.comentarios
+    if cat is None:
+        return ()
+    saida = []
+    for c in cat.itens:
+        itens: list = []
+        _itens(normalizar(Documento(paragrafos=list(c.paragrafos))).paragrafos, itens, "")
+        saida.append((c.id, c.autor, c.iniciais, c.data, c.pai, c.resolvido, c.para_id,
+                      c.duravel, c.data_utc, tuple(x[1:] for x in itens)))
+    return tuple(saida)
+
+
 def conferir(dados: bytes, esperado: Documento) -> None:
     """Relê `dados` com o proprio leitor e compara estrutura, texto e imagens."""
     from editdoc.formato_docx.leitor import ler
@@ -105,7 +124,7 @@ def conferir(dados: bytes, esperado: Documento) -> None:
     a: list = []
     b: list = []
     # O escritor grava as marcas em pares (marcas.equilibrar): e' isso que tem de voltar.
-    esperado = marcas.equilibrar(esperado)[0]
+    esperado = fx_comentarios.preparar(marcas.equilibrar(esperado)[0])
     esperado_n, lido_n = normalizar(esperado), normalizar(lido)
     _itens(esperado_n.paragrafos, a, "")
     _itens(lido_n.paragrafos, b, "")
@@ -147,6 +166,12 @@ def conferir(dados: bytes, esperado: Documento) -> None:
         raise FalhaDeConferencia("estrutura de tabela diferente no fim do documento")
     if esperado.pagina != lido.pagina:
         raise FalhaDeConferencia("papel ou margens diferentes do documento")
+    a_coment, b_coment = _comentarios(esperado), _comentarios(lido)
+    if len(a_coment) != len(b_coment):
+        raise FalhaDeConferencia(f"comentarios: esperado {len(a_coment)}, gravado {len(b_coment)}")
+    for x, y in zip(a_coment, b_coment):
+        if x != y:
+            raise FalhaDeConferencia(f"comentario {x[0]} diferente no arquivo gravado")
     if fx_pacote.assinatura(esperado.pacote) != fx_pacote.assinatura(lido.pacote):
         raise FalhaDeConferencia("partes preservadas do pacote (propriedades, customXml, "
                                  "fontes...) diferentes")

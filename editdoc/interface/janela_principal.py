@@ -22,6 +22,11 @@ Estilos e Exibir (M6): a galeria fica na faixa; o painel de estilos e o painel d
 navegacao sao QDockWidget opcionais (direita e esquerda), escondidos ao abrir. A janela
 mantem a galeria, o painel de estilos, os campos da aba Layout e os botoes de mostrar em
 sintonia com o cursor (`_sintonizar`, chamado pelo AtualizadorDeEstado).
+
+Comentarios (0.1.6): o painel de comentarios e' outro QDockWidget a direita (aparece sozinho
+quando o documento aberto tem comentarios, como o "Mostrar comentarios" do Word). Os dialogos
+(novo, responder, editar) sao da janela (`_pedir_comentario`, trocavel nos testes); o autor e
+as iniciais vem das Opcoes, lidas na hora (mudar as Opcoes vale para o proximo comentario).
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from PySide6.QtWidgets import QDockWidget, QLabel, QMainWindow, QVBoxLayout, QWi
 from editdoc import APP, VERSAO, configuracao, log_interno, recursos
 from editdoc.armazenamento import gravacao
 from editdoc.edicao import busca, tabelas
+from editdoc.edicao import comentarios as ed_comentarios
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao import links as ed_links
@@ -46,16 +52,18 @@ from editdoc.formato_docx import conferencia
 from editdoc.formato_docx.avisos import Aviso
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import escrever_com_avisos
-from editdoc.interface import acessibilidade, dialogo_estilo, dialogos_modais, impressao, tema
+from editdoc.interface import (acessibilidade, dialogo_comentario, dialogo_estilo, dialogos_modais,
+                               impressao, tema)
 from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
-from editdoc.interface.comandos import LINK, LISTA_NUMERADA, TABELA, Comandos
+from editdoc.interface.comandos import COMENTARIO, LINK, LISTA_NUMERADA, TABELA, Comandos
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import BotaoAcao, Faixa
 from editdoc.interface.guarda_recuperacao import GuardaRecuperacao
 from editdoc.interface.navegacao import PainelNavegacao
+from editdoc.interface.painel_comentarios import PainelComentarios
 from editdoc.interface.painel_documento import PainelDocumento
 from editdoc.interface.painel_estilos import PainelEstilos
 from editdoc.interface.regua import Regua
@@ -66,6 +74,7 @@ from editdoc.modelo.estatisticas import contar
 from editdoc.modelo.pagina import MARGENS_PREDEFINIDAS, Pagina
 from editdoc.modelo.texto_plano import texto_do_documento
 from editdoc.ponte_qt import de_qt, links, marcas, para_qt
+from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import estilos as pq_estilos
 
 log = log_interno.obter(__name__)
@@ -162,6 +171,16 @@ class JanelaPrincipal(QMainWindow):
                                      "painel_estilos": self._alternar_painel_estilos,
                                      "navegacao": self._alternar_navegacao,
                                      "regua": self._alternar_regua,
+                                 }, ao_revisao={
+                                     "novo": self.novo_comentario,
+                                     "responder": self.responder_comentario,
+                                     "editar": self.editar_comentario,
+                                     "resolver": self.resolver_comentario,
+                                     "excluir": self.excluir_comentario,
+                                     "excluir_todos": self.excluir_todos_comentarios,
+                                     "anterior": lambda: self._comentario_vizinho(False),
+                                     "proximo": lambda: self._comentario_vizinho(True),
+                                     "mostrar": self._alternar_comentarios,
                                  })
         self.botao_arquivo = BotaoArquivo(self.comandos, self._recentes, self._abrir_recente)
         self.faixa = Faixa(self.comandos, self.painel, self.botao_arquivo)
@@ -195,8 +214,21 @@ class JanelaPrincipal(QMainWindow):
         self.dock_navegacao.setWidget(self.navegacao)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_navegacao)
         self.dock_navegacao.hide()
+        # Comentarios (0.1.6): o painel a direita, escondido ate' haver comentario.
+        self.painel_comentarios = PainelComentarios()
+        self.dock_comentarios = QDockWidget("Comentários", self)
+        self.dock_comentarios.setObjectName("dock_comentarios")
+        self.dock_comentarios.setWidget(self.painel_comentarios)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_comentarios)
+        self.dock_comentarios.hide()
+        self.painel_comentarios.selecionado.connect(self._comentario_escolhido)
+        self.painel_comentarios.responder.connect(self.responder_comentario)
+        self.painel_comentarios.editar.connect(self.editar_comentario)
+        self.painel_comentarios.resolver.connect(self.resolver_comentario)
+        self.painel_comentarios.excluir.connect(self.excluir_comentario)
         self.dock_estilos.visibilityChanged.connect(lambda _v: self._sintonizar())
         self.dock_navegacao.visibilityChanged.connect(lambda _v: self._sintonizar())
+        self.dock_comentarios.visibilityChanged.connect(self._comentarios_visiveis)
         self._regua_visivel = True
         self.comandos.acao("mostrar_regua").setChecked(True)
 
@@ -205,7 +237,8 @@ class JanelaPrincipal(QMainWindow):
                                                ao_atualizar=self._sintonizar)
         self.painel.registrar_atalhos(self.comandos.todas())
         self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
-            *TABELA, "tamanho_imagem", "inserir_link", *LINK, *LISTA_NUMERADA)])
+            *TABELA, "tamanho_imagem", "inserir_link", *LINK, *LISTA_NUMERADA,
+            "novo_comentario", *COMENTARIO)])
         self.painel.mensagem.connect(lambda texto: self.statusBar().showMessage(texto, 6000))
         # Sem isto o atalho so' funciona quando o foco esta no painel.
         for acao in self.comandos.todas():
@@ -233,6 +266,13 @@ class JanelaPrincipal(QMainWindow):
         self._timer.setInterval(ATRASO_ESTATISTICAS_MS)
         self._timer.timeout.connect(self.atualizar_estatisticas)
         self.painel.textChanged.connect(self._timer.start)
+        self._timer_comentarios = QTimer(self)
+        self._timer_comentarios.setSingleShot(True)
+        self._timer_comentarios.setInterval(ATRASO_ESTATISTICAS_MS)
+        self._timer_comentarios.timeout.connect(self._atualizar_comentarios)
+        self.painel.textChanged.connect(self._timer_comentarios.start)
+        self.painel.comentariosAlterados.connect(self._atualizar_comentarios)
+        self.painel.cursorPositionChanged.connect(self._destacar_comentario)
         self.painel.documento_corpo().modificationChanged.connect(lambda _=False: self._atualizar_titulo())
         self.painel.cursorPositionChanged.connect(self._atualizar_rotulo_pagina)
         self.painel.paginaAlterada.connect(self._pagina_mudou)
@@ -341,6 +381,7 @@ class JanelaPrincipal(QMainWindow):
         c.acao("mostrar_regua").setChecked(self._regua_visivel)
         c.acao("painel_estilos").setChecked(not self.dock_estilos.isHidden())
         c.acao("painel_navegacao").setChecked(not self.dock_navegacao.isHidden())
+        c.acao("mostrar_comentarios").setChecked(not self.dock_comentarios.isHidden())
 
     def _estilo_escolhido(self, sid: str) -> None:
         ed_estilos.aplicar_estilo(self.painel, sid)
@@ -393,6 +434,129 @@ class JanelaPrincipal(QMainWindow):
         self._regua_visivel = not self._regua_visivel
         self.regua.setVisible(self._regua_visivel)
         self._sintonizar()
+
+    # -- comentarios (0.1.6) ------------------------------------------------
+
+    def _autor_comentario(self) -> tuple[str, str]:
+        """(nome, iniciais) das Opcoes; vazio = o usuario do Windows."""
+        return ed_comentarios.autor_das_preferencias(configuracao.carregar())
+
+    def _pedir_comentario(self, titulo: str, conteudo: tuple = (),
+                          somente_leitura: str = "") -> tuple | None:
+        """O editor do texto do comentario. Os testes trocam este metodo."""
+        return dialogo_comentario.pedir(self, titulo, conteudo, somente_leitura)
+
+    def _alvo(self, ident) -> int | None:
+        if isinstance(ident, int) and not isinstance(ident, bool):
+            return ident
+        return ed_comentarios.no_cursor(self.painel)
+
+    def novo_comentario(self) -> int | None:
+        """Revisao > Novo comentario (Ctrl+Alt+M) sobre a selecao."""
+        if self.painel.editando_faixa() is not None:
+            self.statusBar().showMessage("Comentários ficam no corpo do documento. Saia do "
+                                         "cabeçalho ou do rodapé (Esc) para comentar.", 6000)
+            return None
+        conteudo = self._pedir_comentario("Novo comentário")
+        ident = None
+        if conteudo is not None:
+            nome, iniciais = self._autor_comentario()
+            ident = ed_comentarios.novo(self.painel, conteudo, nome, iniciais)
+            if ident is not None:
+                self.dock_comentarios.show()
+        self._atualizar_comentarios()
+        self.painel.setFocus()
+        return ident
+
+    def responder_comentario(self, ident=None) -> int | None:
+        alvo = self._alvo(ident)
+        cat = ed_comentarios.catalogo(self.painel)
+        if alvo is None or cat.obter(alvo) is None:
+            return None
+        conteudo = self._pedir_comentario(f"Responder a {cat.obter(alvo).autor or 'comentário'}")
+        novo = None
+        if conteudo is not None:
+            nome, iniciais = self._autor_comentario()
+            novo = ed_comentarios.responder(self.painel, alvo, conteudo, nome, iniciais)
+        self._atualizar_comentarios()
+        self.painel.setFocus()
+        return novo
+
+    def editar_comentario(self, ident=None) -> bool:
+        alvo = self._alvo(ident)
+        cat = ed_comentarios.catalogo(self.painel)
+        atual = cat.obter(alvo) if alvo is not None else None
+        if atual is None:
+            return False
+        motivo = ed_comentarios.motivo_somente_leitura(atual)
+        titulo = "Comentário (somente leitura)" if motivo else "Editar comentário"
+        conteudo = self._pedir_comentario(titulo, atual.paragrafos, motivo)
+        mudou = conteudo is not None and ed_comentarios.editar(self.painel, alvo, conteudo)
+        self._atualizar_comentarios()
+        self.painel.setFocus()
+        return mudou
+
+    def resolver_comentario(self, ident=None, valor=None) -> bool:
+        alvo = self._alvo(ident)
+        cat = ed_comentarios.catalogo(self.painel)
+        if alvo is None or cat.obter(alvo) is None:
+            return False
+        if valor is None:
+            raiz = cat.obter(cat.raiz(alvo))
+            valor = not (raiz is not None and raiz.resolvido)
+        feito = ed_comentarios.resolver(self.painel, alvo, bool(valor))
+        self._atualizar_comentarios()
+        return feito
+
+    def excluir_comentario(self, ident=None) -> bool:
+        alvo = self._alvo(ident)
+        if alvo is None:
+            return False
+        feito = ed_comentarios.excluir(self.painel, alvo)
+        self._atualizar_comentarios()
+        self.painel.setFocus()
+        return feito
+
+    def excluir_todos_comentarios(self) -> int:
+        n = ed_comentarios.excluir_todos(self.painel)
+        self._atualizar_comentarios()
+        if n:
+            self.statusBar().showMessage(
+                f"{n} comentário{'s' if n != 1 else ''} excluído{'s' if n != 1 else ''}. "
+                "Desfazer (Ctrl+Z) os traz de volta.", 6000)
+        return n
+
+    def _comentario_vizinho(self, proximo: bool) -> None:
+        if ed_comentarios.ir(self.painel, proximo) is None:
+            self.statusBar().showMessage("Não há mais comentários nessa direção.", 4000)
+        self.painel.setFocus()
+
+    def _comentario_escolhido(self, ident: int) -> None:
+        ed_comentarios.selecionar(self.painel, ident)
+        self._destacar_comentario()
+
+    def _alternar_comentarios(self) -> None:
+        self.dock_comentarios.setVisible(self.dock_comentarios.isHidden())
+        self._sintonizar()
+
+    def _comentarios_visiveis(self, _visivel=None) -> None:
+        if not self.dock_comentarios.isHidden():
+            self._atualizar_comentarios()
+        self._sintonizar()
+
+    def _atualizar_comentarios(self) -> None:
+        """Refaz os cartoes do painel (so' se o catalogo ou a ordem mudou)."""
+        doc = self.painel.documento_corpo()
+        cat = pq_comentarios.catalogo(doc)
+        ordem = pq_comentarios.ordem_no_texto(doc, cat) if cat.itens else []
+        self.painel_comentarios.atualizar(cat, ordem, pq_comentarios.assinatura(doc)[:2])
+        self._destacar_comentario()
+
+    def _destacar_comentario(self) -> None:
+        if self.dock_comentarios.isHidden():
+            return
+        self.painel_comentarios.destacar(ed_comentarios.no_cursor(self.painel),
+                                         ed_comentarios.catalogo(self.painel))
 
     # -- pagina ------------------------------------------------------------
 
@@ -631,6 +795,10 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_titulo()
         if not self.dock_navegacao.isHidden():
             self.navegacao.atualizar()
+        # Comentarios (0.1.6): o painel aparece quando o documento tem comentarios.
+        self._atualizar_comentarios()
+        if pq_comentarios.catalogo(self.painel.documento_corpo()).itens:
+            self.dock_comentarios.show()
         self._sintonizar()
         self.recuperacao.alteracoes = 0
 

@@ -41,6 +41,7 @@ from editdoc.interface.layout_paginado import LayoutPaginado
 from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
+from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
@@ -160,12 +161,15 @@ PALETA_TEXTO.setColor(QPalette.ColorRole.Highlight, COR_SELECAO)
 
 
 def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
-                   corpo_recorte=None, selecao=None, marcas: bool = False) -> None:
+                   corpo_recorte=None, selecao=None, marcas: bool = False,
+                   comentarios: bool = False) -> None:
     """Pinta o corpo da pagina n. Funcao unica de pintura de folha.
 
     transf leva twips da folha (origem no canto superior esquerdo da folha) para o
     painter. corpo_recorte: (x, y, w, h) em twips do corpo, para pintar so' um tile;
     None pinta o corpo inteiro. selecao: QTextCursor com selecao, ou None.
+    comentarios (0.1.6): o realce dos trechos comentados, so' na tela (a impressao e o PDF
+    nao o passam).
     """
     cfg = layout.pagina
     hb = layout.hb
@@ -192,13 +196,16 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     ctx.clip = QRectF(recorte.x(), n * hb + recorte.y(), recorte.width(), recorte.height())
     ctx.palette = PALETA_TEXTO
     ctx.cursorPosition = -1
+    selecoes = pq_comentarios.selecoes_de_realce(layout.doc) if comentarios else []
     if selecao is not None and selecao.hasSelection():
         sel = QAbstractTextDocumentLayout.Selection()
         sel.cursor = QTextCursor(selecao)
         fmt = QTextCharFormat()
         fmt.setBackground(COR_SELECAO)
         sel.format = fmt
-        ctx.selections = [sel]
+        selecoes.append(sel)
+    if selecoes:
+        ctx.selections = selecoes
     layout.doc.documentLayout().draw(painter, ctx)
     # Numeros e marcadores das listas (0.1.4): pintados aqui, na funcao unica da folha.
     pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
@@ -488,7 +495,7 @@ class VistaPaginas(QAbstractScrollArea):
         t.scale(e, e)
         desenhar_folha(pintor, self.layout_pag, n, t,
                        corpo_recorte=(i * tw - cfg.margem_esq_tw, j * tw - cfg.margem_sup_tw,
-                                      tw, tw), marcas=self._marcas)
+                                      tw, tw), marcas=self._marcas, comentarios=True)
         pintor.end()
         dy0 = n * self.layout_pag.hb + (j * tw - cfg.margem_sup_tw)
         nbytes = lado * lado * 4
@@ -628,7 +635,8 @@ class VistaPaginas(QAbstractScrollArea):
             p.setClipRect(folha)
             if com_selecao:
                 t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
-                desenhar_folha(p, self.layout_pag, n, t, selecao=selecao, marcas=self._marcas)
+                desenhar_folha(p, self.layout_pag, n, t, selecao=selecao, marcas=self._marcas,
+                               comentarios=True)
             else:
                 nx = math.ceil(m.largura_folha / TILE_PX)
                 ny = math.ceil(m.altura_folha / TILE_PX)

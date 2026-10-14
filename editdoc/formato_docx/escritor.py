@@ -51,6 +51,14 @@ Propriedades preservadas (0.1.5): o rPr e o pPr juntam o que o escritor gera do 
 extras do arquivo de origem (`propriedades.montar_rpr`/`montar_ppr`), na ordem do esquema. O
 controle de conteudo sai como w:sdt com o sdtPr de origem: o de paragrafo dentro do w:p, o de
 bloco por fora dos paragrafos que envolve. Recorte de imagem (a:srcRect) volta ao blipFill.
+
+Comentarios (0.1.6): as ancoras saem como w:commentRangeStart, w:commentRangeEnd e o run com
+w:commentReference; o word/comments.xml tem cada w:comment (o XML de origem do que nao mudou,
+o conteudo gerado pelo escritor de sempre no novo ou editado, com o w:annotationRef no
+comeco e o w14:paraId no ultimo paragrafo), com as relacoes proprias (links). As partes
+estendidas e o people.xml saem de `formato_docx/comentarios.py`. Sem mudanca nenhuma, o
+comments.xml volta byte a byte. A referencia a estilo que o styles.xml de origem nao definia
+(o "CommentReference" latente) volta como veio, e o validador a aceita.
 """
 
 from __future__ import annotations
@@ -64,6 +72,7 @@ import zipfile
 
 from lxml import etree
 
+from editdoc.formato_docx import comentarios as fx_comentarios
 from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos, ordem
@@ -79,9 +88,11 @@ from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFI
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
 from editdoc.modelo import marcas
+from editdoc.formato_docx.nomes import W14_NS
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celula, Documento,
-                                      Imagem, Link, MarcaCampo, MarcaConteudo, Marcador, Paragrafo,
-                                      Run, Tabela, bordas_padrao, objetos_de)
+                                      Imagem, Link, MarcaCampo, MarcaComentario, MarcaConteudo,
+                                      Marcador, Paragrafo, Run, Tabela, bordas_padrao, objetos_de,
+                                      paragrafos_de)
 from editdoc.modelo.estilos import catalogo_padrao
 from editdoc.modelo.numeracao import lista_efetiva, materializado, recuos_do_nivel
 
@@ -171,6 +182,20 @@ class _Relacoes:
             self.itens.append((rid, tipo, alvo, "External") if externo else (rid, tipo, alvo))
         return self._por_alvo[chave]
 
+    def adicionar_com_id(self, preferido: str, tipo: str, alvo: str, externo: bool = False) -> str:
+        """Como `adicionar`, mas com o Id de origem se ele ainda esta' livre (0.1.6: o link do
+        comentario que volta com o XML de origem)."""
+        chave = (tipo, alvo, externo)
+        if chave in self._por_alvo:
+            return self._por_alvo[chave]
+        usados = {item[0] for item in self.itens}
+        if not preferido or preferido in usados or (
+                preferido.startswith("rId") and preferido[3:].isdigit()):
+            return self.adicionar(tipo, alvo, externo)
+        self._por_alvo[chave] = preferido
+        self.itens.append((preferido, tipo, alvo, "External") if externo else (preferido, tipo, alvo))
+        return preferido
+
 
 class _Midias:
     """Imagens do documento inteiro: uma parte em word/media por conteudo distinto."""
@@ -212,9 +237,12 @@ _PARTES_FIXAS = {"[Content_Types].xml", "_rels/.rels", "word/document.xml",
 
 
 class _Ctx:
-    def __init__(self, coletor: Coletor, estilos=None, pacote=None) -> None:
+    def __init__(self, coletor: Coletor, estilos=None, pacote=None,
+                 comentarios: bool = False) -> None:
         self.coletor = coletor
         usados = set(_PARTES_FIXAS)
+        if comentarios:
+            usados |= set(fx_comentarios.PARTES)  # 0.1.6: o pacote preservado nao toma o nome
         if estilos is not None and estilos.tema_original:
             usados.add(PARTE_TEMA)
         # Partes preservadas do pacote (0.1.3): tomam o nome primeiro, para manter o de origem.
@@ -394,8 +422,20 @@ def _hiperlink(pe, link: Link, ctx: "_Ctx"):
 
 
 def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
-    """Marca de campo (begin com o codigo, ou end) ou de marcador (bookmarkStart/End)."""
+    """Marca de campo (begin com o codigo, ou end) ou de marcador (bookmarkStart/End); desde a
+    0.1.6, ancora de comentario."""
     m = run.marca
+    if isinstance(m, MarcaComentario):
+        if m.tipo == "referencia":
+            r = etree.SubElement(destino, q("r"))
+            rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
+            if rpr is not None:
+                r.append(rpr)
+            etree.SubElement(r, q("commentReference")).set(q("id"), str(int(m.id)))
+        else:
+            nome = "commentRangeStart" if m.tipo == "inicio" else "commentRangeEnd"
+            etree.SubElement(destino, q(nome)).set(q("id"), str(int(m.id)))
+        return
     if isinstance(m, Marcador):
         if m.tipo == "inicio":
             ident = ctx.proximo_marcador
@@ -418,7 +458,8 @@ def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
     # o separate, como veio.
     fecha_logo = (proximo is not None and isinstance(proximo.marca, MarcaCampo)
                   and proximo.marca.tipo == "fim")
-    _codigo_de_campo(destino, campo, rpr, sem_separador=campo.sem_resultado and fecha_logo)
+    _codigo_de_campo(destino, campo, rpr, sem_separador=campo.sem_resultado and fecha_logo,
+                     ctx=ctx)
 
 
 def _run_de_campo(destino, rpr, tipo: str, campo: Campo | None = None):
@@ -441,13 +482,29 @@ def _run_de_campo(destino, rpr, tipo: str, campo: Campo | None = None):
     return r
 
 
-def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool) -> None:
+def _rpr_proprio(texto: str | None, rpr, ctx=None):
+    """O rPr guardado de um run do codigo do campo (0.1.6), ou o do begin. O estilo citado que
+    o catalogo nao tem mais sai (o validador recusaria)."""
+    if not texto:
+        return rpr
+    el = etree.Element(q("rPr"))
+    for f in fx_props.filhos_de(texto):
+        el.append(f)
+    if ctx is not None:
+        for x in list(el.iter(q("rStyle"))):
+            if not ctx.estilo_existe(x.get(q("val")), "caractere"):
+                x.getparent().remove(x)
+    return el if len(el) else None
+
+
+def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool, ctx=None) -> None:
     """begin, a instrucao (com os campos de dentro dela) e o separate."""
     _run_de_campo(destino, rpr, "begin", campo)
+    rpr_codigo = _rpr_proprio(campo.rpr_codigo, rpr, ctx)
     for pedaco in campo.codigo:
         if isinstance(pedaco, Campo):
             # Campo dentro da instrucao (o PAGE de um IF): inteiro, com o ultimo resultado.
-            _codigo_de_campo(destino, pedaco, rpr, sem_separador=pedaco.sem_resultado)
+            _codigo_de_campo(destino, pedaco, rpr, sem_separador=pedaco.sem_resultado, ctx=ctx)
             if pedaco.resultado:
                 r = etree.SubElement(destino, q("r"))
                 if rpr is not None:
@@ -463,13 +520,13 @@ def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool) -> None:
         if not texto:
             continue
         r = etree.SubElement(destino, q("r"))
-        if rpr is not None:
-            r.append(copy.deepcopy(rpr))
+        if rpr_codigo is not None:
+            r.append(copy.deepcopy(rpr_codigo))
         instr = etree.SubElement(r, q("instrText"))
         instr.set("{%s}space" % XML_NS, "preserve")
         instr.text = texto
     if not sem_separador:
-        _run_de_campo(destino, rpr, "separate")
+        _run_de_campo(destino, _rpr_proprio(campo.rpr_separador, rpr, ctx), "separate")
 
 
 def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None, ctx=None) -> None:
@@ -517,7 +574,11 @@ def _borda_xml(pai, nome: str, borda: Borda) -> None:
 def _tabela(pai, tabela: Tabela, ctx: _Ctx) -> None:
     tbl = etree.SubElement(pai, q("tbl"))
     tbl_pr = etree.SubElement(tbl, q("tblPr"))
-    etree.SubElement(tbl_pr, q("tblStyle")).set(q("val"), ESTILO_TABELA)
+    # O estilo de origem volta (0.1.6, com a formatacao condicional dele); a tabela do EditDoc
+    # usa o "Table Grid". As bordas continuam explicitas, entao a grade nao muda.
+    estilo = tabela.estilo if tabela.estilo and ctx.tipos.get(tabela.estilo) == "tabela" \
+        else ESTILO_TABELA
+    etree.SubElement(tbl_pr, q("tblStyle")).set(q("val"), estilo)
     largura = tabela.largura or ("auto", 0)
     tw = etree.SubElement(tbl_pr, q("tblW"))
     tw.set(q("w"), str(int(largura[1])))
@@ -733,6 +794,103 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
 
 
 
+def _comentarios_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, list]:
+    """word/comments.xml (0.1.6) e as relacoes dele. Sem mudanca nenhuma, os bytes de origem."""
+    cat = doc.comentarios
+    originais = None
+    if cat.xml_comentarios is not None and all(c.original is not None for c in cat.itens):
+        raiz_orig = etree.fromstring(cat.xml_comentarios, opacos.parser_seguro())
+        elementos = [el for el in raiz_orig if el.tag == q("comment")]
+        originais = [(el.get(q("id")), fx_comentarios.para_id_do_comentario(el)) for el in elementos]
+    if originais is not None and originais == [(str(c.id), c.para_id) for c in cat.itens] \
+            and len(originais) == len(cat.itens):
+        # Nada mudou: os bytes de origem e as relacoes (links) que eles citam, com o mesmo Id.
+        rels = []
+        for c in cat.itens:
+            for rid, tipo, alvo in c.relacoes:
+                if not any(r[0] == rid for r in rels):
+                    rels.append((rid, tipo, alvo, "External"))
+        return cat.xml_comentarios, rels
+    gravador = ctx.opacos
+    nsmap = {**_NSMAP_PARTE, **gravador.espacos, "w14": W14_NS, "mc": MC_NS}
+    raiz = etree.Element(q("comments"), nsmap=nsmap)
+    ignoraveis = list(gravador.ignoraveis)
+    if "w14" not in ignoraveis:
+        ignoraveis.append("w14")
+    raiz.set("{%s}Ignorable" % MC_NS, " ".join(ignoraveis))
+    relacoes_doc = ctx.relacoes
+    ctx.relacoes = _Relacoes(1)
+    ctx.ids_marcadores = {}
+    estilo_ref = ctx.estilo_de_caractere("CommentReference")
+    try:
+        for c in cat.itens:
+            if c.original is not None:
+                el = etree.fromstring(c.original, opacos.parser_seguro())
+                trocas = {rid: ctx.relacoes.adicionar_com_id(rid, tipo, alvo, True)
+                          for rid, tipo, alvo in c.relacoes}
+                for x in el.iter():
+                    if not isinstance(x.tag, str):
+                        continue
+                    for chave, valor in list(x.attrib.items()):
+                        if chave.startswith("{%s}" % R_NS) and valor in trocas:
+                            x.set(chave, trocas[valor])
+                raiz.append(el)
+            else:
+                el = etree.SubElement(raiz, q("comment"))
+                el.set(q("id"), str(int(c.id)))
+                el.set(q("author"), texto_gravavel(c.autor)[0])
+                if c.data:
+                    el.set(q("date"), texto_gravavel(c.data)[0])
+                if c.iniciais:
+                    el.set(q("initials"), texto_gravavel(c.iniciais)[0])
+                _blocos(el, list(c.paragrafos) or [Paragrafo()], ctx, em_celula=True)
+                primeiro = el.find(".//" + q("p"))
+                if primeiro is not None:
+                    # A marca do comeco do comentario, como o Word grava (depois do pPr).
+                    r = etree.Element(q("r"))
+                    if estilo_ref is not None:
+                        etree.SubElement(etree.SubElement(r, q("rPr")), q("rStyle")).set(
+                            q("val"), estilo_ref)
+                    etree.SubElement(r, q("annotationRef"))
+                    tem_ppr = len(primeiro) and primeiro[0].tag == q("pPr")
+                    primeiro.insert(1 if tem_ppr else 0, r)
+            paragrafos = el.findall(".//" + q("p"))
+            if c.para_id and paragrafos:
+                paragrafos[-1].set("{%s}paraId" % W14_NS, c.para_id)
+        rels = list(ctx.relacoes.itens)
+    finally:
+        ctx.relacoes = relacoes_doc
+    return _xml(raiz), rels
+
+
+def _partes_de_comentarios(doc: Documento, ctx: _Ctx) -> tuple[list, list]:
+    """(partes, tipos de conteudo) dos comentarios; as relacoes vao para o documento."""
+    cat = doc.comentarios
+    if cat is None or not cat.itens:
+        return [], []
+    partes: list = []
+    tipos: list = []
+    xml, rels = _comentarios_xml(doc, ctx)
+    partes.append((fx_comentarios.PARTE_COMENTARIOS, xml))
+    if rels:
+        partes.append(("word/_rels/comments.xml.rels", _rels_xml(rels)))
+    tipos.append(("/" + fx_comentarios.PARTE_COMENTARIOS, fx_comentarios.CT_COMENTARIOS))
+    ctx.relacoes.adicionar(fx_comentarios.tipo_rel(cat, "comentarios"), "comments.xml")
+    quais = fx_comentarios.quais_partes(cat)
+    for chave, parte, ct, gerar in (
+            ("estendido", fx_comentarios.PARTE_ESTENDIDO, fx_comentarios.CT_ESTENDIDO,
+             fx_comentarios.xml_estendido),
+            ("ids", fx_comentarios.PARTE_IDS, fx_comentarios.CT_IDS, fx_comentarios.xml_ids),
+            ("extensivel", fx_comentarios.PARTE_EXTENSIVEL, fx_comentarios.CT_EXTENSIVEL,
+             fx_comentarios.xml_extensivel)):
+        if chave not in quais:
+            continue
+        partes.append((parte, gerar(cat)))
+        tipos.append(("/" + parte, ct))
+        ctx.relacoes.adicionar(fx_comentarios.tipo_rel(cat, chave), parte.split("/", 1)[1])
+    return partes, tipos
+
+
 def _settings_xml(pares_impares: bool = False) -> bytes:
     raiz = etree.Element(q("settings"), nsmap={"w": W})
     etree.SubElement(raiz, q("zoom")).set(q("percent"), "100")
@@ -820,12 +978,17 @@ def _extensoes_usadas(doc: Documento) -> dict[str, str]:
     saida: dict[str, str] = {}
     vistos: set = set()
     from editdoc.modelo.marcas import historias
-    from editdoc.modelo.documento import paragrafos_de
-    for blocos in historias(doc):
+    listas = list(historias(doc))
+    if doc.comentarios is not None:
+        # O conteudo gerado dos comentarios (0.1.6) tambem pode ter extensoes nos extras.
+        listas += [list(c.paragrafos) for c in doc.comentarios.itens if c.original is None]
+    for blocos in listas:
         for p in paragrafos_de(blocos):
             textos = [p.extras] + [r.extras for r in p.runs]
             textos += [r.marca.propriedades.decode("utf-8") for r in p.runs
                        if isinstance(r.marca, MarcaConteudo) and r.marca.propriedades]
+            textos += [x for r in p.runs if isinstance(r.marca, MarcaCampo) and r.marca.campo
+                       for x in (r.marca.campo.rpr_codigo, r.marca.campo.rpr_separador) if x]
             for texto in textos:
                 if texto and texto not in vistos and "xmlns:" in texto.replace('xmlns:w="', ""):
                     vistos.add(texto)
@@ -845,11 +1008,21 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         coletor.somar("MARCADOR", desfeitos["marcadores"])
     if desfeitos.get("conteudos"):
         coletor.somar("CONTEUDO_INCOMPLETO", desfeitos["conteudos"])
+    if desfeitos.get("comentarios"):
+        coletor.somar("COMENTARIO_INCOMPLETO", desfeitos["comentarios"])
+    # Comentarios (0.1.6): paraId e durableId de quem nao tem; o autor novo no people.xml.
+    doc = fx_comentarios.preparar(doc)
     # Listas montadas em codigo so' com o tipo: numId e definicao (0.1.4).
     doc = materializado(doc)
-    ctx = _Ctx(coletor, doc.estilos, doc.pacote)
+    tem_comentarios = doc.comentarios is not None and bool(doc.comentarios.itens)
+    ctx = _Ctx(coletor, doc.estilos, doc.pacote, tem_comentarios)
     ctx.numeracao = doc.numeracao
-    ctx.opacos.preparar(objetos_de(doc), _NSMAP_PARTE)
+    objetos = list(objetos_de(doc))
+    if tem_comentarios:
+        objetos += [r.objeto for c in doc.comentarios.itens if c.original is None
+                    for p in paragrafos_de(list(c.paragrafos)) for r in p.runs
+                    if r.objeto is not None]
+    ctx.opacos.preparar(objetos, _NSMAP_PARTE)
     # Extensoes do Word nos extras e nos controles de conteudo (w14, w15...): a raiz declara
     # e as poe no mc:Ignorable (0.1.5).
     ctx.opacos.declarar_extensoes(_extensoes_usadas(doc), _NSMAP_PARTE)
@@ -857,9 +1030,11 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     criado = doc.criado_em or agora
     modificado = doc.modificado_em or agora
     documento_xml, faixas = _document_xml(doc, ctx)
+    partes_comentarios, tipos_comentarios = _partes_de_comentarios(doc, ctx)
     tema = ctx.estilos.tema_original
     gravador = ctx.pacote
-    extras_tipos = list(faixas.tipos) + list(ctx.opacos.tipos) + gravador.tipos()
+    extras_tipos = list(faixas.tipos) + list(ctx.opacos.tipos) + gravador.tipos() \
+        + tipos_comentarios
     partes_tema: list[tuple[str, bytes]] = []
     if tema:
         # O tema volta para as fontes de tema (asciiTheme) dos estilos continuarem as mesmas.
@@ -902,6 +1077,7 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
             *ctx.relacoes.itens,
         ])),
         *faixas.partes,
+        *partes_comentarios,
         ("word/styles.xml", fx_estilos.escrever_estilos(ctx.estilos, listas)),
         *partes_tema,
         ("word/numbering.xml", numbering_xml),
@@ -916,7 +1092,7 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         *gravador.partes(),
     ]
     mapa = dict(partes)
-    problemas = ordem.validar(mapa)
+    problemas = ordem.validar(mapa, ctx.estilos.virtuais())
     if problemas:
         raise ErroDocx("ESCRITA_INVALIDA", "; ".join(problemas[:3]))
     return _zip(partes), coletor.avisos()

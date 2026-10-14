@@ -36,6 +36,9 @@ representa) vao em propriedades de usuario do formato, com a aparencia que a tel
 Estilos (M6): o formato do Qt recebe o efetivo, estilo resolvido (cadeia basedOn) mais a
 formatacao direta do modelo, e o id do estilo numa propriedade de usuario
 (`ponte_qt/estilos.py`). O catalogo vai para o documento (`definir_catalogo_base`).
+
+Comentarios (0.1.6): as ancoras sao marcas (`marcas.py`); o catalogo vai para o documento
+(`ponte_qt/comentarios.py`, `definir_base`).
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_COR
 from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
 from editdoc.modelo.numeracao import materializado
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
+from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
 
@@ -168,6 +172,7 @@ def json_da_tabela(tabela: Tabela) -> str:
         "margens_celula_tw": list(tabela.margens_celula_tw)
         if tabela.margens_celula_tw is not None else None,
         "extras": tabela.extras,
+        "estilo": tabela.estilo,
     }, sort_keys=True)
 
 
@@ -273,6 +278,10 @@ def formato_da_celula(celula: Celula, linha=None) -> QTextTableCellFormat:
     fmt = QTextTableCellFormat()
     if celula.sombreamento_hex is not None:
         fmt.setBackground(QBrush(QColor("#" + celula.sombreamento_hex)))
+    elif getattr(celula, "fundo_estilo", None):
+        # Formatacao condicional do estilo da tabela (0.1.6): so' a aparencia; o JSON (o que
+        # volta ao modelo) nao a leva, entao nao vira sombreamento direto ao salvar.
+        fmt.setBackground(QBrush(QColor("#" + celula.fundo_estilo)))
     if celula.alinhamento_vertical is not None:
         fmt.setVerticalAlignment(_VALIGN[celula.alinhamento_vertical])
     fmt.setProperty(PROP_CELULA, json_da_celula(celula, linha))
@@ -461,6 +470,7 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     modelo = materializado(modelo)
     listas.definir_catalogo_base(documento_qt, modelo.numeracao)
     pq_estilos.definir_catalogo_base(documento_qt, modelo.estilos)
+    pq_comentarios.definir_base(documento_qt, modelo.comentarios)
     res = pq_estilos.Resolvedor(pq_estilos.catalogo(documento_qt))
     cursor = QTextCursor(documento_qt)
     _inserir_blocos(cursor, modelo.paragrafos, res)

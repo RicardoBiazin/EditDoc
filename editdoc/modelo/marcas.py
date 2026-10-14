@@ -25,6 +25,14 @@ repetido (colar duas vezes) ganha outro numero.
 Tambem aplica a regra do leitor para PAGE e NUMPAGES: o campo de pagina que ficou simples
 (inicio, texto e fim no mesmo paragrafo e no mesmo link) vira o run de campo que a tela
 recalcula. Sem isso, o arquivo relido teria outra forma e a conferencia acusaria diferenca.
+
+Comentarios (0.1.6, `MarcaComentario`): so' no corpo (no cabecalho e no rodape a ancora sai).
+Ancora de comentario que o catalogo nao tem sai; ancora repetida sai. O comentario sem
+referencia no texto sai do catalogo (o Word nao o mostraria) e conta como comentario perdido;
+a resposta dele sobe para o topo. Inicio sem fim ganha o fim logo antes da referencia; fim sem
+inicio sai; inicio depois do fim: os dois saem (o comentario fica no ponto da referencia). O
+conteudo do comentario gerado de novo (o editado ou o novo) passa pela mesma regra de campos e
+marcadores; o que volta com o XML de origem fica como veio.
 """
 
 from __future__ import annotations
@@ -34,8 +42,8 @@ import re
 from dataclasses import replace
 
 from editdoc.modelo.campos import normalizar_instrucao, tipo_do_campo
-from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Documento, MarcaCampo, MarcaConteudo,
-                                      Marcador, Run, Tabela, paragrafos_de)
+from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Documento, MarcaCampo, MarcaComentario,
+                                      MarcaConteudo, Marcador, Run, Tabela, paragrafos_de)
 
 
 def historias(doc: Documento) -> list[list]:
@@ -265,11 +273,13 @@ def _ids_unicos(doc: Documento) -> None:
 
 def equilibrar(doc: Documento) -> tuple[Documento, dict[str, int]]:
     """Copia do documento com as marcas em pares. Devolve (documento, contagens):
-    "campos" desfeitos, "marcadores" repetidos que sairam e "conteudos" (controles de
-    conteudo) desfeitos."""
-    contagem = {"campos": 0, "marcadores": 0, "conteudos": 0}
-    if not any(r.marca is not None for blocos in historias(doc)
-               for p in paragrafos_de(blocos) for r in p.runs):
+    "campos" desfeitos, "marcadores" repetidos que sairam, "conteudos" (controles de
+    conteudo) desfeitos e "comentarios" que perderam a referencia (0.1.6)."""
+    contagem = {"campos": 0, "marcadores": 0, "conteudos": 0, "comentarios": 0}
+    cat = doc.comentarios
+    tem_comentarios = cat is not None and bool(getattr(cat, "itens", None))
+    if not tem_comentarios and not any(r.marca is not None for blocos in historias(doc)
+                                       for p in paragrafos_de(blocos) for r in p.runs):
         return doc, contagem
     saida = copy.copy(doc)
     saida.paragrafos = copy.deepcopy(doc.paragrafos)
@@ -281,7 +291,73 @@ def equilibrar(doc: Documento) -> tuple[Documento, dict[str, int]]:
         for p in paragrafos_de(blocos):
             _conteudos_de_run(p, contagem)
     _ids_unicos(saida)
+    _equilibrar_comentarios(saida, contagem)
     return saida, contagem
+
+
+def _equilibrar_comentarios(doc: Documento, contagem: dict) -> None:
+    """Ancoras de comentario coerentes com o catalogo (ver o topo do modulo)."""
+    from dataclasses import replace as _replace
+    cat = doc.comentarios
+    validos = {c.id for c in cat.itens} if cat is not None else set()
+    for blocos in historias(doc)[1:]:
+        for p in paragrafos_de(blocos):
+            if any(isinstance(r.marca, MarcaComentario) for r in p.runs):
+                p.runs = [r for r in p.runs if not isinstance(r.marca, MarcaComentario)]
+    sequencia = [(p, r) for p in paragrafos_de(doc.paragrafos) for r in p.runs
+                 if isinstance(r.marca, MarcaComentario)]
+    if cat is None and not sequencia:
+        return
+    remover: set[int] = set()
+    vistos: dict = {}
+    for i, (p, r) in enumerate(sequencia):
+        m = r.marca
+        if m.id not in validos or (m.tipo, m.id) in vistos:
+            remover.add(id(r))
+            continue
+        vistos[(m.tipo, m.id)] = (i, p, r)
+    sem_referencia = {c for c in validos if ("referencia", c) not in vistos}
+    inserir: list = []  # (paragrafo, run da referencia, run do fim novo)
+    for ident in validos:
+        ini, fim = vistos.get(("inicio", ident)), vistos.get(("fim", ident))
+        if ident in sem_referencia:
+            for x in (ini, fim):
+                if x is not None:
+                    remover.add(id(x[2]))
+            continue
+        ref = vistos[("referencia", ident)]
+        if ini is not None and fim is not None and ini[0] > fim[0]:
+            remover.update((id(ini[2]), id(fim[2])))
+        elif ini is not None and fim is None:
+            if ini[0] < ref[0]:
+                inserir.append((ref[1], ref[2], Run(marca=MarcaComentario("fim", ident))))
+            else:
+                remover.add(id(ini[2]))
+        elif fim is not None and ini is None:
+            remover.add(id(fim[2]))
+    if remover:
+        for p in {id(p): p for p, _r in sequencia}.values():
+            p.runs = [r for r in p.runs if id(r) not in remover]
+    for p, ref, novo in inserir:
+        indice = next(i for i, r in enumerate(p.runs) if r is ref)
+        p.runs.insert(indice, novo)
+    if cat is None:
+        return
+    contagem["comentarios"] += len(sem_referencia)
+    itens = []
+    for c in cat.itens:
+        if c.id in sem_referencia:
+            continue
+        mudar = {}
+        if c.pai is not None and (c.pai in sem_referencia or c.pai not in validos):
+            mudar["pai"] = None
+        if c.original is None and c.paragrafos:
+            # Conteudo gerado de novo: campos e marcadores em pares, como no corpo.
+            blocos = copy.deepcopy(list(c.paragrafos))
+            _equilibrar_historia(blocos, contagem)
+            mudar["paragrafos"] = tuple(blocos)
+        itens.append(_replace(c, **mudar) if mudar else c)
+    doc.comentarios = cat.com_itens(itens)
 
 
 def nomes_de_marcadores(doc: Documento) -> list[str]:

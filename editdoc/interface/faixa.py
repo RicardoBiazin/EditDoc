@@ -12,7 +12,7 @@ acao por sinal.
 
 Abas (M6): Pagina Inicial (Area de transferencia, Fonte, Paragrafo, Estilos e Edicao),
 Inserir (Paginas, Tabelas, Ilustracoes, Links, Cabecalho e Rodape), Layout (Configurar Pagina e
-Paragrafo: recuos e espacamento) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
+Paragrafo: recuos e espacamento), Revisao (0.1.6: Comentarios) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
 (M5) so' aparece durante a edicao do cabecalho, como a aba contextual do Word. Cada aba
 tem o seu recolhimento; a largura minima da faixa e' a da aba mais larga toda recolhida.
 
@@ -71,11 +71,15 @@ ROTULOS = {
     "fechar_cabecalho": "Fechar cabeçalho e rodapé",
     "painel_estilos": "Estilos", "mostrar_regua": "Régua",
     "painel_navegacao": "Navegação", "marcas_formatacao": "¶",
+    "novo_comentario": "Novo comentário", "excluir_comentario": "Excluir",
+    "comentario_anterior": "Anterior", "comentario_proximo": "Próximo",
+    "mostrar_comentarios": "Mostrar comentários",
 }
 
 #: Nome da aba contextual do cabecalho e do rodape.
 ABA_CABECALHO = "Cabeçalho e Rodapé"
-ABAS = ("Página Inicial", "Inserir", "Layout", "Exibir", ABA_CABECALHO)
+ABA_REVISAO = "Revisão"
+ABAS = ("Página Inicial", "Inserir", "Layout", ABA_REVISAO, "Exibir", ABA_CABECALHO)
 
 
 class BotaoAcao(QToolButton):
@@ -359,6 +363,7 @@ class Faixa(QFrame):
         self._pagina_inicial = self._montar_pagina_inicial(c)
         self._inserir = self._montar_inserir(c)
         self._layout = self._montar_layout(c)
+        self._revisao = self._montar_revisao(c)
         self._exibir = self._montar_exibir(c)
         cabecalho_linha = _linha([
             _menu_numero_de_pagina(c),
@@ -393,8 +398,9 @@ class Faixa(QFrame):
         self._aba_antes_da_faixa = 0
         topo.addWidget(self._abas, 1)
 
-        for widget in (self._pagina_inicial, self._inserir, self._layout, self._exibir,
-                       self._cabecalho):
+        # Na ordem de ABAS: o indice da aba e' o da pagina do QStackedWidget.
+        for widget in (self._pagina_inicial, self._inserir, self._layout, self._revisao,
+                       self._exibir, self._cabecalho):
             self._conteudo.addWidget(widget)
         self._abas.currentChanged.connect(self._conteudo.setCurrentIndex)
         if hasattr(editor, "modoFaixaAlterado"):
@@ -538,6 +544,30 @@ class Faixa(QFrame):
         self._linhas.append(linha)
         return linha
 
+    def _montar_revisao(self, c: Comandos) -> LinhaDeGrupos:
+        """Revisao (0.1.6): o grupo Comentarios, como no Word."""
+        botao_excluir = _botao(c, "excluir_comentario")
+        menu = QMenu(botao_excluir)
+        menu.addAction(c.acao("excluir_comentario"))
+        menu.addAction(c.acao("excluir_todos_comentarios"))
+        botao_excluir.setMenu(menu)
+        botao_excluir.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        botao_excluir.setAccessibleDescription(
+            f"{botao_excluir.accessibleDescription()}. A seta abre Excluir todos.")
+        comentarios = GrupoFaixa(
+            "Comentários", _duas_linhas(
+                [_botao(c, "novo_comentario"), botao_excluir, _botao(c, "mostrar_comentarios")],
+                [_botao(c, "comentario_anterior"), _botao(c, "comentario_proximo"),
+                 _botao(c, "responder_comentario"), _botao(c, "resolver_comentario")]),
+            _menu("Comentários", [c.acao(i) for i in (
+                "novo_comentario", "responder_comentario", "editar_comentario",
+                "resolver_comentario", "excluir_comentario", "excluir_todos_comentarios",
+                "comentario_anterior", "comentario_proximo", "mostrar_comentarios")]))
+        linha = LinhaDeGrupos([comentarios], [comentarios])
+        linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
+        self._linhas.append(linha)
+        return linha
+
     def _montar_exibir(self, c: Comandos) -> LinhaDeGrupos:
         mostrar = GrupoFaixa(
             "Mostrar", _duas_linhas(
@@ -571,11 +601,10 @@ class Faixa(QFrame):
         return self._pagina_inicial.recolhidos()
 
     def recolhidos_da_aba(self, nome: str) -> list[bool]:
-        for linha, aba in zip((self._pagina_inicial, self._inserir, self._layout, self._exibir),
-                              ABAS):
-            if aba == nome:
-                return linha.recolhidos()
-        return []
+        linhas = {"Página Inicial": self._pagina_inicial, "Inserir": self._inserir,
+                  "Layout": self._layout, ABA_REVISAO: self._revisao, "Exibir": self._exibir}
+        linha = linhas.get(nome)
+        return linha.recolhidos() if linha is not None else []
 
     def miniaturas_visiveis(self) -> int:
         """Quantas miniaturas a galeria mostra (0 = recolhida no botao Estilos)."""

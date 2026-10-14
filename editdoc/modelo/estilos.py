@@ -105,6 +105,11 @@ class Estilo:
     alterado: bool = False
     #: Valores lidos do arquivo, para gravar so' o que mudou: {"paragrafo": {...}, ...}.
     originais: dict = field(default_factory=dict)
+    #: Referencia preservada (0.1.6): o arquivo cita o styleId (w:rStyle, w:pStyle, w:tblStyle)
+    #: mas o styles.xml nao o define (um estilo latente do Word, como "CommentReference"). O
+    #: EditDoc grava a referencia como veio e NAO cria a definicao; na tela vale a aparencia
+    #: padrao do Word para os latentes conhecidos (`ESTILOS_LATENTES_WORD`) e nada para o resto.
+    virtual: bool = False
 
     def nome_exibido(self) -> str:
         return nome_exibido(self.nome)
@@ -218,14 +223,31 @@ class Estilos:
     def rapidos(self) -> list[Estilo]:
         """Os da galeria (qFormat), de paragrafo e de caractere, na ordem do Word."""
         lista = [e for e in self.itens.values()
-                 if e.rapido and e.tipo in ("paragrafo", "caractere") and not e.oculto]
+                 if e.rapido and e.tipo in ("paragrafo", "caractere") and not e.oculto
+                 and not e.virtual]
         return sorted(lista, key=_ordem_da_galeria)
 
     def visiveis(self) -> list[Estilo]:
         """Todos os de paragrafo e de caractere que o painel de estilos lista."""
         lista = [e for e in self.itens.values()
-                 if e.tipo in ("paragrafo", "caractere") and not e.oculto]
+                 if e.tipo in ("paragrafo", "caractere") and not e.oculto and not e.virtual]
         return sorted(lista, key=lambda e: e.nome_exibido().lower())
+
+    def virtuais(self) -> set[str]:
+        """Os ids que o arquivo cita sem definir (0.1.6): voltam como referencia."""
+        return {e.id for e in self.itens.values() if e.virtual and not e.alterado}
+
+    def preservar_referencia(self, sid: str | None, tipo: str) -> bool:
+        """O arquivo cita `sid` como estilo do `tipo`. Se o catalogo nao o tem, entra como
+        referencia preservada (0.1.6), com a aparencia do latente do Word quando conhecido.
+        False se o id e' invalido ou ja' existe com outro tipo (a referencia nao vale)."""
+        if not sid or len(sid) > 253 or not sid.isprintable():
+            return False
+        existente = self.itens.get(sid)
+        if existente is not None:
+            return existente.tipo == tipo
+        self.itens[sid] = estilo_virtual(sid, tipo, self)
+        return True
 
     # -- alteracao ------------------------------------------------------------
     def copia(self) -> "Estilos":
@@ -244,8 +266,13 @@ class Estilos:
         """O estilo interno pelo nome ('heading 1'); se o documento nao o tem, cria o padrao.
 
         E' o que o Word faz com os estilos latentes: Titulo 1 passa a existir quando e' usado.
+        A referencia preservada (`virtual`, 0.1.6) que o EditDoc passa a usar ganha a definicao.
         """
         achado = self.por_nome(nome_canonico_)
+        if achado is not None and achado.virtual:
+            achado.virtual = False
+            achado.no_arquivo = False
+            return achado
         if achado is not None:
             return achado
         modelo = next((e for e in (*definicoes_padrao(), *estilos_latentes())
@@ -365,7 +392,104 @@ def estilos_latentes() -> list[Estilo]:
     return [
         Estilo("Hyperlink", "Hyperlink", tipo="caractere", prioridade=99, revelar_ao_usar=True,
                caractere={"cor_hex": "0563C1", "sublinhado": True}),
+        # Comentarios (0.1.6): a marca de referencia e o texto do comentario, como o Word cria.
+        Estilo("CommentReference", "annotation reference", tipo="caractere", prioridade=99,
+               oculto=True, revelar_ao_usar=True, caractere={"tamanho_meio_pt": 16}),
+        Estilo("CommentText", "annotation text", baseado_em="Normal", proximo="CommentText",
+               prioridade=99, oculto=True, revelar_ao_usar=True,
+               paragrafo={"espacamento_linha_pct": 100}, caractere={"tamanho_meio_pt": 20}),
     ]
+
+
+def _latentes_word() -> dict:
+    """styleId -> (nome canonico, tipo, basedOn, propriedades de paragrafo, de caractere).
+
+    A aparencia padrao do Word 2013 em diante (tema Office) para os estilos internos que o
+    arquivo pode citar sem definir (0.1.6). So' o que o modelo representa.
+    """
+    p, c = "paragrafo", "caractere"
+    tabela = {
+        "CommentReference": ("annotation reference", c, None, {}, {"tamanho_meio_pt": 16}),
+        "CommentText": ("annotation text", p, "Normal", {"espacamento_linha_pct": 100},
+                        {"tamanho_meio_pt": 20}),
+        "CommentSubject": ("annotation subject", p, "CommentText", {}, {"negrito": True}),
+        "Hyperlink": ("Hyperlink", c, None, {}, {"cor_hex": "0563C1", "sublinhado": True}),
+        "FollowedHyperlink": ("FollowedHyperlink", c, None, {},
+                              {"cor_hex": "954F72", "sublinhado": True}),
+        "FootnoteReference": ("footnote reference", c, None, {}, {"sobrescrito": True}),
+        "EndnoteReference": ("endnote reference", c, None, {}, {"sobrescrito": True}),
+        "FootnoteText": ("footnote text", p, "Normal",
+                         {"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
+                         {"tamanho_meio_pt": 20}),
+        "EndnoteText": ("endnote text", p, "Normal",
+                        {"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
+                        {"tamanho_meio_pt": 20}),
+        "PageNumber": ("page number", c, None, {}, {}),
+        "Header": ("header", p, "Normal", {"espaco_depois_tw": 0, "espacamento_linha_pct": 100}, {}),
+        "Footer": ("footer", p, "Normal", {"espaco_depois_tw": 0, "espacamento_linha_pct": 100}, {}),
+        "Caption": ("caption", p, "Normal", {"espaco_depois_tw": 200, "espacamento_linha_pct": 100},
+                    {"italico": True, "cor_hex": "44546A", "tamanho_meio_pt": 18}),
+        "TOCHeading": ("TOC Heading", p, "Heading1", {}, {}),
+        "Mention": ("Mention", c, None, {}, {"cor_hex": "2B579A"}),
+        "UnresolvedMention": ("Unresolved Mention", c, None, {}, {"cor_hex": "605E5C"}),
+        "BalloonText": ("Balloon Text", p, "Normal",
+                        {"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
+                        {"fonte": "Segoe UI", "tamanho_meio_pt": 18}),
+        "Strong": ("Strong", c, None, {}, {"negrito": True}),
+        "Emphasis": ("Emphasis", c, None, {}, {"italico": True}),
+        "ListParagraph": ("List Paragraph", p, "Normal", {"recuo_esquerdo_tw": 720}, {}),
+        "NoSpacing": ("No Spacing", p, None, {"espaco_depois_tw": 0, "espacamento_linha_pct": 100}, {}),
+        "Title": ("Title", p, "Normal", {"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
+                  {"fonte": "Calibri Light", "tamanho_meio_pt": 56}),
+        "Subtitle": ("Subtitle", p, "Normal", {"espaco_depois_tw": 160},
+                     {"cor_hex": "5A5A5A", "tamanho_meio_pt": 22}),
+        "Quote": ("Quote", p, "Normal", {"espaco_antes_tw": 200, "espaco_depois_tw": 160,
+                                         "alinhamento": "centro", "recuo_esquerdo_tw": 864,
+                                         "recuo_direito_tw": 864},
+                  {"italico": True, "cor_hex": "404040"}),
+    }
+    for n in range(1, 10):
+        tabela[f"TOC{n}"] = (f"toc {n}", p, "Normal",
+                             {"espaco_depois_tw": 100, **({"recuo_esquerdo_tw": 220 * (n - 1)}
+                                                          if n > 1 else {})}, {})
+    titulos = {1: ("2F5496", 32, False), 2: ("2F5496", 26, False), 3: ("1F3763", 24, False),
+               4: ("2F5496", None, True), 5: ("2F5496", None, False), 6: ("1F3763", None, False),
+               7: ("1F3763", None, True), 8: ("272727", 21, False), 9: ("272727", 21, True)}
+    for n, (cor, tamanho, italico) in titulos.items():
+        car = {"fonte": "Calibri Light", "cor_hex": cor}
+        if tamanho:
+            car["tamanho_meio_pt"] = tamanho
+        if italico:
+            car["italico"] = True
+        tabela[f"Heading{n}"] = (f"heading {n}", p, "Normal",
+                                 {"espaco_antes_tw": 240 if n == 1 else 40, "espaco_depois_tw": 0},
+                                 car)
+    return tabela
+
+
+#: Estilos internos do Word com a aparencia padrao (0.1.6), pelo styleId em ingles.
+ESTILOS_LATENTES_WORD = _latentes_word()
+
+
+def estilo_virtual(sid: str, tipo: str, catalogo: "Estilos | None" = None) -> Estilo:
+    """A referencia preservada `sid` (0.1.6): o latente do Word se for conhecido e do mesmo tipo;
+    senao, um estilo sem formatacao propria (o de paragrafo herda do padrao, como o Word faz
+    com a referencia que nao acha)."""
+    padrao = catalogo.id_padrao() if catalogo is not None else "Normal"
+    latente = ESTILOS_LATENTES_WORD.get(sid)
+    if latente is not None and latente[1] == tipo:
+        nome, _tipo, base, par, car = latente
+        if base == "Normal" or (catalogo is not None and base not in catalogo.itens):
+            base = padrao if tipo == "paragrafo" else None
+        e = Estilo(sid, nome, tipo=tipo, baseado_em=base, oculto=True, virtual=True,
+                   paragrafo=dict(par), caractere=dict(car),
+                   nivel=nivel_de_titulo(nome) if tipo == "paragrafo" else None)
+    else:
+        e = Estilo(sid, sid, tipo=tipo, baseado_em=padrao if tipo == "paragrafo" else None,
+                   oculto=True, virtual=True)
+    e.originais = {"paragrafo": dict(e.paragrafo), "caractere": dict(e.caractere),
+                   "nivel": e.nivel, "lista": [None, None]}
+    return e
 
 
 def catalogo_padrao() -> Estilos:

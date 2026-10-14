@@ -199,6 +199,23 @@ DEFINICOES = (
     Definicao("zoom_pagina", "Uma Página", (), dica="A página inteira na janela"),
     Definicao("zoom_varias", "Várias Páginas", (), dica="Duas páginas lado a lado"),
     Definicao("zoom_largura", "Largura da Página", (), dica="A largura da página na janela"),
+    # Revisao: comentarios (0.1.6).
+    Definicao("novo_comentario", "Novo comentário", ("Ctrl+Alt+M",),
+              dica="Novo comentário sobre a seleção"),
+    Definicao("responder_comentario", "Responder", (),
+              dica="Responder ao comentário do cursor"),
+    Definicao("editar_comentario", "Editar comentário...", (),
+              dica="Editar o texto do comentário do cursor"),
+    Definicao("resolver_comentario", "Resolver", (), True,
+              "Marcar a conversa do comentário como resolvida (ou reabrir)"),
+    Definicao("excluir_comentario", "Excluir", (),
+              dica="Excluir o comentário do cursor e as respostas"),
+    Definicao("excluir_todos_comentarios", "Excluir todos os comentários", (),
+              dica="Excluir todos os comentários do documento"),
+    Definicao("comentario_anterior", "Anterior", (), dica="Ir para o comentário anterior"),
+    Definicao("comentario_proximo", "Próximo", (), dica="Ir para o próximo comentário"),
+    Definicao("mostrar_comentarios", "Mostrar comentários", (), True,
+              "Mostrar o painel de comentários"),
 )
 
 #: Estilos que os atalhos aplicam: id da acao -> nome canonico do Word.
@@ -232,6 +249,16 @@ TABELA = ("inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerd
 
 #: Comandos que so' valem com o cursor num link (o atualizador os habilita).
 LINK = ("remover_link", "abrir_link")
+
+#: Comandos que so' valem com o cursor num trecho comentado (0.1.6, o atualizador os habilita).
+COMENTARIO = ("responder_comentario", "editar_comentario", "resolver_comentario",
+              "excluir_comentario")
+#: Comentarios (0.1.6): id da acao -> gancho da janela (os dialogos sao dela).
+REVISAO_DAS_ACOES = {"novo_comentario": "novo", "responder_comentario": "responder",
+                     "editar_comentario": "editar", "resolver_comentario": "resolver",
+                     "excluir_comentario": "excluir", "excluir_todos_comentarios": "excluir_todos",
+                     "comentario_anterior": "anterior", "comentario_proximo": "proximo",
+                     "mostrar_comentarios": "mostrar"}
 
 #: Comandos que so' valem com o cursor num item numerado (o atualizador os habilita).
 LISTA_NUMERADA = ("reiniciar_numeracao", "continuar_numeracao", "definir_valor_numeracao")
@@ -294,11 +321,13 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
                 ao_arquivo: dict[str, Callable[[], None]],
                 ao_layout: dict[str, Callable] | None = None,
                 ao_inserir: dict[str, Callable] | None = None,
-                ao_exibir: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
+                ao_exibir: dict[str, Callable] | None = None,
+                ao_revisao: dict[str, Callable] | None = None) -> dict[str, Callable[[], None]]:
     fmt = formatacao
     layout = ao_layout or {}
     inserir = ao_inserir or {}
     exibir = ao_exibir or {}
+    revisao = ao_revisao or {}
     executores_inserir: dict[str, Callable[[], None]] = {
         # Os dialogos (tamanho da tabela, arquivo de imagem, tamanho da imagem) sao da janela.
         "inserir_tabela": lambda: _chamar(inserir, "tabela"),
@@ -398,6 +427,8 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         executores[id_] = lambda m=modo: editor.zoom_modo(m)
     executores.update(executores_layout)
     executores.update(executores_inserir)
+    for id_, gancho in REVISAO_DAS_ACOES.items():
+        executores[id_] = lambda g=gancho: _chamar(revisao, g)
     return executores
 
 
@@ -410,11 +441,12 @@ class Comandos(QObject):
                  ao_arquivo: dict[str, Callable[[], None]] | None = None,
                  ao_layout: dict[str, Callable] | None = None,
                  ao_inserir: dict[str, Callable] | None = None,
-                 ao_exibir: dict[str, Callable] | None = None) -> None:
+                 ao_exibir: dict[str, Callable] | None = None,
+                 ao_revisao: dict[str, Callable] | None = None) -> None:
         super().__init__(pai)
         self._acoes: dict[str, QAction] = {}
         self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {},
-                                       ao_layout, ao_inserir, ao_exibir)
+                                       ao_layout, ao_inserir, ao_exibir, ao_revisao)
         self._grupo_alinhamento = QActionGroup(self)
         self._grupo_alinhamento.setExclusive(True)
         self._grupo_espacamento = QActionGroup(self)

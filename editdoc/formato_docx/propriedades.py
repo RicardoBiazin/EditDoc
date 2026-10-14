@@ -199,6 +199,16 @@ def _sanear_rpr(rpr, estilo_existe, coletor=None) -> None:
     _ordenar(rpr, _INDICE_RPR)
 
 
+def rpr_canonico(rpr, estilo_existe=None, coletor=None) -> str | None:
+    """Um w:rPr inteiro em forma canonica, saneado como o da marca de paragrafo (0.1.6: o rPr
+    dos runs do codigo de um campo). None se vazio ou ausente."""
+    if rpr is None:
+        return None
+    copia = copy.deepcopy(rpr)
+    _sanear_rpr(copia, estilo_existe, coletor)
+    return canonico("rPr", list(copia))
+
+
 # -- derivados: o que o elemento poe no modelo --------------------------------------------
 
 def derivado_rpr(loc: str, el, fontes_tema: dict) -> dict:
@@ -536,10 +546,10 @@ def montar_ppr(p, estilo: str | None, bases: dict | None = None, estilo_existe=N
 
 # -- tabela, linha e celula (0.1.5) -------------------------------------------------------
 
-#: tblPr: o que o modelo representa, o que o escritor impoe (estilo "Table Grid" e as bordas
-#: explicitas: o look e as faixas do estilo nao valem) e o resto, preservado.
-_TBLPR_FORA = {"tblStyle", "tblW", "jc", "tblInd", "tblBorders", "tblLayout", "tblCellMar",
-               "tblLook", "tblStyleRowBandSize", "tblStyleColBandSize"}
+#: tblPr: o que o modelo representa (o estilo desde a 0.1.6, em `Tabela.estilo`) e o resto,
+#: preservado. Desde a 0.1.6 o w:tblLook e o tamanho das faixas voltam: o estilo de origem
+#: volta, e a formatacao condicional dele continua valendo.
+_TBLPR_FORA = {"tblStyle", "tblW", "jc", "tblInd", "tblBorders", "tblLayout", "tblCellMar"}
 #: trPr: tblHeader e trHeight estao no modelo; gridBefore/gridAfter/wBefore/wAfter mudam a
 #: grade (o leitor completa a linha com celula vazia) e nao voltam.
 _TRPR_FORA = {"tblHeader", "trHeight", "gridBefore", "gridAfter", "wBefore", "wAfter"}
@@ -659,6 +669,11 @@ class AparenciaParagrafo:
     #: ("exata" | "minima", altura em twips) do w:spacing com lineRule exact/atLeast
     linha: tuple | None = None
     vazio: bool = True
+
+
+def cor_de_sombreamento(el) -> str | None:
+    """A cor que um w:shd pinta (0.1.6: tambem o fundo condicional da tabela)."""
+    return _cor_de_sombreamento(el)
 
 
 def _cor_de_sombreamento(el) -> str | None:

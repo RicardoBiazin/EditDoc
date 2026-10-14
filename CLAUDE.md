@@ -28,6 +28,9 @@ causou defeito.
 - `editdoc/formato_docx/propriedades.py` e `ponte_qt/propriedades.py`: formatação preservada
   (0.1.5); `formato_docx/caixas.py` e `interface/dialogo_caixa.py`: texto da caixa de texto;
   `ponte_qt/vetoriais.py`: prévia de EMF, WMF, TIFF e SVG.
+- Comentários (0.1.6): `modelo/comentarios.py`, `formato_docx/comentarios.py` (partes
+  estendidas, people.xml, validador), `ponte_qt/comentarios.py`, `edicao/comentarios.py`,
+  `interface/painel_comentarios.py` e `interface/dialogo_comentario.py`.
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -175,3 +178,9 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | controle de conteudo de bloco (0.1.5) | A marca de inicio fica no COMECO do primeiro paragrafo e a de fim no FIM do ultimo; o escritor abre o `w:sdt` antes do paragrafo. `marcas.equilibrar` move as marcas para la' e tira par cruzado: sem isso a releitura teria as marcas em outro lugar e a conferencia recusaria o arquivo. O `w:id` repetido e' trocado no equilibrar (regex na forma canonica), nao no escritor, pelo mesmo motivo. |
 | celula terminando em sdt (0.1.5) | O Word grava o controle que envolve o paragrafo da celula como o ultimo filho do `w:tc`. O validador olha o ultimo bloco DENTRO do `w:sdtContent` (`ordem._ultimo_bloco`). |
 | caixa de texto editavel (0.1.5) | A edicao troca o objeto do caractere (`formato_de_opaco` com o objeto novo) num bloco de edicao: um passo de desfazer. `caixas.regravar` confere relendo: so' grava o que volta igual. A caixa com conteudo que o EditDoc nao regravaria (tabela, imagem, campo, sdt, marcador que nao seja `_GoBack`) e' so' leitura. |
+| propriedade de usuario (0.1.6) | Quadro raiz: `PROP_COMENTARIOS` = UserProperty + 30 (`ponte_qt/comentarios.py`). O proximo livre e' + 31. As ancoras de comentario usam o `TIPO_MARCADOR`; UserObject + 5 continua livre. |
+| revisao dentro do bloco de edicao (0.1.6) | Medido no Qt 6.11.2: com `beginEditBlock` aberto, `doc.revision()` nao muda a cada passo e o `contentsChange` so' vem no `endEditBlock`. Cache por revisao fica velho no meio do bloco: quem edita ali pede `ancoras(doc, fresco=True)` (sem isso a ancora era apagada pela posicao antiga e levava letras do texto). |
+| `self._autor` na janela (0.1.6) | E' o autor do documento (string do core.xml). O autor do comentario e' `_autor_comentario()`; um metodo `_autor` sombreado deu "str object is not callable". |
+| estilo sem definicao (0.1.6) | `Estilo.virtual`: referencia preservada. Nao entra no styles.xml e o validador so' a aceita pela lista `estilos_preservados` (`Estilos.virtuais()`). Teste que valida arquivo gravado com essas referencias passa a lista. "Table Grid" lido vira `Tabela.estilo = None` (o padrao do escritor), senao a releitura diferia. |
+| comentario e XML de origem (0.1.6) | O w:comment nao mudado volta com o XML de origem: o leitor descarta marcador dentro do codigo de campo (a mencao "@" do Word), e so' o original o preserva. Equilibrar so' o conteudo gerado (`original is None`); equilibrar o original faria a conferencia recusar o arquivo. |
+| `lxml` find com predicado (0.1.6) | `find(".//w:r[w:fldChar[@...]]")` da' "invalid predicate": usar `xpath`. |
