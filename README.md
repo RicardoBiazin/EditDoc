@@ -30,9 +30,21 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   só então troca o original.
 - **Caixas de texto, formas, gráficos, SmartArt, objetos OLE, equações e imagens
   flutuantes** são preservados: eles voltam ao arquivo exatamente como vieram (o XML, as
-  imagens, as planilhas dos gráficos e a posição na página). Na tela cada um aparece como
-  um quadro com o nome ("Gráfico", "Equação: …") no lugar dele no texto; Delete ou
-  Backspace apagam o objeto inteiro, e Ctrl+Z o traz de volta.
+  imagens, as planilhas dos gráficos e a posição na página). Na tela o objeto na linha do
+  texto aparece como um quadro com o nome ("Gráfico", "Equação: …"); Delete ou Backspace
+  apagam o objeto inteiro, e Ctrl+Z o traz de volta.
+- **Objetos flutuantes na posição da página** (desde a 0.1.7): a imagem, a caixa de texto,
+  a forma e o grupo que o Word posiciona na página (capa, faixa colorida do cabeçalho,
+  marca-d'água, logotipo) aparecem onde o Word os põe, na tela, no PDF e na impressão: a
+  imagem com a figura de verdade (inclusive EMF, WMF, SVG e TIFF e o recorte), a caixa de
+  texto com o fundo, o contorno e o texto dentro, a forma (retângulo, elipse, linha,
+  triângulos, setas...) com as cores do arquivo, o grupo com as peças no lugar, atrás ou na
+  frente do texto. O texto do corpo contorna o objeto com "Quadrado" (e "Justo" e
+  "Através", tratados como Quadrado) e passa para baixo dele com "Superior e inferior"; o
+  objeto do cabeçalho e do rodapé aparece em todas as páginas, atrás do texto. Clique no
+  objeto para selecioná-lo (contorno azul); Delete apaga, Ctrl+Z traz de volta; duplo
+  clique na caixa de texto abre o editor do texto. O arquivo não muda se você não mexe no
+  objeto.
 - **Comentários** (desde a 0.1.6): os comentários do Word aparecem no **painel de
   comentários** à direita (Revisão > Mostrar comentários), um cartão por conversa, com
   autor, data, texto, as respostas e o estado "Resolvido"; o trecho comentado fica realçado
@@ -144,7 +156,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.6-win64.zip` da página
+1. Baixe `EditDoc-0.1.7-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -240,9 +252,15 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   e as revisões de formatação saem, com aviso; a formatação do código de um campo (o
   texto escondido entre o começo e o separador) segue a do começo do campo. Tabulação:
   na primeira linha com recuo próprio a parada aparece deslocada desse recuo.
-- Objetos preservados: a forma não aparece na posição da página (a caixa de texto e a
-  imagem flutuante ficam no ponto do texto onde estão presas, e a caixa ocupa o tamanho
-  dela ali); copiar e colar dentro do EditDoc leva o texto em volta, mas não o
+- Objetos flutuantes (0.1.7): o texto contorna o objeto por um lado só (o maior, ou o que
+  o arquivo pede), e a faixa reservada começa na linha do parágrafo onde o objeto está
+  preso (o texto acima dela não contorna); "Justo" e "Através" seguem o retângulo, não o
+  desenho; dois objetos presos no mesmo parágrafo reservam juntos a faixa de cada lado.
+  Mover ou redimensionar o objeto com o mouse ainda não existe; o objeto do cabeçalho não
+  se seleciona na página. Formas fora do conjunto básico aparecem como retângulo com as
+  cores, e o gráfico e o SmartArt como um quadro do tamanho certo (ou a imagem de
+  reserva, quando o arquivo tem).
+- Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
   caixa de texto perdem a referência ao salvar (com aviso), porque essas partes não voltam
   ao arquivo. A lista numerada dentro da caixa volta (desde a 0.1.4).
@@ -289,7 +307,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.6-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.7-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

@@ -42,6 +42,7 @@ from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import comentarios as pq_comentarios
+from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
@@ -174,6 +175,15 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     cfg = layout.pagina
     hb = layout.hb
     corpo_h = cfg.corpo_altura_tw()
+    # Objetos flutuantes (0.1.7): pintados na folha inteira (podem estar na margem), os de
+    # tras antes do texto e os da frente depois.
+    folha = QRectF(0, 0, float(cfg.largura_tw), float(cfg.altura_tw))
+    if corpo_recorte is not None:
+        folha = QRectF(corpo_recorte[0] + cfg.margem_esq_tw, corpo_recorte[1] + cfg.margem_sup_tw,
+                       corpo_recorte[2], corpo_recorte[3]).intersected(folha)
+    postos = layout.flutuantes.postos(n) if not folha.isEmpty() else []
+    if postos:
+        _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=True)
     # Na horizontal o recorte e' a folha inteira, nao so' o corpo (M8): a tabela mais larga
     # que o corpo (e o recuo negativo) entra na margem, como no Word. Na vertical continua
     # o corpo, que e' o que separa uma pagina da outra.
@@ -185,6 +195,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         if recorte.isEmpty():
             # Recorte fora do corpo (margem): nada a pintar. Um setClipRect vazio NAO recorta
             # nada, e o Qt pintaria a pagina inteira para jogar fora (medido: 45 ms por tile).
+            if postos:
+                _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False)
             return
     painter.save()
     painter.setWorldTransform(transf)
@@ -214,6 +226,22 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     if marcas:
         desenhar_marcas(painter, layout.doc, ctx.clip)
     painter.restore()
+    if postos:
+        _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False)
+
+
+def _desenhar_flutuantes(painter, doc, n: int, transf: QTransform, folha: QRectF,
+                         atras: bool) -> None:
+    """Objetos flutuantes da pagina n (0.1.7), recortados em `folha` (twips da folha)."""
+    if folha.isEmpty():
+        return
+    painter.save()
+    painter.setWorldTransform(transf)
+    painter.setClipRect(folha)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    pq_flutuantes.desenhar_pagina(painter, doc, n, atras, folha)
+    painter.restore()
 
 
 def origem_da_faixa(pagina: Pagina, onde: str, altura_tw: float) -> tuple[float, float]:
@@ -240,11 +268,14 @@ def rotulo_da_faixa(onde: str, indice: int, pagina: Pagina) -> str:
 
 def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform, total: int,
                     opacidade: float = 1.0, editada=None, selecao=None,
-                    marcas: bool = False) -> None:
+                    marcas: bool = False, parte: str = "tudo") -> None:
     """Pinta o cabecalho e o rodape da pagina n. Mesma funcao para a tela e para o PDF.
 
     transf leva twips da folha para o painter (como em desenhar_folha). `editada` e' a
     FaixaQt em edicao: ela recebe a selecao. Os campos ganham o numero da pagina n.
+    `parte` (0.1.7): "objetos" pinta so' os objetos flutuantes da faixa (atras e na frente),
+    "texto" so' o texto, "tudo" os dois. Como no Word, os objetos do cabecalho ficam atras do
+    texto do corpo: a impressao pinta "objetos", depois o corpo, depois "texto".
     """
     pagina = layout.pagina_arquivo
     for onde in ("cabecalho", "rodape"):
@@ -253,6 +284,20 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             continue
         faixa.preparar(n, total, pagina)
         x, y = origem_da_faixa(pagina, onde, faixa.altura())
+        # Objetos flutuantes da faixa (0.1.7): referencia na folha, e os de tras antes do texto.
+        faixa.posicionar(pagina, layout.pagina, n)
+        faixa.flutuantes.atualizar()
+        postos = faixa.flutuantes.postos(n) if parte != "texto" else []
+        folha = QRectF(0, 0, float(pagina.largura_tw), float(pagina.altura_tw))
+        if postos:
+            painter.save()
+            painter.setOpacity(opacidade)
+            _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=True)
+            if parte == "objetos":
+                _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=False)
+            painter.restore()
+        if parte == "objetos":
+            continue
         painter.save()
         painter.setWorldTransform(transf)
         painter.translate(x, y)
@@ -273,6 +318,11 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         if marcas:
             desenhar_marcas(painter, faixa.doc, None)
         painter.restore()
+        if postos and parte == "tudo":
+            painter.save()
+            painter.setOpacity(opacidade)
+            _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=False)
+            painter.restore()
 
 
 class VistaPaginas(QAbstractScrollArea):
@@ -286,6 +336,10 @@ class VistaPaginas(QAbstractScrollArea):
         self._bytes_no_cache = 0
         self._altura_doc_anterior: float | None = None
         self._pendencias: list[tuple[int, int]] = []
+        #: Objetos flutuantes (0.1.7): onde estavam (se algum muda, o cache sai inteiro) e se
+        #: os tiles tem fundo transparente (ha' objeto no cabecalho ou rodape, pintado antes).
+        self._assinatura_flutuantes: tuple | None = None
+        self._tiles_transparentes = False
         self._caret_ligado = True
         #: Exibir (M6): marcas de formatacao e folhas lado a lado.
         self._marcas = False
@@ -297,6 +351,8 @@ class VistaPaginas(QAbstractScrollArea):
         self.verticalScrollBar().setSingleStep(PASSO_DA_RODA_PX)
         self.horizontalScrollBar().setSingleStep(PASSO_DA_RODA_PX)
         self.layout_pag.doc.contentsChange.connect(self._mudou_texto)
+        # A cura do float orfao (0.1.7) refaz o layout fora da pintura: o cache sai inteiro.
+        self.layout_pag.flutuantes.ao_mudar = self._flutuantes_mudaram
         self._atualizar_geometria()
 
     # ----- escala ---------------------------------------------------------
@@ -488,7 +544,9 @@ class VistaPaginas(QAbstractScrollArea):
         lado = round(TILE_PX * dpr)
         pm = QPixmap(lado, lado)
         pm.setDevicePixelRatio(dpr)
-        pm.fill(COR_FOLHA)
+        # Com objeto flutuante no cabecalho ou rodape (0.1.7), a faixa e' pintada antes do
+        # corpo (como no Word, ela fica atras do texto): o tile nao pode ter fundo.
+        pm.fill(Qt.GlobalColor.transparent if self._tiles_transparentes else COR_FOLHA)
         pintor = QPainter(pm)
         t = QTransform()
         t.translate(-i * TILE_PX, -j * TILE_PX)
@@ -596,6 +654,8 @@ class VistaPaginas(QAbstractScrollArea):
         tela ficaria com o numero velho depois que a impressao refez o layout.
         """
         listas_mudaram = pq_listas.numerador_de(self.layout_pag.doc).atualizar()
+        if self.layout_pag.atualizar_flutuantes():
+            listas_mudaram = True
         if self.layout_pag.atualizar_campos() or listas_mudaram:
             self._limpar_cache()
             self._altura_doc_anterior = None
@@ -610,6 +670,7 @@ class VistaPaginas(QAbstractScrollArea):
             # Um numero de lista mudou longe da edicao (Tab num item renumera os de baixo).
             self._limpar_cache()
             self._altura_doc_anterior = None
+        self._conferir_flutuantes()
         self._aplicar_pendencias()
         vp = self.viewport()
         p = QPainter(vp)
@@ -633,6 +694,12 @@ class VistaPaginas(QAbstractScrollArea):
             p.fillRect(folha, COR_FOLHA)
             p.save()
             p.setClipRect(folha)
+            if self._tiles_transparentes and self._faixa_editada() is None:
+                # Objetos do cabecalho e do rodape atras do corpo (0.1.7): os tiles sao
+                # transparentes, e o texto da faixa vem depois, por cima, como antes.
+                t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
+                desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA,
+                                parte="objetos")
             if com_selecao:
                 t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
                 desenhar_folha(p, self.layout_pag, n, t, selecao=selecao, marcas=self._marcas,
@@ -651,7 +718,63 @@ class VistaPaginas(QAbstractScrollArea):
         self._desenhar_quebras(p, m, i0, i1, n_total)
         self._desenhar_caret(p, m, dpr, n_total)
         self._desenhar_imagem_selecionada(p)
+        self._desenhar_flutuante_selecionado(p, m)
         p.end()
+
+    def _flutuantes_mudaram(self) -> None:
+        self._limpar_cache()
+        self._altura_doc_anterior = None
+        self.viewport().update()
+
+    def _conferir_flutuantes(self) -> None:
+        """Objetos flutuantes (0.1.7): reserva e linhas em dia; se algum objeto mudou de lugar,
+        o cache inteiro sai (o objeto pode estar longe do texto que mudou, ate' na margem)."""
+        layout = self.layout_pag
+        if layout.atualizar_flutuantes():
+            self._limpar_cache()
+            self._altura_doc_anterior = None
+        assinatura = layout.flutuantes.assinatura()
+        if assinatura != self._assinatura_flutuantes:
+            if self._assinatura_flutuantes is not None or assinatura:
+                self._limpar_cache()
+            self._assinatura_flutuantes = assinatura
+        transparente = any(f.flutuantes.lista() for f in layout.faixas.todas())
+        if transparente != self._tiles_transparentes:
+            self._tiles_transparentes = transparente
+            self._limpar_cache()
+
+    def _posicao_flutuante_selecionado(self) -> int | None:
+        """O objeto flutuante selecionado sozinho (o painel informa)."""
+        return None
+
+    def retangulo_flutuante_na_tela(self, pos: int) -> QRectF | None:
+        """Retangulo do objeto flutuante do corpo em `pos`, em pixels do viewport (0.1.7)."""
+        achado = pq_flutuantes.retangulo_de(self.layout_pag.doc, pos)
+        if achado is None:
+            return None
+        n, (x, y, w, h) = achado
+        m = self._mapa()
+        fx, fy, _fw, _fh = m.folha_na_tela(n)
+        return QRectF(fx + x * m.escala, fy + y * m.escala, max(w * m.escala, 1.0),
+                      max(h * m.escala, 1.0))
+
+    def _desenhar_flutuante_selecionado(self, p: QPainter, m: Mapa) -> None:
+        pos = self._posicao_flutuante_selecionado()
+        if pos is None:
+            return
+        r = self.retangulo_flutuante_na_tela(pos)
+        if r is None:
+            return
+        p.save()
+        p.setPen(QPen(COR_SELECAO, 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(r)
+        lado = ALCA_TELA_PX
+        for canto in (r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()):
+            alca = QRectF(canto.x() - lado / 2, canto.y() - lado / 2, lado, lado)
+            p.fillRect(alca, COR_FOLHA)
+            p.drawRect(alca)
+        p.restore()
 
     def _pintar_faixas(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float,
                        n_total: int) -> None:
@@ -660,7 +783,8 @@ class VistaPaginas(QAbstractScrollArea):
         t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
         if editada is None:
             desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA,
-                            marcas=self._marcas)
+                            marcas=self._marcas,
+                            parte="texto" if self._tiles_transparentes else "tudo")
             return
         faixa, cursor = editada
         efetiva = self.layout_pag.pagina

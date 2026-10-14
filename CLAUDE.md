@@ -28,6 +28,9 @@ causou defeito.
 - `editdoc/formato_docx/propriedades.py` e `ponte_qt/propriedades.py`: formatação preservada
   (0.1.5); `formato_docx/caixas.py` e `interface/dialogo_caixa.py`: texto da caixa de texto;
   `ponte_qt/vetoriais.py`: prévia de EMF, WMF, TIFF e SVG.
+- Objetos flutuantes (0.1.7): `modelo/flutuantes.py` (posição, sem Qt),
+  `formato_docx/flutuantes.py` (ancoragem e desenho lidos do XML do objeto) e
+  `ponte_qt/flutuantes.py` (reserva no layout, conferência, cura do frame órfão, pintura).
 - Comentários (0.1.6): `modelo/comentarios.py`, `formato_docx/comentarios.py` (partes
   estendidas, people.xml, validador), `ponte_qt/comentarios.py`, `edicao/comentarios.py`,
   `interface/painel_comentarios.py` e `interface/dialogo_comentario.py`.
@@ -184,3 +187,11 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | estilo sem definicao (0.1.6) | `Estilo.virtual`: referencia preservada. Nao entra no styles.xml e o validador so' a aceita pela lista `estilos_preservados` (`Estilos.virtuais()`). Teste que valida arquivo gravado com essas referencias passa a lista. "Table Grid" lido vira `Tabela.estilo = None` (o padrao do escritor), senao a releitura diferia. |
 | comentario e XML de origem (0.1.6) | O w:comment nao mudado volta com o XML de origem: o leitor descarta marcador dentro do codigo de campo (a mencao "@" do Word), e so' o original o preserva. Equilibrar so' o conteudo gerado (`original is None`); equilibrar o original faria a conferencia recusar o arquivo. |
 | `lxml` find com predicado (0.1.6) | `find(".//w:r[w:fldChar[@...]]")` da' "invalid predicate": usar `xpath`. |
+| float do Qt (0.1.7) | Caractere de objeto com `ObjectIndex` de um `QTextFrame` FloatLeft/FloatRight e' um "float": o `QTextDocumentLayout` faz as linhas seguintes contornarem, linha a linha (o tamanho e' o `intrinsicSize`). Criar so' por `QTextCursor.insertImage(formato, posicao)`: `insertText` e `setCharFormat` tiram o `ObjectIndex` (o `setCharFormat` mantem o indice antigo do caractere). |
+| float e bloco deslocado (0.1.7) | Medido no Qt 6.11.2: o layout so' refaz os blocos da faixa editada; os de baixo sao deslocados com as linhas e o float de antes (texto em volta de um objeto que ja' saiu dali). `flutuantes.Gerente.atualizar` confere reserva e largura das linhas e refaz com `markContentsDirty`; quem pinta limpa o cache. |
+| float orfao (0.1.7) | Apagar o caractere do float deixa o `QTextFrame` vivo na lista de floats do layout, com o retangulo antigo, mesmo depois de refazer o layout inteiro: o Qt so' destroi o frame quando o caractere sai sem o pai (dentro de um grupo de desfazer). `Gerente.curar` desfaz e refaz a ultima acao com as reservas zeradas; o desfazer e o "alterado" ficam iguais. |
+| `deleteChar` e float (0.1.7) | `QTextCursor.deleteChar`/`deletePreviousChar` nao apagam caractere com `ObjectIndex` que nao seja imagem (`canDelete`): a tecla nao fazia nada. O painel apaga o float como selecao (`_objeto_com_quadro`). |
+| float que nao cabe (0.1.7) | O Qt poe floats um ao lado do outro e empurra para baixo (`findY`) o que nao cabe na largura livre, ate' para a pagina seguinte; float que passa do pe' da pagina tambem desce de pagina. A reserva e' cortada no pe' da pagina e os objetos de um paragrafo viram no maximo dois floats (`Gerente.plano`). |
+| `intrinsicSize` (0.1.7) | O Qt chama a cada pintura do bloco, nao so' no layout (medido: 130 vezes por tecla num documento real). O plano de reserva fica em cache por bloco, revisao e geracao das reservas. |
+| linha da ancora (0.1.7) | A linha onde o float nasce so' e' refeita se o texto nao cabe no que sobrou: a linha curta fica com a largura de antes do float. A conferencia so' acusa linha mais estreita que o espaco, ou mais larga com texto passando. |
+| cabecalho com objeto (0.1.7) | O objeto do cabecalho fica atras do texto do corpo: a impressao pinta `desenhar_faixas(parte="objetos")`, o corpo e `parte="texto"`. Mudar a ordem do texto no PDF quebra os testes que leem o numero da pagina (o rodape tem de vir depois do corpo). Na tela, com objeto em faixa, os tiles sao transparentes. |

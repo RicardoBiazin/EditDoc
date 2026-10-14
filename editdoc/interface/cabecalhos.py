@@ -23,6 +23,7 @@ from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.documento import TIPOS_DE_FAIXA, Documento
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import campos, de_qt, para_qt
+from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt.imagens import DocumentoQt
 
 ONDES = ("cabecalho", "rodape")
@@ -47,6 +48,9 @@ class FaixaQt:
         self.contexto = campos.ContextoDeCampos()
         self.contexto.indice_fixo = 0
         self._manipulador = campos.registrar(self.doc, self.contexto)
+        # Objetos flutuantes (0.1.7): a origem na folha muda com a altura e a pagina pintada.
+        self.flutuantes = pq_flutuantes.gerente(self.doc)
+        self.flutuantes.contexto = pq_flutuantes.Contexto(onde)
         self._preparado: tuple | None = None
         self._tem_campos: bool | None = None
         self.doc.contentsChange.connect(self._mudou)
@@ -76,6 +80,17 @@ class FaixaQt:
             self._preparado = chave
             if self.tem_campos():
                 campos.refazer_campos(self.doc)
+
+    def posicionar(self, pagina: Pagina, efetiva: Pagina, indice: int) -> None:
+        """Onde a faixa fica na folha (0.1.7): a referencia dos objetos flutuantes dela."""
+        ctx = self.flutuantes.contexto
+        ctx.pagina, ctx.efetiva, ctx.indice = pagina, efetiva, indice
+        x = float(pagina.margem_esq_tw)
+        if self.onde == "cabecalho":
+            y = float(pagina.cabecalho_tw)
+        else:
+            y = float(pagina.altura_tw - pagina.rodape_tw - self.altura())
+        ctx.origem = (x, y)
 
     def altura(self) -> float:
         return float(self.doc.documentLayout().documentSize().height())
@@ -190,6 +205,8 @@ class ConjuntoDeFaixas(QObject):
                 for tipo in TIPOS_DE_FAIXA:
                     if tipo in faixas:
                         faixa = self._nova(onde, tipo, do_arquivo=True)
+                        faixa.doc._pagina_flutuantes = modelo.pagina
+                        faixa.posicionar(modelo.pagina, modelo.pagina, 0)
                         para_qt.preencher_blocos(faixa.doc, faixas[tipo])
         finally:
             self._carregando = False

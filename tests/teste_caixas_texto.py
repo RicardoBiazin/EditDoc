@@ -168,11 +168,18 @@ def testar_tela_e_edicao() -> None:
     fmt = None
     from editdoc.ponte_qt import links as pq_links
     fmt = pq_links.formato_em(doc, pos)
+    # 0.1.7: a caixa flutuante saiu do fluxo do texto (la' ela era desenhada do tamanho do
+    # wp:extent, no ponto da ancora). Agora ela e' pintada na posicao da pagina, e o tamanho
+    # dela na folha e' o que se confere; no texto o caractere nao ocupa lugar.
     tam, etiqueta = pq_opacos.tamanho(doc, fmt)
-    checa(not etiqueta and abs(tam.width() - 2743200 / EMU_POR_TWIP) < 1
-          and tam.height() >= 914400 / EMU_POR_TWIP - 1,
+    painel.layout_pag.atualizar_flutuantes()
+    postos = painel.layout_pag.flutuantes.postos(0)
+    rect = next((pp.rect for pp in postos if pp.posicao == pos), None)
+    checa(not etiqueta and rect is not None and abs(rect[2] - 2743200 / EMU_POR_TWIP) < 1
+          and rect[3] >= 914400 / EMU_POR_TWIP - 1,
           "a caixa flutuante aparece com a largura do wp:extent e pelo menos a altura")
-    caixa = pq_opacos._documento_da_caixa(doc, cf, fmt.property(pq_opacos.PROP_OPACO), tam.width())
+    caixa = pq_opacos._documento_da_caixa(doc, cf, fmt.property(pq_opacos.PROP_OPACO),
+                                          rect[2] if rect else 2743200 / EMU_POR_TWIP)
     checa(caixa is not None and "Texto da caixa" in caixa[0].toPlainText(),
           "o texto da caixa e' composto num documento proprio para a tela")
     m, _ = ler(documento(caixa_com(TABELA_NA_CAIXA + "<w:p/>")))
@@ -180,8 +187,16 @@ def testar_tela_e_edicao() -> None:
     q = DocumentoQt()
     para_qt.preencher(q, m)
     p2 = pq_opacos.posicoes_de_opacos(q)[0]
-    checa(pq_opacos.tamanho(q, pq_links.formato_em(q, p2))[1],
-          "a caixa so' de leitura continua a etiqueta")
+    # 0.1.7: a caixa so' de leitura deixou de ser a etiqueta no texto: ela e' pintada na
+    # posicao da pagina como a editavel, com o conteudo (aqui, a tabela) dentro. Continua
+    # nao editavel (o duplo clique mostra o aviso, conferido em "so' leitura" abaixo).
+    from editdoc.ponte_qt import flutuantes as pq_flutuantes
+    f2 = pq_links.formato_em(q, p2)
+    obj2 = pq_opacos.objeto_de(f2)
+    texto2 = pq_flutuantes._texto(q, obj2, f2.property(pq_opacos.PROP_OPACO), 0, 4000.0, True)
+    checa(not pq_opacos.tamanho(q, f2)[1] and pq_flutuantes.info(obj2) is not None
+          and texto2 is not None and "c" in texto2[0].toPlainText(),
+          "a caixa so' de leitura aparece na posicao dela, com o conteudo (a tabela) dentro")
 
     secao("edicao: duplo clique e Enter abrem o dialogo; confirmar e' um passo de desfazer")
     original = QDialog.exec

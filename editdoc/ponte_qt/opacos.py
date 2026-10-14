@@ -6,19 +6,23 @@ equacao) e' o caractere de objeto (U+FFFC) com um formato de objeto proprio
 no registro, nunca no Qt: o desfazer devolve o formato com a chave, e a chave acha o
 objeto de novo. E' o mesmo arranjo das imagens (`imagens.py`).
 
-Caixa de texto editavel (0.1.5): aparece como uma caixa do tamanho do wp:extent (a
-flutuante tambem, no ponto da ancora: o EditDoc nao posiciona fora do fluxo), com o texto de
-dentro composto por um QTextDocument proprio (`_documento_da_caixa`), o mesmo catalogo de
-estilos e de listas do corpo. A caixa que so' pode ser lida, e a forma, continuam a etiqueta.
+Caixa de texto editavel (0.1.5): a caixa na linha aparece do tamanho do wp:extent, com o
+texto de dentro composto por um QTextDocument proprio (`_documento_da_caixa`), o mesmo
+catalogo de estilos e de listas do corpo.
+
+Objeto flutuante (0.1.7, `flutuantes.py`): imagem, caixa, forma e grupo com wp:anchor (ou VML
+absoluto) sao pintados na posicao da pagina, fora daqui; o caractere nao ocupa lugar no
+texto, ou e' o float do Qt que reserva o espaco que o texto contorna (ObjectIndex no
+formato). So' o flutuante que nao se le volta a etiqueta.
 
 Imagem na linha em EMF, WMF, TIFF ou SVG (0.1.5): a previa renderizada por `vetoriais.py`
 ocupa o lugar inteiro, como uma imagem comum (sem quadro e sem rotulo). Se a previa falha,
 volta o quadro.
 
 Na tela: o objeto na linha (com wp:extent) vira um quadro do tamanho dele, com o rotulo,
-o comeco do texto da caixa e a previa, quando ha' uma imagem que o Qt le. O flutuante e
-a equacao viram uma etiqueta do tamanho do texto no ponto da ancora. Apagar remove o
-objeto inteiro, como um caractere; digitar nao entra nele.
+o comeco do texto da caixa e a previa, quando ha' uma imagem que o Qt le. A equacao vira
+uma etiqueta do tamanho do texto. Apagar remove o objeto inteiro, como um caractere;
+digitar nao entra nele.
 
 Copiar e colar: o HTML que o Qt gera nao leva o objeto (medido no Qt 6.11: o caractere
 some do HTML), entao o que se cola sai sem ele. Nada de lixo no texto.
@@ -95,7 +99,12 @@ def formato_de_opaco(base: QTextCharFormat, obj: ObjetoOpaco) -> QTextCharFormat
 
 
 def inserir(cursor: QTextCursor, obj: ObjetoOpaco, base: QTextCharFormat | None = None) -> None:
-    cursor.insertText(CARACTERE_OBJETO, formato_de_opaco(base or QTextCharFormat(), obj))
+    fmt = formato_de_opaco(base or QTextCharFormat(), obj)
+    # Flutuante que empurra o texto (0.1.7): entra como float do Qt (ver flutuantes.py).
+    from editdoc.ponte_qt import flutuantes
+    if obj.flutuante and flutuantes.inserir_com_reserva(cursor, fmt, obj, registrar(obj)):
+        return
+    cursor.insertText(CARACTERE_OBJETO, fmt)
 
 
 def texto_do_rotulo(obj: ObjetoOpaco) -> str:
@@ -239,6 +248,12 @@ def _largura_disponivel(doc: QTextDocument) -> float:
 def tamanho(doc: QTextDocument, fmt: QTextFormat) -> tuple[QSizeF, bool]:
     """(tamanho em unidades de layout, e' etiqueta). Etiqueta: flutuante, equacao ou sem medida."""
     obj = objeto_de(fmt)
+    chave = fmt.property(PROP_OPACO)
+    if obj is not None and obj.flutuante:
+        from editdoc.ponte_qt import flutuantes
+        if flutuantes.info(obj, chave if isinstance(chave, str) else None) is not None:
+            # 0.1.7: o objeto e' pintado na posicao da pagina; no texto nao ocupa lugar.
+            return QSizeF(0.0, 0.0), False
     metrica = QFontMetricsF(_fonte(doc, fmt))
     disponivel = max(_largura_disponivel(doc), 1.0)
     altura_linha = metrica.height()
@@ -273,6 +288,10 @@ class ManipuladorDeOpaco(QPyTextObject):
 
     def intrinsicSize(self, doc, pos, fmt) -> QSizeF:  # noqa: N802 - nome do Qt
         try:
+            if fmt.objectIndex() >= 0:
+                # Float do Qt (0.1.7): o tamanho e' a reserva de espaco que o texto contorna.
+                from editdoc.ponte_qt import flutuantes
+                return flutuantes.gerente(doc).reserva(pos, fmt)
             return tamanho(doc, fmt)[0]
         except Exception:  # noqa: BLE001 - chamado pelo Qt no meio do layout
             log.exception("tamanho do objeto opaco")
@@ -281,6 +300,10 @@ class ManipuladorDeOpaco(QPyTextObject):
     def drawObject(self, painter, rect, doc, pos, fmt) -> None:  # noqa: N802 - nome do Qt
         try:
             obj = objeto_de(fmt)
+            if obj is not None and obj.flutuante:
+                from editdoc.ponte_qt import flutuantes
+                if flutuantes.eh_flutuante(fmt):
+                    return  # 0.1.7: pintado na posicao da pagina (flutuantes.desenhar_pagina)
             imagem = mostra_como_imagem(obj, fmt.property(PROP_OPACO))
             if imagem is not None:
                 painter.drawImage(QRectF(rect), imagem)

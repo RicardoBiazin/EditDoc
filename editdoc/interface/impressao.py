@@ -99,8 +99,10 @@ def pagina_da_folha(layout: LayoutPaginado, n: int) -> Pagina:
 
 
 def preparar(layout: LayoutPaginado) -> bool:
-    """Campos do corpo com o total de paginas atual. True se o layout mudou (limpar cache)."""
-    return layout.atualizar_campos()
+    """Campos do corpo com o total de paginas atual e objetos flutuantes em dia (0.1.7).
+    True se o layout mudou (limpar cache)."""
+    flutuantes = layout.atualizar_flutuantes()
+    return layout.atualizar_campos() or flutuantes
 
 
 def pintar_pagina(painter: QPainter, layout: LayoutPaginado, n: int, total: int,
@@ -108,8 +110,11 @@ def pintar_pagina(painter: QPainter, layout: LayoutPaginado, n: int, total: int,
     """A folha n como sai no papel: corpo, cabecalho e rodape, sem nada da tela (nem os
     colchetes que marcam os campos, 0.1.3)."""
     with marcas.sem_pintar_marcas():
+        # Cabecalho e rodape antes do corpo (0.1.7): o objeto flutuante deles fica atras do
+        # texto do corpo, como no Word.
+        desenhar_faixas(painter, layout, n, transf, total, 1.0, parte="objetos")
         desenhar_folha(painter, layout, n, transf)
-        desenhar_faixas(painter, layout, n, transf, total, 1.0)
+        desenhar_faixas(painter, layout, n, transf, total, 1.0, parte="texto")
 
 
 def _pintar_sequencia(painter: QPainter, nova_pagina: Callable[[int], None],

@@ -453,11 +453,26 @@ def preencher_blocos(documento_qt: QTextDocument, blocos: list, estilos=None) ->
     Sem `estilos`, usa o catalogo do documento (o do corpo, no cabecalho).
     """
     documento_qt.clear()
+    _reiniciar_flutuantes(documento_qt, None)
     if estilos is None:
         estilos = pq_estilos.catalogo(documento_qt)
     cursor = QTextCursor(documento_qt)
     _inserir_blocos(cursor, blocos, pq_estilos.Resolvedor(estilos))
     concluir_listas(documento_qt)
+
+
+def _reiniciar_flutuantes(documento_qt: QTextDocument, pagina) -> None:
+    """Objetos flutuantes (0.1.7): o clear() apagou os frames; a pagina decide o lado do
+    texto ao abrir (`flutuantes.lado_inicial`)."""
+    if pagina is not None or not hasattr(documento_qt, "_pagina_flutuantes"):
+        try:
+            documento_qt._pagina_flutuantes = pagina
+        except AttributeError:
+            pass
+    from editdoc.ponte_qt import flutuantes
+    g = flutuantes.gerente_se_houver(documento_qt)
+    if g is not None:
+        g.reiniciar()
 
 
 def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
@@ -466,6 +481,7 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     O catalogo de estilos do modelo (ou o padrao) passa a ser o do documento.
     """
     documento_qt.clear()
+    _reiniciar_flutuantes(documento_qt, modelo.pagina)
     # Lista dada so' pelo tipo (documento montado em codigo): os numIds do escritor (0.1.4).
     modelo = materializado(modelo)
     listas.definir_catalogo_base(documento_qt, modelo.numeracao)

@@ -727,6 +727,13 @@ class PainelDocumento(VistaPaginas):
         cf = pq_links.formato_em(self.document(), pos)
         return cf is not None and pq_marcas.eh_marcador(cf)
 
+    def _objeto_com_quadro(self, pos: int) -> bool:
+        """O caractere em `pos` e' um objeto flutuante que reserva espaco (float do Qt)."""
+        if pos < 0 or pos >= self.document().characterCount() - 1:
+            return False
+        cf = pq_links.formato_em(self.document(), pos)
+        return cf is not None and pq_opacos.eh_opaco(cf) and cf.objectIndex() >= 0
+
     def _mover_horizontal(self, direita: bool, modo) -> None:
         """Seta para os lados. A marca de marcador nao tem largura: o caret passa por ela
         junto com o caractere vizinho, senao a tecla pareceria nao fazer nada."""
@@ -756,13 +763,23 @@ class PainelDocumento(VistaPaginas):
             while pos > 0 and self._marcador_em(pos - 1):
                 pos -= 1
             self._cursor.setPosition(pos)
-            self._cursor.deletePreviousChar()
+            if pos > 0 and self._objeto_com_quadro(pos - 1):
+                # O objeto que reserva espaco (0.1.7) e' um float do Qt: o deletePreviousChar
+                # nao o apaga (QTextCursor recusa caractere com ObjectIndex). Apaga como selecao.
+                self._cursor.setPosition(pos - 1, Selecionar)
+                self._remover_selecao()
+            else:
+                self._cursor.deletePreviousChar()
         else:
             pos = self._cursor.position()
             while self._marcador_em(pos):
                 pos += 1
             self._cursor.setPosition(pos)
-            self._cursor.deleteChar()
+            if self._objeto_com_quadro(pos):
+                self._cursor.setPosition(pos + 1, Selecionar)
+                self._remover_selecao()
+            else:
+                self._cursor.deleteChar()
         self._depois_de_mover()
 
     def _pagina_do_teclado(self, anterior: bool, modo) -> None:
@@ -887,6 +904,56 @@ class PainelDocumento(VistaPaginas):
             pos = self.layout_pag.ajustar_para_pagina(pos, n)
         return pos
 
+    def flutuante_em(self, p: QPointF) -> int | None:
+        """Posicao do objeto flutuante do corpo sob o ponto do viewport (0.1.7), ou None.
+
+        O da frente ganha. O que fica atras do texto so' e' pego fora do texto (clicar numa
+        letra sobre uma imagem de fundo poe o cursor na letra, como no Word)."""
+        if self._edicao is not None:
+            return None
+        g = self.layout_pag.flutuantes
+        if g.contexto is None or not g.lista():
+            return None
+        m = self._mapa()
+        n_total = self._paginas()
+        i0, i1 = m.paginas_visiveis(n_total)
+        for n in range(i0, i1 + 1):
+            fx, fy, fw, fh = m.folha_na_tela(n)
+            if not (fx <= p.x() <= fx + fw and fy <= p.y() <= fy + fh):
+                continue
+            sx, sy = (p.x() - fx) / m.escala, (p.y() - fy) / m.escala
+            posto = g.em(n, sx, sy, atras=False)
+            if posto is not None:
+                return posto.posicao
+            posto = g.em(n, sx, sy, atras=True)
+            if posto is not None:
+                cfg = self.layout_pag.pagina
+                ponto = QPointF(sx - cfg.margem_esq_tw, sy - cfg.margem_sup_tw + n * self.layout_pag.hb)
+                no_corpo = 0 <= ponto.x() <= cfg.corpo_largura_tw() and                     0 <= sy - cfg.margem_sup_tw <= cfg.corpo_altura_tw()
+                exato = self.layout_pag.doc.documentLayout().hitTest(
+                    ponto, Qt.HitTestAccuracy.ExactHit) if no_corpo else -1
+                if exato < 0:
+                    return posto.posicao
+        return None
+
+    def _posicao_flutuante_selecionado(self) -> int | None:
+        if self._edicao is not None or not self._cursor.hasSelection():
+            return None
+        c = self._cursor
+        if c.selectionEnd() - c.selectionStart() != 1:
+            return None
+        cf = pq_links.formato_em(self.document(), c.selectionStart())
+        if cf is None or not pq_opacos.eh_opaco(cf):
+            return None
+        from editdoc.ponte_qt import flutuantes as pq_flutuantes
+        return c.selectionStart() if pq_flutuantes.eh_flutuante(cf) else None
+
+    def _selecionar_objeto(self, pos: int) -> None:
+        self._cursor.setPosition(pos)
+        self._cursor.setPosition(pos + 1, Selecionar)
+        self._arrastando = False
+        self._depois_de_mover()
+
     def imagem_em(self, p: QPointF) -> int | None:
         """Posicao da imagem sob o ponto do viewport, ou None (sempre None no cabecalho)."""
         if self._edicao is not None:
@@ -969,6 +1036,13 @@ class PainelDocumento(VistaPaginas):
                     self.abrir_link(pos_link)
                     ev.accept()
                     return
+            flutuante = None if ev.modifiers() & Shift else self.flutuante_em(ev.position())
+            if flutuante is not None:
+                # Clique no objeto flutuante seleciona o objeto (0.1.7): o contorno aparece, e
+                # Delete apaga (com desfazer).
+                self._selecionar_objeto(flutuante)
+                ev.accept()
+                return
             imagem = None if ev.modifiers() & Shift else self.imagem_em(ev.position())
             if imagem is not None:
                 # Clique na imagem seleciona a imagem, como no Word.
@@ -1010,8 +1084,16 @@ class PainelDocumento(VistaPaginas):
                 self._depois_de_mover()
                 ev.accept()
                 return
-            pos = self.posicao_em(ev.position())
             from editdoc.interface import dialogo_caixa
+            flutuante = self.flutuante_em(ev.position())
+            if flutuante is not None:
+                # Duplo clique no objeto flutuante (0.1.7): a caixa de texto abre o editor.
+                self._selecionar_objeto(flutuante)
+                if dialogo_caixa.caixa_em(self.document(), flutuante) is not None:
+                    self.editar_caixa(flutuante)
+                ev.accept()
+                return
+            pos = self.posicao_em(ev.position())
             for k in (pos, pos - 1):
                 if dialogo_caixa.caixa_em(self.document(), k) is not None:
                     # Duplo clique na caixa de texto: edita o texto dela (0.1.5).

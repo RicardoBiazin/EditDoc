@@ -350,6 +350,65 @@ mudança (1665 verificações na hora da troca).
   pilha do corpo e o parágrafo do cabeçalho para a pilha do cabeçalho. Juntar as pilhas é
   reescrever o desfazer; fica para depois.
 
+## 0.1.7: objetos flutuantes e quebra de texto
+
+Pergunta: como fazer o texto do corpo contornar um objeto flutuante no layout paginado sobre
+`QTextDocument`, sem perder o gate do M3 (p95 de digitação ≤ 16 ms)?
+
+### Caminhos considerados
+
+| Caminho | Resultado |
+|---|---|
+| Layout próprio (`QAbstractTextDocumentLayout` em Python, linhas com `setLineWidth`) | Descartado: refazer tabelas, quadros, quebras e pintura em Python, com o gate em risco. |
+| Recuos temporários por bloco (margem esquerda/direita e espaço antes) | Por bloco, não por linha (o parágrafo inteiro fica estreito), e a troca de formato entra no desfazer e no "alterado" (o mesmo arranjo frágil das listas da 0.1.4). |
+| `QTextFrame` de verdade com FloatLeft/FloatRight | O quadro é conteúdo: muda posições, entra no texto extraído, no cursor, na busca e no desfazer. |
+| **Float de objeto na linha** (`QTextCursor.insertImage(formato, FloatLeft)`): o caractere de objeto aponta, pelo `ObjectIndex`, para um `QTextFrame` sem conteúdo | **Escolhido.** É o mecanismo do próprio `QTextDocumentLayout` (C++): as linhas seguintes evitam o retângulo, linha a linha, e as que não cabem descem (`findY`). O tamanho é o `intrinsicSize` do nosso manipulador. |
+
+### Medido (spike no Qt 6.11.2, 1440 dpi, documento de 40 parágrafos)
+
+- Float de 3000 × 2000 twips no começo do parágrafo: as 8 primeiras linhas começam em
+  x = 3000 com largura 6000; as seguintes voltam a x = 0 e 9000. Float da largura toda:
+  a linha da âncora fica com largura 0 e o texto recomeça no pé do objeto.
+- Digitar com o float no documento: 0,58 ms (p50) e 0,64 ms (p95) por tecla, sem pintura.
+- Armadilha 1: escrever acima do parágrafo-âncora desloca o bloco sem refazer as linhas nem
+  o float (o float ficou em y = 6526 com o bloco já em 8534). Por isso a conferência depois
+  do layout (`Gerente.atualizar`).
+- Armadilha 2: apagar o caractere do float deixa o retângulo antigo valendo, mesmo depois de
+  refazer o layout inteiro (`markContentsDirty` do documento todo): o frame não é destruído
+  porque o pai ainda estava ligado na hora da remoção. Inserir de novo um caractere com o
+  `ObjectIndex` não é possível pelo `QTextCursor` (`insertText` o tira). Só o desfazer
+  reinsere com o mesmo índice; dentro do grupo de desfazer o pai não está ligado e o Qt
+  destrói o frame. Daí a cura: desfazer e refazer a última ação com a reserva zerada.
+- Armadilha 3: dois floats no mesmo trecho não se somam; o segundo é empurrado para baixo
+  (até de página) se não cabe na largura livre. Os objetos de um parágrafo viram no máximo
+  dois floats, um por lado; se os lados se encontram, um só com a largura toda.
+- Armadilha 4: `deleteChar` recusa o caractere com `ObjectIndex` (não é imagem): o painel
+  apaga por seleção.
+
+### Gate do M3 com objetos flutuantes
+
+p95 de 80 teclas, cada uma com `viewport().grab()`, janela de produção, Segoe UI,
+offscreen, DPR 1, 100%. A coluna 0.1.6 é o mesmo script sobre o código da 0.1.6 (extraído do
+git para uma pasta temporária). Os dois documentos reais (um manual de 54 páginas com capa de
+caixas de texto e imagens, e um capítulo de 4 páginas com faixa no cabeçalho) ficam fora do
+repositório.
+
+| Documento | Onde digita | 0.1.6 (ms) | 0.1.7 (ms) |
+|---|---|---|---|
+| 600 parágrafos, sem objetos | 1º parágrafo | 8,3 | 8,5 |
+| 600 parágrafos, imagem à esquerda e caixa à direita | ao lado da imagem | 9,1 | 10,3 |
+| idem | longe dos objetos | 5,9 | 6,1 |
+| capítulo de 4 páginas (faixa e caixa no cabeçalho) | capa | 3,6 | 4,0 |
+| idem | corpo | 3,5 | 4,1 |
+| manual de 54 páginas (capa com 5 objetos) | parágrafo das âncoras | 24,4 | 27,8 |
+| idem | sumário (página 2) | 29,4 | 27,2 |
+
+O manual já passava do gate na 0.1.6 (o sumário com preenchimento de tabulação e o corpo
+pesado); a 0.1.7 não muda isso (a diferença na capa é repintar a imagem da página inteira
+nos tiles invalidados). O gate continua valendo para os documentos que passavam. Antes do
+cache do plano de reserva, o Qt pedia o `intrinsicSize` 130 vezes por tecla (a cada
+pintura do bloco) e o manual chegava a 46 ms.
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.

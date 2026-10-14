@@ -104,6 +104,8 @@ SUITES = [
      "0.1.6: rStyle/pStyle sem definicao preservados, aparencia do latente, codigo do campo, faixas da tabela"),
     ("teste_comentarios.py",
      "0.1.6: comentarios: 4 partes c14n, respostas, resolvido, painel, Ctrl+Alt+M, apagar como o Word, limites"),
+    ("teste_flutuantes.py",
+     "0.1.7: objetos flutuantes na posicao da pagina, texto em volta, atras/frente, PDF, c14n, Delete e desfazer"),
     ("teste_galeria.py",
      "galeria e painel de estilos acompanham o cursor; faixa final sem corte em todas as abas"),
     ("teste_exibir.py",

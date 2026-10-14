@@ -1,3 +1,64 @@
+## 0.1.7 - 2026-10-14
+
+Objetos flutuantes na posição da página, com o texto em volta.
+
+Defeito: imagem, caixa de texto, forma e grupo flutuantes (`wp:anchor`, ou VML com
+`position:absolute`) apareciam como etiqueta ou caixa no ponto da âncora, dentro do texto.
+Num manual real a capa ficava deformada (o título, numa caixa de texto, virava um bloco no
+meio do texto; as imagens viravam "Imagem flutuante"), e num cabeçalho real a faixa escura
+atrás do logotipo não aparecia (o logotipo branco ficava invisível sobre o branco). O
+arquivo salvo já estava certo: o defeito era só a aparência (tela, PDF e impressão). Causa:
+a ponte desenhava o objeto como caractere do texto, sem ler a posição.
+
+- Posição (`modelo/flutuantes.py`, sem Qt): `wp:positionH/positionV` com relativeFrom
+  page, margin, column, character, paragraph, line, leftMargin, rightMargin, topMargin,
+  bottomMargin, insideMargin e outsideMargin; `wp:posOffset`, `wp:align`
+  (left/center/right/inside/outside, top/center/bottom), `wp14:pctPosHOffset/VOffset`,
+  `wp:extent`, `wp14:sizeRelH/V` (pctWidth/pctHeight), `wp:simplePos`, `effectExtent`,
+  distâncias, behindDoc e relativeHeight (ordem). VML: `margin-left/top`, `width/height`,
+  `mso-position-horizontal/vertical(-relative)`, `mso-width/height-percent`, `z-index`
+  (negativo = atrás) e `w10:wrap`. A página do objeto é a do parágrafo-âncora.
+- Leitura do desenho (`formato_docx/flutuantes.py`): imagem (rId e recorte `a:srcRect`),
+  forma (`prstGeom`: retângulo, retângulo arredondado, elipse, linha e conectores,
+  triângulos, losango, paralelogramo, trapézio, polígonos, setas, divisa, mais;
+  preenchimento e contorno do `spPr` ou da referência `wps:style`, com as cores do tema e
+  lumMod/lumOff/shade/tint/alpha), caixa de texto (o texto, as margens do `bodyPr`, o
+  alinhamento vertical e a cor do `fontRef`), grupo (filhos por `chOff/chExt`, grupo dentro
+  de grupo), rotação e espelho; gráfico, SmartArt e tela de desenho com a imagem de reserva
+  ou um quadro rotulado do tamanho certo. No AlternateContent vale o DrawingML; o VML só
+  quando é o único.
+- Quebra de texto (`ponte_qt/flutuantes.py`): wrapSquare, wrapTight e wrapThrough (os dois
+  últimos como Square, pelo retângulo) fazem o texto contornar o objeto linha a linha;
+  wrapTopAndBottom leva o texto para baixo dele; wrapNone e behindDoc não mexem no texto
+  (o objeto fica na frente ou atrás). O caractere do objeto vira um float do layout do Qt
+  (`QTextFrame` FloatLeft/FloatRight pelo `ObjectIndex`), com o tamanho calculado a cada
+  layout; a conferência depois de cada mudança refaz o que o Qt deixa velho (bloco só
+  deslocado, frame órfão depois de apagar). Medição e escolha em docs/SPIKES.md.
+- Pintura: a mesma função na tela, no PDF e na impressão. Os objetos de trás antes do texto,
+  os da frente depois, recortados na folha inteira. Os do cabeçalho e do rodapé aparecem em
+  todas as páginas, atrás do texto do corpo (a impressão pinta os objetos das faixas, o
+  corpo e o texto das faixas; na tela, com objeto em faixa, os tiles ficam transparentes).
+- Interação: clique no objeto seleciona (contorno azul com alças; o objeto de trás só se
+  pega fora do texto); Delete e Backspace apagam, com desfazer; duplo clique na caixa de
+  texto abre o editor da 0.1.5.
+- Nada muda no arquivo quando o objeto não é mexido: o XML guardado volta igual (c14n),
+  passando pelo Qt e gravando de novo.
+- Desempenho (gate do M3, p95 de 80 teclas com pintura, Segoe UI, offscreen): 600
+  parágrafos sem objetos 8,5 ms (0.1.6: 8,3); com dois objetos, digitando ao lado da
+  imagem, 10,3 ms (0.1.6: 9,1). Ver docs/SPIKES.md.
+- Testes: `teste_flutuantes.py` (77 verificações: oráculo de posição em twips, leitura,
+  página da âncora, contorno à esquerda e à direita, wrapTopAndBottom, wrapNone, behindDoc,
+  pixels de trás e da frente, imagem na folha e no PDF, cabeçalho em todas as páginas,
+  c14n, seleção, Delete, desfazer e refazer, desempenho). Checagens reescritas, com o
+  motivo no teste: em `teste_caixas_texto.py`, "a caixa flutuante aparece com a largura do
+  wp:extent" passou a conferir o tamanho do objeto na folha (antes, no texto), e "a caixa
+  só de leitura continua a etiqueta" virou "a caixa só de leitura aparece na posição dela,
+  com o conteúdo dentro" (ela deixou de ser etiqueta).
+- Limites: o texto contorna por um lado só (o maior, ou o do `wrapText`); a faixa reservada
+  começa na linha da âncora; objetos do mesmo parágrafo somam a faixa por lado; objeto em
+  célula de tabela não reserva espaço; mover e redimensionar com o mouse ainda não existem;
+  o objeto do cabeçalho não se seleciona na página.
+
 ## 0.1.6 - 2026-10-14
 
 Comentários do Word editáveis e referências de estilo sem perda.

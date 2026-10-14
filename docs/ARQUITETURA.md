@@ -309,8 +309,9 @@ vinculada) e equação.
 - Qt (`ponte_qt/opacos.py`): caractere de objeto com `TIPO_OPACO` (UserObject + 2) e a
   chave do registro em `PROP_OPACO`; o objeto fica no registro, como os bytes da imagem,
   para o desfazer achar de novo. O manipulador (`QPyTextObject`, registrado em todo
-  `DocumentoQt`) pinta um quadro do tamanho do objeto na linha, ou uma etiqueta no ponto
-  da âncora do flutuante e da equação, com o rótulo e o começo do texto. O HTML que o Qt
+  `DocumentoQt`) pinta um quadro do tamanho do objeto na linha, ou uma etiqueta na equação,
+  com o rótulo e o começo do texto. Desde a 0.1.7 o flutuante é pintado na posição da
+  página (ver "Objetos flutuantes"). O HTML que o Qt
   gera não leva o objeto: copiar e colar omite o objeto, e uma marca na área de
   transferência faz o colar avisar na barra de status.
 
@@ -513,8 +514,8 @@ Implementados na 0.1.5.
   formato do caractere da caixa (`formato_de_opaco` com o objeto novo) num bloco de edição.
   Na tela (`ponte_qt/opacos.py`), a caixa editável é composta num `DocumentoQt` próprio a
   1440 dpi (catálogo de estilos e listas do corpo por `_doc_estilos`), do tamanho do
-  `wp:extent` (a flutuante também, no ponto da âncora; o EditDoc não posiciona fora do
-  fluxo), crescendo se o texto passa; texto todo claro ganha fundo escuro.
+  `wp:extent`, crescendo se o texto passa; texto todo claro ganha fundo escuro. A flutuante,
+  desde a 0.1.7, é pintada na posição da página, com o fundo e o contorno da forma.
 - Imagens (`ponte_qt/vetoriais.py`): `modelo/imagem.previa_possivel` decide na leitura (sem
   Qt): formato pelo número mágico, tamanho pelo cabeçalho, registros do EMF/WMF percorridos
   até o EOF (tamanho impossível, sem EOF ou acima de 1 milhão de registros: sem prévia),
@@ -558,6 +559,68 @@ Limites: "Imprimir marcações" não existe (impressão e PDF sem comentários);
 cabeçalho, rodapé ou caixa de texto não é preservado; copiar e colar texto comentado não
 leva o comentário; da formatação condicional de tabela, só o fundo aparece na tela.
 
+## Objetos flutuantes (0.1.7)
+
+Até a 0.1.6 o objeto flutuante aparecia como etiqueta (ou caixa) no ponto da âncora, dentro
+do texto: numa capa, o título da caixa de texto virava um bloco no meio do texto e as
+imagens viravam "Imagem flutuante". O arquivo já saía certo; só a aparência mudou.
+
+- Posição (`modelo/flutuantes.py`, sem Qt): `Ancoragem` (relativeFrom, posOffset ou
+  align, `wp14:pctPosHOffset`, extent, `wp14:sizeRelH/V`, simplePos, effectExtent, quebra
+  e lado, distâncias, behindDoc, relativeHeight, layoutInCell) e `retangulo(ancoragem,
+  Referencia)`, em twips da folha. A `Referencia` diz onde a âncora ficou: página (a página
+  0 é ímpar, para inside/outside), topo do parágrafo, topo da linha, coluna (ou a célula) e
+  x do caractere. `area_de_quebra` soma effectExtent e distâncias.
+- Leitura (`formato_docx/flutuantes.py`, sem Qt): do XML do objeto opaco (nada muda nele).
+  No AlternateContent vale o Choice; o VML só sem DrawingML (style `position:absolute`,
+  `margin-left/top`, `mso-position-*`, `mso-width-percent`, `z-index` negativo = atrás,
+  `w10:wrap`). A `Figura`: imagem (rId e `a:srcRect`), forma (prstGeom, preenchimento e
+  contorno, inclusive pela referência `wps:style` e pelo tema), caixa (margens do
+  `bodyPr`, `anchor`, `wrap`, cor do `fontRef`), grupo (filhos pela `chOff/chExt`), resto
+  (gráfico, SmartArt, tela de desenho) com rótulo. Cores com lumMod, lumOff, shade, tint e
+  alpha; tema do `theme1.xml` do arquivo (o padrão do Office no que faltar).
+- Quebra de texto: decidida pelo spike (docs/SPIKES.md, "0.1.7"). O layout do Qt
+  (`QTextDocumentLayout`) contorna "floats" linha a linha: um caractere de objeto cujo
+  formato tem `ObjectIndex` de um `QTextFrame` com posição FloatLeft/FloatRight vira um
+  retângulo que as linhas seguintes evitam (o mesmo de `QTextCursor.insertImage(formato,
+  FloatLeft)`). O objeto com wrapSquare, wrapTight, wrapThrough ou wrapTopAndBottom (e sem
+  behindDoc) entra assim no documento ao abrir (`flutuantes.inserir_com_reserva`); o lado
+  do frame é decidido com a página do arquivo. O tamanho do float é o `intrinsicSize`,
+  calculado no meio do layout pela posição que o Qt já deu ao bloco (`Gerente.plano`): do
+  topo da linha da âncora até o pé do objeto (cortado no pé da página), e da borda do corpo
+  até o lado de dentro do objeto. Os objetos de um mesmo parágrafo viram no máximo dois
+  floats (um de cada lado); se os lados se encontram, ou o objeto é wrapTopAndBottom, o
+  primeiro leva a largura toda e o texto passa para baixo. wrapNone e behindDoc entram como
+  caractere sem tamanho. O caractere do float não é apagado pelo `deleteChar` do Qt (o
+  cursor recusa caractere com ObjectIndex): o painel apaga por seleção.
+- Conferência (`Gerente.atualizar`, na pintura e antes de imprimir): o Qt só refaz os
+  blocos da faixa editada e desloca os de baixo com as linhas e o float de antes. Depois de
+  cada mudança, a reserva de cada objeto e a largura das linhas perto dele (por posição no
+  documento, `_alcance`) são conferidas, e o que ficou velho é refeito com
+  `markContentsDirty` (fora do desfazer). Os objetos são seguidos por `QTextCursor` (sem
+  varrer o documento a cada tecla). Apagar o objeto deixa o frame órfão com o retângulo
+  antigo na lista de floats do Qt; `Gerente.curar` desfaz e refaz a última ação com as
+  reservas zeradas (o frame fica órfão de tamanho zero). O documento, a pilha de desfazer e
+  o "alterado" ficam como estavam; refazer e desfazer depois disso já não precisam de cura
+  (o Qt destrói o frame quando o caractere sai sem pai, dentro do grupo de desfazer).
+- Pintura (`ponte_qt/flutuantes.pintar`): a mesma na tela, no PDF e na impressão. O
+  `desenhar_folha` pinta os objetos da página atrás do texto, depois o corpo, depois os da
+  frente, recortados na folha inteira (o objeto pode estar na margem). Cabeçalho e rodapé:
+  `desenhar_faixas(parte=...)`; a impressão pinta os objetos das faixas, o corpo e só então
+  o texto das faixas (o objeto do cabeçalho fica atrás do texto do corpo, como no Word). Na
+  tela, com objeto em cabeçalho ou rodapé, os tiles ficam transparentes e os objetos das
+  faixas são pintados antes deles. Um objeto que muda de lugar limpa o cache de tiles.
+- Interação: clique no objeto seleciona (contorno com alças); o de trás só fora do texto.
+  Delete e Backspace apagam, com desfazer; duplo clique na caixa abre o editor da 0.1.5.
+
+Limites: o texto contorna de um lado só (o maior, ou o do `wrapText`); a faixa começa na
+linha da âncora (o texto acima dela não contorna, nem o de páginas anteriores);
+Tight/Through seguem o retângulo; objetos de um parágrafo somam as faixas por lado (a
+altura é a do mais baixo); objeto em célula de tabela não reserva espaço; mover e
+redimensionar com o mouse não existem; o objeto do cabeçalho não se seleciona; geometria
+fora do conjunto básico vira retângulo; `custGeom` não é seguido; a rotação e o espelho
+valem, mas a área de quebra é a do retângulo sem rotação.
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
@@ -596,6 +659,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Listas | 0.1.4 (feito) | numbering.xml inteiro, números como o Word, galeria, vários níveis, teclado |
 | Sem perda | 0.1.5 (feito) | rPr/pPr/tabela preservados, controles de conteúdo, texto da caixa editável, EMF/WMF/TIFF/SVG na tela |
 | Comentários | 0.1.6 (feito) | comments.xml e partes estendidas, painel, aba Revisão, referências de estilo preservadas |
+| Flutuantes | 0.1.7 (feito) | objeto na posição da página, texto em volta, atrás e na frente, cabeçalho, PDF |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em

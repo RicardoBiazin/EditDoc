@@ -19,6 +19,10 @@ Duas paginas: `pagina_arquivo` e' a do arquivo (o que se grava e o que a faixa d
 opcoes mostra); `pagina` e' a efetiva, com o corpo empurrado pelo cabecalho ou pelo
 rodape que nao cabem na margem. Toda a geometria da tela usa a efetiva.
 
+Objetos flutuantes (0.1.7): `flutuantes` (ponte_qt/flutuantes.py) sabe onde o corpo fica na
+folha (pagina do arquivo, efetiva e altura do corpo); `atualizar_flutuantes` confere a reserva
+de espaco depois de cada mudanca.
+
 Campos no corpo: o contexto (`contexto_campos`) diz o total de paginas e a altura do
 corpo; quando o total muda, os campos sao medidos de novo (`atualizar_campos`).
 """
@@ -34,6 +38,7 @@ from editdoc.interface.cabecalhos import ConjuntoDeFaixas
 from editdoc.modelo.pagina import Pagina, pagina_efetiva
 from editdoc.ponte_qt import campos
 from editdoc.ponte_qt import estilos as pq_estilos
+from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt.imagens import DocumentoQt
 
 DPI_LAYOUT = 1440
@@ -88,6 +93,9 @@ class LayoutPaginado:
         self.faixas = ConjuntoDeFaixas(padrao, pagina.corpo_largura_tw())
         self.faixas.doc_estilos = self.doc
         pq_estilos.definir_catalogo_base(self.doc, None)
+        # Objetos flutuantes (0.1.7): onde o corpo fica na folha, para a posicao e a reserva.
+        self.flutuantes = pq_flutuantes.gerente(self.doc)
+        self.flutuantes.contexto = pq_flutuantes.Contexto("corpo")
         self.contexto_campos = campos.ContextoDeCampos()
         self._manipulador_campos = campos.registrar(self.doc, self.contexto_campos)
         self._chave_campos: tuple | None = None
@@ -110,6 +118,8 @@ class LayoutPaginado:
         self.contexto_campos.hb = self.hb
         self.contexto_campos.pagina = self.pagina_arquivo
         self._chave_campos = None
+        ctx = self.flutuantes.contexto
+        ctx.pagina, ctx.efetiva, ctx.hb = self.pagina_arquivo, self.pagina, self.hb
 
     def definir_pagina(self, pagina: Pagina) -> None:
         """Troca papel ou margens: o documento e' refeito para o novo corpo."""
@@ -149,6 +159,11 @@ class LayoutPaginado:
             return False
         campos.refazer_campos(self.doc, posicoes)
         return True
+
+    def atualizar_flutuantes(self) -> bool:
+        """Reserva dos objetos flutuantes e linhas ao lado deles em dia (0.1.7). True se o
+        layout mudou (quem pinta limpa o cache)."""
+        return self.flutuantes.atualizar()
 
     @property
     def hb(self) -> float:
