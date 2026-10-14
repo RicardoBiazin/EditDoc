@@ -131,6 +131,20 @@ DEFINICOES = (
     Definicao("dividir_celula", "Dividir células", (), dica="Desfazer a mescla da célula"),
     Definicao("inserir_imagem", "Imagem...", (), dica="Inserir imagem de um arquivo"),
     Definicao("tamanho_imagem", "Tamanho da imagem...", (), dica="Tamanho da imagem em centímetros"),
+    # Objetos (0.1.9): posicao, tamanho e quebra de texto do objeto selecionado.
+    Definicao("posicao_tamanho", "Posição e tamanho...", (),
+              dica="Posição na página, tamanho e quebra de texto do objeto selecionado"),
+    Definicao("quebra_linha", "Alinhado ao texto", (), True,
+              "O objeto fica na linha do texto, como uma letra"),
+    Definicao("quebra_quadrado", "Quadrado", (), True, "O texto contorna o objeto pelo retângulo"),
+    Definicao("quebra_comprimido", "Comprimido", (), True,
+              "O texto contorna o objeto bem perto (como Quadrado nesta versão)"),
+    Definicao("quebra_atraves", "Através", (), True,
+              "O texto passa pelos vãos do objeto (como Quadrado nesta versão)"),
+    Definicao("quebra_superior_inferior", "Superior e inferior", (), True,
+              "O texto fica acima e abaixo do objeto, nunca ao lado"),
+    Definicao("quebra_atras", "Atrás do texto", (), True, "O objeto fica atrás do texto"),
+    Definicao("quebra_frente", "Na frente do texto", (), True, "O objeto fica na frente do texto"),
     # Hiperlinks (0.1.3).
     Definicao("inserir_link", "Link...", ("Ctrl+K",),
               dica="Inserir ou editar link (endereço ou marcador do documento)"),
@@ -247,6 +261,14 @@ TABELA = ("inserir_linha_acima", "inserir_linha_abaixo", "inserir_coluna_esquerd
           "inserir_coluna_direita", "excluir_linha", "excluir_coluna", "excluir_tabela",
           "mesclar_celulas", "dividir_celula")
 
+#: Quebra de texto (0.1.9): id da acao -> quebra de `formato_docx/posicao.py`.
+QUEBRA_DAS_ACOES = {"quebra_linha": "linha", "quebra_quadrado": "quadrado",
+                    "quebra_comprimido": "comprimido", "quebra_atraves": "atraves",
+                    "quebra_superior_inferior": "superior_inferior", "quebra_atras": "atras",
+                    "quebra_frente": "frente"}
+#: Comandos que so' valem com um objeto selecionado (o atualizador os habilita).
+OBJETO = ("posicao_tamanho", *QUEBRA_DAS_ACOES)
+
 #: Comandos que so' valem com o cursor num link (o atualizador os habilita).
 LINK = ("remover_link", "abrir_link")
 
@@ -311,6 +333,13 @@ def _chamar(ganchos: dict[str, Callable], chave: str, *args) -> None:
         gancho(*args)
 
 
+def _quebra(editor, quebra: str) -> None:
+    """Quebra de texto do objeto selecionado (0.1.9). Sem objeto (ou editor sem o recurso), nada."""
+    definir = getattr(editor, "definir_quebra_do_selecionado", None)
+    if definir is not None:
+        definir(quebra)
+
+
 def _continuar(editor) -> None:
     if not ed_listas.continuar(editor) and hasattr(editor, "mensagem"):
         editor.mensagem.emit("Não há lista anterior com o mesmo formato para continuar.")
@@ -333,6 +362,7 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         "inserir_tabela": lambda: _chamar(inserir, "tabela"),
         "inserir_imagem": lambda: _chamar(inserir, "imagem"),
         "tamanho_imagem": lambda: _chamar(inserir, "tamanho_imagem"),
+        "posicao_tamanho": lambda: _chamar(inserir, "posicao_tamanho"),
         "inserir_link": lambda: _chamar(inserir, "link"),
         "remover_link": lambda: _chamar(inserir, "remover_link"),
         "abrir_link": lambda: _chamar(inserir, "abrir_link"),
@@ -364,6 +394,8 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
                                    ed_cabecalhos.inserir_numero_de_pagina(editor, o, a, t))
     for id_, formato in FORMATO_DAS_ACOES.items():
         executores_inserir[id_] = lambda f=formato: _chamar(layout, "formato_numero", f)
+    for id_, quebra in QUEBRA_DAS_ACOES.items():
+        executores_inserir[id_] = lambda q=quebra: _quebra(editor, q)
     executores_layout: dict[str, Callable[[], None]] = {
         "quebra_pagina": editor.inserir_quebra_de_pagina,
         "ampliar": lambda: editor.definir_zoom(

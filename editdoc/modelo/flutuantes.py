@@ -205,6 +205,41 @@ def retangulo(anc: Ancoragem, ref: Referencia) -> tuple[float, float, float, flo
     return x, y, largura, altura
 
 
+#: Limites de posicao e tamanho (0.1.9), em EMU. ST_PositionOffset e' xsd:int, mas o Word nao
+#: aceita objeto a mais de 55,88 cm (22 polegadas) da referencia; ST_PositiveCoordinate vai de 0
+#: a 27273042316900, e o teto razoavel e' o maior papel (176 cm). O menor lado e' 1 px96.
+POSICAO_MAXIMA_EMU = 22 * 914400
+TAMANHO_MAXIMO_EMU = 176 * 360000
+TAMANHO_MINIMO_EMU = 9525
+
+
+def limitar_posicao(emu: float) -> int:
+    """Deslocamento (posOffset) dentro da faixa que o Word aceita."""
+    return int(max(-POSICAO_MAXIMA_EMU, min(POSICAO_MAXIMA_EMU, round(emu))))
+
+
+def limitar_tamanho(emu: float, zero: bool = False) -> int:
+    """Lado do objeto (wp:extent): nunca negativo, nem acima do maior papel. `zero`: o lado era
+    zero no arquivo (a linha reta tem cy="0") e continua zero."""
+    if zero:
+        return 0
+    return int(max(TAMANHO_MINIMO_EMU, min(TAMANHO_MAXIMO_EMU, round(emu))))
+
+
+def base(eixo: str, rel: str, ref: Referencia) -> float:
+    """Origem (twips da folha) da referencia `rel` no eixo "h" ou "v" (0.1.9)."""
+    impar = ref.indice % 2 == 0
+    if eixo == "h":
+        return _base_horizontal(rel, ref, impar)[0]
+    return _base_vertical(rel, ref, impar)[0]
+
+
+def deslocamento_para(eixo: str, rel: str, ref: Referencia, valor_tw: float) -> int:
+    """posOffset (EMU) que poe o canto do objeto em `valor_tw` (twips da folha), relativo a
+    `rel` (0.1.9): o caminho de volta de `retangulo`, para gravar a posicao nova."""
+    return limitar_posicao((valor_tw - base(eixo, rel, ref)) * EMU_POR_TWIP)
+
+
 def area_de_quebra(anc: Ancoragem, rect: tuple) -> tuple[float, float, float, float]:
     """(x0, y0, x1, y1) que o texto contorna: o objeto, o effectExtent e as distancias."""
     x, y, w, h = rect

@@ -37,6 +37,10 @@ causou defeito.
 - Altura por página (0.1.8): `LayoutPaginado.efetiva_da(n)` e `topo_da_pagina(n)` (o topo do corpo
   pelo cabeçalho da página); `Mapa.topo_da_pagina` e `flutuantes.Contexto.topos` seguem. Desempenho
   (0.1.8): `tests/teste_desempenho.py`, scripts de medição fora do repositório (docs/SPIKES.md).
+- Mover e redimensionar (0.1.9): `formato_docx/posicao.py` (XML de posicao, tamanho e quebra,
+  sem Qt), `modelo/flutuantes.deslocamento_para` (a volta de `retangulo`), `edicao/objetos.py`
+  (troca do objeto no caractere, reancorar), `interface/dialogo_posicao.py`; o mouse e as setas
+  no `PainelDocumento` (`_arraste`, `_geometria_do_arraste`, `flutuante_das_faixas_em`).
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -203,4 +207,10 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | cache de pintura e `id()` (0.1.8) | `id()` de documento ou faixa fechados volta para o objeto seguinte: chave de cache usa `DocumentoQt.serie` e `FaixaQt.serie`. A revisao (`doc.revision()`) recomeca baixa num documento novo e nao serve sozinha. |
 | `QTextFormat` sem hash (0.1.8) | O PySide 6.11 nao deixa usar `QTextFormat` como chave (`unhashable`). O tamanho da marca e' guardado pelas propriedades de fonte e por `DocumentoQt.chave_da_fonte()`, que `setDefaultFont` (sobrescrito em Python) zera: trocar a fonte padrao sem passar por ele deixaria o tamanho velho. |
 | fontes nos testes de tempo (0.1.8) | Fonte carregada (`addApplicationFont`) DEPOIS de um documento aberto no processo nao substitui o fallback que o Qt ja' escolheu: o p95 dobra. `teste_desempenho` carrega as fontes no inicio e mede o relogio antes das conferencias de pixel (que esquentam a maquina) e com um painel por medida (um segundo painel aberto entra na conta). |
+| objeto que muda de tipo (0.1.9) | Trocar a quebra (reserva <-> sem reserva, lado do float, linha <-> flutuante) tira o caractere e insere de novo (`edicao/objetos.trocar`): so' o `insertImage` cria o float. O float que saiu fica orfao e a cura (undo/redo) roda no proximo ciclo; o undo/redo do Qt tira a selecao do cursor do painel, que e' refeita por um `QTimer` de zero ms pedido DEPOIS (`_reselecionar`). |
+| reancorar e o layout (0.1.9) | Dentro do bloco de edicao o layout nao e' refeito (`blockBoundingRect` velho). Reancorar e' em duas etapas: troca com a posicao do layout de antes, `endEditBlock`, e regrava a posicao certa com `joinPreviousEditBlock` (um desfazer so'). |
+| imagem flutuante para a linha (0.1.9) | O leitor le' `wp:inline` com figura PNG/JPEG/GIF/BMP como `Imagem`, nao como objeto. Objeto opaco na linha com essa figura faria a conferencia pos-gravacao recusar o arquivo: a troca gera `Imagem` (`posicao.imagem_de_objeto`) e recusa a figura com rotacao, borda ou efeito (perderia em silencio). |
+| VML em pt (0.1.9) | `style` do VML com duas casas em pt: o valor relido difere ate' 127 EMU do pedido. Teste de VML compara com essa folga. |
+| `_selecionar_objeto` e rolagem (0.1.9) | Selecionar move o caret e `garantir_visivel` rola a tela: retangulo de tela calculado antes de selecionar fica velho. Teste pega o retangulo depois. |
+| oito alcas (0.1.9) | O meio de cada lado do objeto selecionado e' uma alca branca: conferir a cor do contorno no meio da borda acha o branco da alca. `teste_flutuantes` confere a 1/4 da altura. |
 | pontilhado da tabulacao (0.1.8) | Um `drawText` com os pontos e o espaco no `letterSpacing` absoluto; um `drawText` por ponto custava ate' 2 ms por tile num sumario. |

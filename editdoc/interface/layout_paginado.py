@@ -265,10 +265,27 @@ class LayoutPaginado:
             return None
         cur.setPosition(pos)
         cur.setPosition(pos + 1, QTextCursor.MoveMode.KeepAnchor)
-        fmt = cur.charFormat()
-        if cur.selectedText() != chr(0xFFFC) or not fmt.isImageFormat():
+        if cur.selectedText() != chr(0xFFFC):
             return None
-        img = fmt.toImageFormat()
+        # Pelo fragmento, nao pelo cursor (armadilha do charFormat com selecao no fim do bloco).
+        from editdoc.ponte_qt import links as pq_links
+        from editdoc.ponte_qt import opacos as pq_opacos
+        fmt = pq_links.formato_em(self.doc, pos) or cur.charFormat()
+        if fmt.isImageFormat():
+            altura = fmt.toImageFormat().height() * 15.0
+            largura_fmt = fmt.toImageFormat().width() * 15.0
+        elif pq_opacos.eh_opaco(fmt) and fmt.objectIndex() < 0:
+            # Objeto preservado na linha (0.1.9): caixa, forma ou objeto com tamanho tem alcas
+            # como a imagem. O flutuante e a etiqueta (equacao, sem tamanho) nao.
+            obj = pq_opacos.objeto_de(fmt)
+            if obj is None or obj.flutuante or obj.tipo == "equacao" or not obj.largura_emu:
+                return None
+            tam, etiqueta = pq_opacos.tamanho(self.doc, fmt)
+            if etiqueta or tam.height() <= 0:
+                return None
+            altura, largura_fmt = tam.height(), tam.width()
+        else:
+            return None
         bloco = self.doc.findBlock(pos)
         rel = pos - bloco.position()
         lay = bloco.layout()
@@ -278,8 +295,7 @@ class LayoutPaginado:
         x0, _ = linha.cursorToX(rel)
         x1, _ = linha.cursorToX(rel + 1)
         o = self.origem_bloco(bloco)
-        altura = img.height() * 15.0
-        largura = abs(x1 - x0) or img.width() * 15.0
+        largura = abs(x1 - x0) or largura_fmt
         topo = o.y() + linha.y() + linha.ascent() - altura
         return QRectF(o.x() + min(x0, x1), topo, largura, altura)
 

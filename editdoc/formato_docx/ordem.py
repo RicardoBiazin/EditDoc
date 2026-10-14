@@ -210,6 +210,10 @@ def validar_estrutura(raiz) -> list[str]:
         if not blocos or _ultimo_bloco(blocos[-1]).tag != q("p"):
             problemas.append(f"{_nome(raiz)} nao termina em paragrafo")
     problemas += _validar_campos(raiz, opacos)
+    # Posicao e tamanho dos objetos (0.1.9): o que mover e redimensionar gravam tem de caber no
+    # esquema (atributos do wp:anchor, posOffset inteiro de 32 bits, extent nao negativo).
+    from editdoc.formato_docx import posicao
+    problemas += posicao.problemas(raiz)
     problemas += validar_marcadores(raiz, opacos)
     corpo = raiz.find(q("body"))
     if corpo is not None:

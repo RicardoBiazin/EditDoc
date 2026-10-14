@@ -58,7 +58,8 @@ from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
-from editdoc.interface.comandos import COMENTARIO, LINK, LISTA_NUMERADA, TABELA, Comandos
+from editdoc.interface.comandos import (COMENTARIO, LINK, LISTA_NUMERADA, QUEBRA_DAS_ACOES, TABELA,
+                                        Comandos)
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import BotaoAcao, Faixa
 from editdoc.interface.guarda_recuperacao import GuardaRecuperacao
@@ -161,6 +162,7 @@ class JanelaPrincipal(QMainWindow):
                                      "tabela": self._inserir_tabela,
                                      "imagem": self._inserir_imagem,
                                      "tamanho_imagem": self._tamanho_imagem,
+                                     "posicao_tamanho": self._posicao_tamanho,
                                      "link": self._inserir_link,
                                      "remover_link": self._remover_link,
                                      "abrir_link": self._abrir_link,
@@ -239,6 +241,8 @@ class JanelaPrincipal(QMainWindow):
         self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
             *TABELA, "tamanho_imagem", "inserir_link", *LINK, *LISTA_NUMERADA,
             "novo_comentario", *COMENTARIO)])
+        self.painel.registrar_menu_objeto([self.comandos.acao(i) for i in QUEBRA_DAS_ACOES],
+                                          self.comandos.acao("posicao_tamanho"))
         self.painel.mensagem.connect(lambda texto: self.statusBar().showMessage(texto, 6000))
         # Sem isto o atalho so' funciona quando o foco esta no painel.
         for acao in self.comandos.todas():
@@ -672,6 +676,17 @@ class JanelaPrincipal(QMainWindow):
         if escolha is not None:
             ed_imagens.redimensionar(self.painel, pos, ed_imagens.px_de_cm(escolha[0]),
                                      ed_imagens.px_de_cm(escolha[1]))
+        self.painel.setFocus()
+
+    def _posicao_tamanho(self) -> None:
+        """Posicao e tamanho do objeto selecionado (0.1.9): o dialogo, num passo de desfazer."""
+        from editdoc.interface import dialogo_posicao
+        dados = self.painel.dados_de_posicao()
+        if dados is None:
+            return
+        escolha = dialogo_posicao.pedir(self, dados)
+        if escolha:
+            self.painel.aplicar_posicao_tamanho(escolha)
         self.painel.setFocus()
 
     # -- hiperlinks (0.1.3) -------------------------------------------------

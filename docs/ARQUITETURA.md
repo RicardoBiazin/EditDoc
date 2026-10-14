@@ -642,10 +642,58 @@ imagens viravam "Imagem flutuante". O arquivo já saía certo; só a aparência 
 Limites: o texto contorna de um lado só (o maior, ou o do `wrapText`); a faixa começa na
 linha da âncora (o texto acima dela não contorna, nem o de páginas anteriores);
 Tight/Through seguem o retângulo; objetos de um parágrafo somam as faixas por lado (a
-altura é a do mais baixo); objeto em célula de tabela não reserva espaço; mover e
-redimensionar com o mouse não existem; o objeto do cabeçalho não se seleciona; geometria
+altura é a do mais baixo); objeto em célula de tabela não reserva espaço (mover e
+redimensionar, e a seleção do objeto do cabeçalho, desde a 0.1.9); geometria
 fora do conjunto básico vira retângulo; `custGeom` não é seguido; a rotação e o espelho
 valem, mas a área de quebra é a do retângulo sem rotação.
+
+## Mover e redimensionar objetos (0.1.9)
+
+O objeto continua opaco (o XML guardado volta igual); mover, redimensionar e trocar a quebra
+mudam só os elementos e atributos de posição e tamanho dentro dele.
+
+- XML (`formato_docx/posicao.py`, sem Qt): `Mudanca` (posição por referência, simplePos,
+  tamanho, quebra, relativeHeight) e `aplicar(xml, mudanca)`. DrawingML: `wp:positionH/V` com
+  um `wp:posOffset` no mesmo `relativeFrom` (o `wp:align` e o `wp14:pctPos*Offset` viram
+  posOffset, como o Word); `wp:extent` e o `a:ext` do desenho de cima (`pic:spPr`,
+  `wps:spPr`, `wpg:grpSpPr` com `chOff/chExt` intactos); o tamanho relativo vira absoluto.
+  Quebra: o `wp:wrap*` (Comprimido e Através com o `wp:wrapPolygon` retangular que o esquema
+  exige) e o `behindDoc`; Alinhado ao texto converte `wp:anchor` em `wp:inline` (CT_Inline:
+  extent, effectExtent, docPr, cNvGraphicFramePr, graphic) e de volta (CT_Anchor com
+  distâncias, simplePos, relativeHeight único no documento, behindDoc, locked, layoutInCell,
+  allowOverlap). VML (o objeto só VML e o `mc:Fallback`): os itens do `style` e o `w10:wrap`,
+  os outros itens na ordem e com o texto de origem. `estado(xml)` diz como o objeto está.
+- Conta (`modelo/flutuantes.py`): `deslocamento_para(eixo, rel, ref, valor)` é o caminho de
+  volta de `retangulo` (o ponto da folha em posOffset relativo à referência); limites de
+  posição (±55,88 cm, o que o Word aceita; ST_PositionOffset é xsd:int) e de tamanho (1 px96 a
+  176 cm; ST_PositiveCoordinate não negativo; o lado zero da linha reta continua zero).
+- Edição (`edicao/objetos.py`): a troca do objeto no caractere é um passo de desfazer. Se o
+  caractere continua do mesmo tipo (float do Qt do mesmo lado, ou sem reserva), muda só o
+  formato (`setCharFormat` com o ObjectIndex de antes); se muda (quebra que passa a reservar,
+  lado do float, linha <-> flutuante), o caractere sai e entra de novo pelo caminho de
+  sempre (`opacos.inserir`), e a cura do frame órfão da 0.1.7 zera o float que saiu.
+  Reancorar (arraste para outra página, ou objeto relativo ao parágrafo levado a outro
+  parágrafo) põe o caractere no começo do parágrafo mais perto do topo novo, em duas etapas
+  no mesmo passo de desfazer: com a posição do layout de antes e, refeito o layout, com a de
+  agora (`joinPreviousEditBlock`). Não reancora com a âncora travada, no cabeçalho e no
+  rodapé, em tabela ou no bloco estrutural: a posição passa a ser relativa à página da âncora.
+- A imagem do EditDoc (`Imagem`, na linha) que passa a flutuar vira objeto com o desenho que
+  o escritor grava (`posicao.objeto_de_imagem`); a figura simples que volta para a linha
+  vira `Imagem` de novo (`imagem_de_objeto`), porque é o que o leitor faz de um `wp:inline`
+  com PNG, JPEG, GIF ou BMP, e a conferência pós-gravação compara isso. A figura girada,
+  espelhada, com borda ou efeito não volta para a linha (recusa com o motivo).
+- Tela (`interface/painel_documento.py`): oito alças (cantos e meio dos lados); arrastar o
+  corpo move e as alças redimensionam, com um contorno fantasma (`_retangulo_fantasma`,
+  pintado por cima, um retângulo por quadro: o objeto e o texto só mudam ao soltar). Shift
+  trava a proporção (os cantos da imagem já travam) e trava o eixo ao mover. Setas: 1 px de
+  tela; Ctrl+setas: um quarto de px; Esc tira a seleção. Objeto preservado na linha (caixa,
+  forma) tem as alças da imagem (`LayoutPaginado.retangulo_imagem`). Na edição do
+  cabeçalho e do rodapé, `flutuante_das_faixas_em` acha o objeto das faixas da página (o de
+  trás só fora do texto) e tudo vale no documento da faixa. Galeria "Quebra de texto" e
+  "Posição" na aba Layout (grupo Organizar) e no menu de contexto; o diálogo
+  (`interface/dialogo_posicao.py`) devolve só o que mudou.
+- Validador (`posicao.problemas`, chamado por `ordem.validar_estrutura`): atributos do
+  `wp:anchor`, a quebra, `positionH/V`, posOffset inteiro de 32 bits e extent não negativo.
 
 ## Política de perda
 
@@ -687,6 +735,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Comentários | 0.1.6 (feito) | comments.xml e partes estendidas, painel, aba Revisão, referências de estilo preservadas |
 | Flutuantes | 0.1.7 (feito) | objeto na posição da página, texto em volta, atrás e na frente, cabeçalho, PDF |
 | Desempenho e cabeçalho por página | 0.1.8 (feito) | digitação ≤ 16 ms num manual pesado; topo do corpo pelo cabeçalho de cada página |
+| Mover e redimensionar | 0.1.9 (feito) | arrastar, alças, setas, quebra de texto, diálogo Posição e tamanho, cabeçalho |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em

@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFontComboBox, QFrame,
 
 from editdoc.edicao import formatacao, tabelas
 from editdoc.interface.comandos import (FORMATO_DAS_ACOES, MARGENS_DAS_ACOES, PAPEL_DAS_ACOES,
-                                        Comandos)
+                                        QUEBRA_DAS_ACOES, Comandos)
 from editdoc.interface.galeria_estilos import GaleriaEstilos, GrupoGaleria
 from editdoc.interface.planejamento import recolher_com_galeria, recolher_grupos
 from editdoc.interface.seletor_grade import SeletorDeGrade
@@ -65,6 +65,7 @@ ROTULOS = {
     "selecionar_tudo": "Selecionar", "quebra_pagina": "Quebra",
     "excluir_tabela": "Excluir tabela", "inserir_imagem": "Imagem",
     "tamanho_imagem": "Tamanho da imagem", "inserir_link": "Link", "remover_link": "Remover link",
+    "posicao_tamanho": "Posição",
     "primeira_diferente": "Primeira página diferente",
     "pares_impares": "Pares e ímpares diferentes",
     "ir_cabecalho": "Ir para o cabeçalho", "ir_rodape": "Ir para o rodapé",
@@ -539,7 +540,13 @@ class Faixa(QFrame):
                 [QLabel("Espaçar:"), QLabel("Antes"), self.espaco_antes, QLabel("Depois"),
                  self.espaco_depois]),
             None)
-        linha = LinhaDeGrupos([pagina, paragrafo], [pagina])
+        # Organizar (0.1.9): quebra de texto e posicao do objeto selecionado, como no Word.
+        quebras = [c.acao(i) for i in QUEBRA_DAS_ACOES]
+        organizar = GrupoFaixa(
+            "Organizar", _duas_linhas([_menu("Quebra de texto", quebras)],
+                                      [_botao(c, "posicao_tamanho")]),
+            _menu("Organizar", [*quebras, c.acao("posicao_tamanho")]))
+        linha = LinhaDeGrupos([pagina, paragrafo, organizar], [organizar, pagina])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha

@@ -46,7 +46,7 @@ from __future__ import annotations
 import math
 import re
 
-from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, QUrl, Signal
+from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QDesktopServices, QImage, QKeyEvent, QKeySequence,
                            QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument,
                            QTextDocumentFragment, QTextFormat)
@@ -137,6 +137,8 @@ class PainelDocumento(VistaPaginas):
         super().__init__(layout, parent)
         self._acoes: list[QAction] = []
         self._acoes_contexto: list[QAction] = []
+        self._acoes_quebra: list[QAction] = []
+        self._acao_posicao: QAction | None = None
         self._cursor = QTextCursor(layout.doc)
         self._arrastando = False
         #: Arrasto de alca de imagem: (posicao, canto, retangulo inicial na tela) ou None.
@@ -147,6 +149,10 @@ class PainelDocumento(VistaPaginas):
         self._edicao: FaixaQt | None = None
         self._pagina_edicao = 0
         self._cursor_corpo: QTextCursor | None = None
+        #: Arraste de objeto flutuante (0.1.9): mover ou redimensionar, com o contorno fantasma.
+        self._arraste: dict | None = None
+        # O cursor do mouse muda sobre o objeto selecionado e as alcas (mover, redimensionar).
+        self.viewport().setMouseTracking(True)
         doc = layout.doc
         doc.contentsChanged.connect(self.textChanged)
         self._ligar_desfazer(doc)
@@ -348,6 +354,12 @@ class PainelDocumento(VistaPaginas):
     def registrar_menu_contexto(self, acoes: list[QAction]) -> None:
         """Acoes extras do menu de contexto (tabela, imagem). So' as habilitadas aparecem."""
         self._acoes_contexto = list(acoes)
+
+    def registrar_menu_objeto(self, quebras: list[QAction], posicao: QAction) -> None:
+        """Menu de contexto do objeto selecionado (0.1.9): "Quebra de texto" e "Posicao e
+        tamanho"."""
+        self._acoes_quebra = list(quebras)
+        self._acao_posicao = posicao
 
     def imagem_selecionada(self) -> int | None:
         """Posicao da imagem selecionada (selecao de exatamente uma imagem), ou None."""
@@ -586,7 +598,20 @@ class PainelDocumento(VistaPaginas):
 
     def _posicao_imagem_selecionada(self) -> int | None:
         # As alcas de imagem sao do corpo; no cabecalho, o tamanho muda pelo dialogo.
-        return self.imagem_selecionada() if self._edicao is None else None
+        return self.objeto_na_linha_selecionado() if self._edicao is None else None
+
+    def objeto_na_linha_selecionado(self) -> int | None:
+        """A imagem, ou o objeto preservado na linha com tamanho (caixa, forma: 0.1.9),
+        selecionado sozinho. E' o que ganha as quatro alcas de redimensionar."""
+        pos = self.imagem_selecionada()
+        if pos is not None:
+            return pos
+        c = self._cursor
+        if self._edicao is not None or not c.hasSelection() or \
+                c.selectionEnd() - c.selectionStart() != 1:
+            return None
+        pos = c.selectionStart()
+        return pos if self.layout_pag.retangulo_imagem(pos) is not None else None
 
     def _retangulo_redimensionando(self) -> QRectF | None:
         return self._redim_atual
@@ -818,6 +843,24 @@ class PainelDocumento(VistaPaginas):
         shift = bool(mod & Shift)
         modo = Selecionar if shift else Mover
 
+        flutuante = self._posicao_flutuante_selecionado()
+        if flutuante is not None and not alt:
+            # Objeto flutuante selecionado (0.1.9): Esc tira a selecao; as setas movem 1 px de
+            # tela (Ctrl: um quarto de px, no minimo 1 twip), um passo de desfazer por tecla.
+            if k == Key.Key_Escape:
+                self._cursor.setPosition(flutuante)
+                self._depois_de_mover()
+                return True
+            setas = {Key.Key_Left: (-1, 0), Key.Key_Right: (1, 0), Key.Key_Up: (0, -1),
+                     Key.Key_Down: (0, 1)}
+            if k in setas and not shift:
+                passo = 1.0 / self._mapa().escala
+                if ctrl:
+                    passo = max(1.0, passo / 4.0)
+                dx, dy = setas[k]
+                self.mover_objeto_selecionado(dx * passo, dy * passo)
+                return True
+
         if k == Key.Key_Escape and self._edicao is not None:
             self.sair_da_faixa()
             return True
@@ -937,7 +980,9 @@ class PainelDocumento(VistaPaginas):
         return None
 
     def _posicao_flutuante_selecionado(self) -> int | None:
-        if self._edicao is not None or not self._cursor.hasSelection():
+        """O objeto flutuante selecionado sozinho, no documento em edicao (o corpo, ou desde a
+        0.1.9 o cabecalho e o rodape em edicao)."""
+        if not self._cursor.hasSelection():
             return None
         c = self._cursor
         if c.selectionEnd() - c.selectionStart() != 1:
@@ -948,11 +993,360 @@ class PainelDocumento(VistaPaginas):
         from editdoc.ponte_qt import flutuantes as pq_flutuantes
         return c.selectionStart() if pq_flutuantes.eh_flutuante(cf) else None
 
+    def flutuante_selecionado(self) -> int | None:
+        """Posicao do objeto flutuante selecionado (corpo, ou cabecalho e rodape em edicao)."""
+        return self._posicao_flutuante_selecionado()
+
     def _selecionar_objeto(self, pos: int) -> None:
         self._cursor.setPosition(pos)
         self._cursor.setPosition(pos + 1, Selecionar)
         self._arrastando = False
         self._depois_de_mover()
+
+    # ----- mover e redimensionar objetos (0.1.9) -------------------------------
+    def _gerente_atual(self):
+        """(documento, gerente dos flutuantes, LayoutPaginado ou None) do que se edita."""
+        if self._edicao is not None:
+            faixa = self._edicao
+            self._posicionar_faixa(faixa, self._pagina_edicao)
+            return faixa.doc, faixa.flutuantes, None
+        return self.layout_pag.doc, self.layout_pag.flutuantes, self.layout_pag
+
+    def _posicionar_faixa(self, faixa: FaixaQt, n: int) -> None:
+        pagina = self.layout_pag.pagina_arquivo
+        faixa.preparar(n, self._paginas(), pagina)
+        faixa.posicionar(pagina, self.layout_pag.efetiva_da(n), n)
+        faixa.flutuantes.atualizar()
+
+    def objeto_na_folha(self, pos: int) -> tuple[int, tuple] | None:
+        """(pagina, (x, y, largura, altura) em twips da folha) do objeto flutuante em `pos` do
+        documento em edicao. No cabecalho e no rodape, a pagina e' a que se edita."""
+        from editdoc.ponte_qt import flutuantes as pq_flutuantes
+        doc, _g, _layout = self._gerente_atual()
+        return pq_flutuantes.retangulo_de(doc, pos)
+
+    def _folha_para_tela(self, n: int, rect: tuple) -> QRectF:
+        m = self._mapa()
+        fx, fy, _fw, _fh = m.folha_na_tela(n)
+        x, y, w, h = rect
+        return QRectF(fx + x * m.escala, fy + y * m.escala, max(w * m.escala, 1.0),
+                      max(h * m.escala, 1.0))
+
+    def retangulo_flutuante_na_tela(self, pos: int) -> QRectF | None:
+        """Retangulo do objeto flutuante em `pos` do documento em edicao, em px do viewport."""
+        achado = self.objeto_na_folha(pos)
+        if achado is None:
+            return None
+        return self._folha_para_tela(achado[0], achado[1])
+
+    def alca_flutuante_em(self, p: QPointF) -> str | None:
+        """Nome da alca do objeto flutuante selecionado sob o ponto ("no", "n", "ne", "e",
+        "se", "s", "so", "o"), ou None."""
+        from editdoc.interface.vista_paginas import alcas_do_retangulo
+        pos = self._posicao_flutuante_selecionado()
+        r = self.retangulo_flutuante_na_tela(pos) if pos is not None else None
+        if r is None:
+            return None
+        for nome, ponto in alcas_do_retangulo(r).items():
+            if abs(p.x() - ponto.x()) <= ALCA_PX and abs(p.y() - ponto.y()) <= ALCA_PX:
+                return nome
+        return None
+
+    def _ponto_na_folha(self, p: QPointF, n: int) -> tuple[float, float]:
+        m = self._mapa()
+        fx, fy, _fw, _fh = m.folha_na_tela(n)
+        return (p.x() - fx) / m.escala, (p.y() - fy) / m.escala
+
+    def _iniciar_arraste(self, pos: int, p: QPointF, alca: str | None) -> None:
+        achado = self.objeto_na_folha(pos)
+        if achado is None:
+            self._arraste = None
+            return
+        n, rect = achado
+        from editdoc.edicao import objetos as ed_objetos
+        est = ed_objetos.estado_em(self.document(), pos)
+        self._arraste = {"pos": pos, "alca": alca, "n": n, "rect": tuple(rect), "inicio": QPointF(p),
+                         "ativo": False, "fantasma": None,
+                         "imagem": bool(est is not None and est.imagem),
+                         "zero": (rect[2] <= 0.5, rect[3] <= 0.5)}
+
+    def _geometria_do_arraste(self, p: QPointF, mods) -> tuple[int, tuple]:
+        """(pagina, (x, y, w, h) em twips da folha) de onde o objeto fica se soltar em `p`."""
+        a = self._arraste
+        n0 = a["n"]
+        x, y, w, h = a["rect"]
+        ix, iy = self._ponto_na_folha(a["inicio"], n0)
+        if a["alca"] is None:
+            n = n0
+            if self._edicao is None:
+                n = self._mapa().pagina_no_ponto(p.x(), p.y(), self._paginas())
+            px, py = self._ponto_na_folha(p, n)
+            dx, dy = px - ix, py - iy
+            if mods & Shift and n == n0:
+                # Shift trava o eixo, como no Word.
+                if abs(dx) >= abs(dy):
+                    dy = 0.0
+                else:
+                    dx = 0.0
+            return n, (x + dx, y + dy, w, h)
+        px, py = self._ponto_na_folha(p, n0)
+        dx, dy = px - ix, py - iy
+        alca = a["alca"]
+        esq, topo, dir_, base = x, y, x + w, y + h
+        minimo_l = 0.0 if a["zero"][0] else 15.0
+        minimo_a = 0.0 if a["zero"][1] else 15.0
+        if "o" in alca:
+            esq = min(x + dx, dir_ - minimo_l)
+        if "e" in alca:
+            dir_ = max(x + w + dx, esq + minimo_l)
+        if alca.startswith("n"):
+            topo = min(y + dy, base - minimo_a)
+        if alca.startswith("s"):
+            base = max(y + h + dy, topo + minimo_a)
+        nw, nh = dir_ - esq, base - topo
+        canto = len(alca) == 2
+        travar = canto and (bool(mods & Shift) or a["imagem"]) and w > 0.5 and h > 0.5
+        if travar:
+            escala = max(nw / w, nh / h)
+            nw, nh = w * escala, h * escala
+            if "o" in alca:
+                esq = dir_ - nw
+            if alca.startswith("n"):
+                topo = base - nh
+        return n0, (esq, topo, nw, nh)
+
+    def _retangulo_fantasma(self) -> QRectF | None:
+        a = self._arraste
+        if a is None or a["fantasma"] is None:
+            return None
+        n, rect = a["fantasma"]
+        return self._folha_para_tela(n, rect)
+
+    def _soltar_arraste(self, p: QPointF, mods) -> None:
+        from editdoc.edicao import objetos as ed_objetos
+        a = self._arraste
+        if a is None or not a["ativo"]:
+            self._arraste = None
+            self.viewport().update()
+            return
+        n, (x, y, w, h) = self._geometria_do_arraste(p, mods)
+        self._arraste = None
+        doc, g, layout = self._gerente_atual()
+        tamanho = (w, h) if a["alca"] is not None else None
+        try:
+            final = ed_objetos.mover(doc, g, a["pos"], n, x, y, tamanho, layout=layout,
+                                     reancorar=a["alca"] is None)
+        except Exception:  # noqa: BLE001 - o documento fica como estava
+            from editdoc import log_interno
+            log_interno.obter(__name__).exception("mover objeto")
+            final = None
+        self._depois_de_mudar_objeto(final if final is not None else a["pos"])
+
+    def _depois_de_mudar_objeto(self, pos: int) -> None:
+        """Seleciona o objeto de novo e refaz a tela (o texto em volta mudou)."""
+        self._limpar_cache()
+        self._altura_doc_anterior = None
+        if self._edicao is None:
+            self.layout_pag.atualizar_flutuantes()
+        self._cursor = QTextCursor(self.document())
+        self._cursor.setPosition(min(pos, self.document().characterCount() - 1))
+        if pos + 1 < self.document().characterCount():
+            self._cursor.setPosition(pos + 1, Selecionar)
+        self._arrastando = False
+        self._depois_de_mover()
+        # A troca que tirou um float do documento e' curada no proximo ciclo (0.1.7: desfaz e
+        # refaz com a reserva zerada), e o desfazer/refazer do Qt tira a selecao do cursor. A
+        # selecao volta depois da cura (o QTimer de zero ms vem na ordem em que foi pedido).
+        doc = self.document()
+        QTimer.singleShot(0, lambda: self._reselecionar(doc, pos))
+
+    def _reselecionar(self, doc, pos: int) -> None:
+        if doc is not self.document() or self._cursor.hasSelection():
+            return
+        if pos + 1 >= doc.characterCount():
+            return
+        from editdoc.edicao import objetos as ed_objetos
+        if ed_objetos.tem_posicao(doc, pos) and self._cursor.position() in (pos, pos + 1):
+            self._cursor.setPosition(pos)
+            self._cursor.setPosition(pos + 1, Selecionar)
+            self._depois_de_mover()
+
+    def mover_objeto_selecionado(self, dx_tw: float, dy_tw: float) -> bool:
+        """Desloca o objeto flutuante selecionado (setas). Um passo de desfazer. Sem reancorar:
+        o teclado nunca leva o objeto para outro paragrafo."""
+        from editdoc.edicao import objetos as ed_objetos
+        pos = self._posicao_flutuante_selecionado()
+        achado = self.objeto_na_folha(pos) if pos is not None else None
+        if achado is None:
+            return False
+        n, (x, y, _w, _h) = achado
+        doc, g, layout = self._gerente_atual()
+        final = ed_objetos.mover(doc, g, pos, n, x + dx_tw, y + dy_tw, layout=layout,
+                                 reancorar=False)
+        if final is None:
+            return False
+        self._depois_de_mudar_objeto(final)
+        return True
+
+    def objeto_selecionado(self) -> int | None:
+        """O objeto com posicao e tamanho selecionado sozinho (flutuante, imagem ou objeto
+        preservado na linha), no documento em edicao. E' o alvo da quebra de texto e do dialogo
+        "Posicao e tamanho" (0.1.9)."""
+        from editdoc.edicao import objetos as ed_objetos
+        c = self._cursor
+        if not c.hasSelection() or c.selectionEnd() - c.selectionStart() != 1:
+            return None
+        pos = c.selectionStart()
+        return pos if ed_objetos.tem_posicao(self.document(), pos) else None
+
+    def quebra_do_selecionado(self) -> str | None:
+        """A quebra de texto do objeto selecionado ("linha", "quadrado"...), ou None."""
+        from editdoc.edicao import objetos as ed_objetos
+        pos = self.objeto_selecionado()
+        if pos is None:
+            return None
+        if ed_objetos.eh_imagem_na_linha(self.document(), pos):
+            return "linha"
+        est = ed_objetos.estado_em(self.document(), pos)
+        return est.quebra if est is not None else None
+
+    def retangulo_do_selecionado(self, pos: int) -> tuple[int, tuple] | None:
+        """(pagina, (x, y, w, h) em twips da folha) do objeto em `pos`: o flutuante pela posicao
+        dele, o da linha pelo lugar na linha (so' no corpo)."""
+        achado = self.objeto_na_folha(pos)
+        if achado is not None:
+            return achado
+        if self._edicao is not None:
+            return None
+        r = self.layout_pag.retangulo_imagem(pos)
+        if r is None:
+            return None
+        lay = self.layout_pag
+        n = lay.pagina_de_y(r.top())
+        ef = lay.efetiva_da(n)
+        return n, (r.left() + ef.margem_esq_tw, r.top() - n * lay.hb + lay.topo_da_pagina(n),
+                   r.width(), r.height())
+
+    def _documentos_do_arquivo(self) -> list:
+        return [self.layout_pag.doc] + [f.doc for f in self.layout_pag.faixas.todas()]
+
+    def definir_quebra_do_selecionado(self, quebra: str) -> bool:
+        """Troca a quebra de texto do objeto selecionado (galeria "Quebra de texto"). Um passo
+        de desfazer. False (com recado na barra de status) se nao puder."""
+        from editdoc.edicao import objetos as ed_objetos
+        from editdoc.formato_docx import posicao as fx_posicao
+        pos = self.objeto_selecionado()
+        if pos is None or self.quebra_do_selecionado() == quebra:
+            return False
+        doc, g, _layout = self._gerente_atual()
+        achado = self.retangulo_do_selecionado(pos)
+        try:
+            final = ed_objetos.definir_quebra(doc, g, pos, quebra, self._documentos_do_arquivo(),
+                                              achado[1] if achado is not None else None)
+        except fx_posicao.PosicaoRecusada as erro:
+            self.mensagem.emit(str(erro))
+            return False
+        self._depois_de_mudar_objeto(final)
+        return True
+
+    def dados_de_posicao(self, pos: int | None = None) -> dict | None:
+        """O que o dialogo "Posicao e tamanho" mostra do objeto selecionado: a quebra, o
+        tamanho e uma funcao que da' a posicao (EMU) relativa a cada referencia."""
+        from editdoc.edicao import objetos as ed_objetos
+        from editdoc.modelo import flutuantes as mf
+        from editdoc.modelo.unidades import EMU_POR_TWIP
+        pos = self.objeto_selecionado() if pos is None else pos
+        if pos is None:
+            return None
+        doc, g, _layout = self._gerente_atual()
+        achado = self.retangulo_do_selecionado(pos)
+        est = ed_objetos.estado_em(doc, pos)
+        imagem = ed_objetos.eh_imagem_na_linha(doc, pos)
+        if achado is None and est is None and not imagem:
+            return None
+        if achado is not None:
+            _n, (x, y, w, h) = achado
+        else:
+            x = y = 0.0
+            w, h = (est.largura / EMU_POR_TWIP, est.altura / EMU_POR_TWIP) if est else (0.0, 0.0)
+        if est is not None and (est.largura or est.altura):
+            w, h = est.largura / EMU_POR_TWIP, est.altura / EMU_POR_TWIP
+        _n, ref, _d = g.referencia(pos)
+
+        def posicao_em(eixo: str, rel: str) -> int:
+            return mf.deslocamento_para(eixo, rel, ref, x if eixo == "h" else y)
+
+        return {"pos": pos, "quebra": "linha" if imagem else est.quebra,
+                "largura_emu": round(w * EMU_POR_TWIP), "altura_emu": round(h * EMU_POR_TWIP),
+                "h_rel": est.h_rel if est is not None and not est.na_linha else "column",
+                "v_rel": est.v_rel if est is not None and not est.na_linha else "paragraph",
+                "posicao_em": posicao_em, "imagem": imagem or bool(est and est.imagem),
+                "zero": (bool(est) and est.largura == 0, bool(est) and est.altura == 0)}
+
+    def aplicar_posicao_tamanho(self, escolha: dict) -> bool:
+        """Aplica o que o dialogo devolveu ao objeto selecionado. Um passo de desfazer."""
+        from editdoc.edicao import objetos as ed_objetos
+        from editdoc.formato_docx import posicao as fx_posicao
+        pos = self.objeto_selecionado()
+        if pos is None or not escolha:
+            return False
+        doc, g, _layout = self._gerente_atual()
+        achado = self.retangulo_do_selecionado(pos)
+        try:
+            final = ed_objetos.aplicar_dialogo(doc, g, pos, escolha, self._documentos_do_arquivo(),
+                                               achado[1] if achado is not None else None)
+        except fx_posicao.PosicaoRecusada as erro:
+            self.mensagem.emit(str(erro))
+            return False
+        self._depois_de_mudar_objeto(final)
+        return True
+
+    def _cursor_do_mouse(self, p: QPointF) -> None:
+        """Cursor de mover sobre o objeto selecionado e de redimensionar sobre as alcas."""
+        forma = None
+        if self._posicao_flutuante_selecionado() is not None:
+            alca = self.alca_flutuante_em(p)
+            if alca is not None:
+                forma = {"n": Qt.CursorShape.SizeVerCursor, "s": Qt.CursorShape.SizeVerCursor,
+                         "e": Qt.CursorShape.SizeHorCursor, "o": Qt.CursorShape.SizeHorCursor,
+                         "no": Qt.CursorShape.SizeFDiagCursor, "se": Qt.CursorShape.SizeFDiagCursor,
+                         "ne": Qt.CursorShape.SizeBDiagCursor,
+                         "so": Qt.CursorShape.SizeBDiagCursor}[alca]
+            else:
+                r = self.retangulo_flutuante_na_tela(self._posicao_flutuante_selecionado())
+                if r is not None and r.contains(p):
+                    forma = Qt.CursorShape.SizeAllCursor
+        if forma is None:
+            self.viewport().unsetCursor()
+        else:
+            self.viewport().setCursor(forma)
+
+    def flutuante_das_faixas_em(self, p: QPointF) -> tuple[FaixaQt, int, int] | None:
+        """(faixa, posicao, pagina) do objeto do cabecalho ou do rodape sob o ponto (0.1.9), na
+        edicao das faixas. A faixa em edicao primeiro; o objeto de tras so' fora do texto."""
+        zona, n = self.zona_em(p)
+        pagina = self.layout_pag.pagina_arquivo
+        faixas = [self.layout_pag.faixas.da_pagina(onde, n, pagina) for onde in ("cabecalho", "rodape")]
+        faixas = [f for f in faixas if f is not None]
+        faixas.sort(key=lambda f: f is not self._edicao)
+        sx, sy = self._ponto_na_folha(p, n)
+        for faixa in faixas:
+            self._posicionar_faixa(faixa, n)
+            g = faixa.flutuantes
+            if g.contexto is None or not g.lista():
+                continue
+            posto = g.em(n, sx, sy, atras=False)
+            if posto is None:
+                posto = g.em(n, sx, sy, atras=True)
+                if posto is not None:
+                    ox, oy = g.contexto.origem
+                    texto = faixa.doc.documentLayout().hitTest(
+                        QPointF(sx - ox, sy - oy), Qt.HitTestAccuracy.ExactHit)
+                    if texto >= 0:
+                        posto = None
+            if posto is not None:
+                return faixa, posto.posicao, n
+        return None
 
     def imagem_em(self, p: QPointF) -> int | None:
         """Posicao da imagem sob o ponto do viewport, ou None (sempre None no cabecalho)."""
@@ -969,7 +1363,7 @@ class PainelDocumento(VistaPaginas):
         """(imagem, canto, retangulo) se o ponto esta' numa alca da imagem selecionada."""
         if self._edicao is not None:
             return None
-        pos = self.imagem_selecionada()
+        pos = self.objeto_na_linha_selecionado()
         if pos is None:
             return None
         r = self.retangulo_imagem_na_tela(pos)
@@ -981,18 +1375,31 @@ class PainelDocumento(VistaPaginas):
                 return pos, canto, r
         return None
 
-    def _retangulo_do_arrasto(self, p: QPointF) -> QRectF:
+    def _retangulo_do_arrasto(self, p: QPointF, mods=None) -> QRectF:
         """Novo retangulo da imagem durante o arrasto, com a proporcao travada.
 
-        A imagem fica na linha de base: o canto de baixo a esquerda nao se move.
+        A imagem fica na linha de base: o canto de baixo a esquerda nao se move. O objeto
+        preservado na linha que nao e' figura (caixa, forma: 0.1.9) so' trava a proporcao com
+        Shift, como no Word.
         """
-        _pos, canto, r = self._redim
+        pos, canto, r = self._redim
         if canto.endswith("dir"):
             largura = p.x() - r.left()
         else:
             largura = r.right() - p.x()
         largura = max(largura, 4.0)
-        altura = largura * r.height() / max(r.width(), 1e-6)
+        travar = True
+        if not ed_imagens.formato_em(self.document(), pos):
+            obj = pq_opacos.objeto_de(pq_links.formato_em(self.document(), pos) or QTextCharFormat())
+            travar = (obj is not None and obj.tipo == "imagem") or bool(
+                mods is not None and mods & Shift)
+        if travar:
+            altura = largura * r.height() / max(r.width(), 1e-6)
+        else:
+            altura = max(r.bottom() - p.y() if canto.startswith("sup") else p.y() - r.top(), 4.0)
+            if canto.startswith("inf"):
+                # O canto de baixo desce: a base da linha acompanha (o objeto cresce para baixo).
+                return QRectF(r.left(), r.top(), largura, altura)
         return QRectF(r.left(), r.bottom() - altura, largura, altura)
 
     def _clique_na_faixa(self, ev) -> None:
@@ -1016,7 +1423,27 @@ class PainelDocumento(VistaPaginas):
 
     def mousePressEvent(self, ev) -> None:  # noqa: N802
         self.setFocus()
+        self._arraste = None
+        if ev.button() == Qt.MouseButton.LeftButton and not ev.modifiers() & Ctrl:
+            # Alca do objeto flutuante selecionado (0.1.9): redimensionar.
+            alca = self.alca_flutuante_em(ev.position())
+            if alca is not None:
+                self._iniciar_arraste(self._posicao_flutuante_selecionado(), ev.position(), alca)
+                self._arrastando = False
+                ev.accept()
+                return
         if ev.button() == Qt.MouseButton.LeftButton and self._edicao is not None:
+            achado = None if ev.modifiers() & Shift else self.flutuante_das_faixas_em(ev.position())
+            if achado is not None:
+                # Objeto do cabecalho ou do rodape na edicao das faixas (0.1.9): seleciona, e
+                # arrastar move.
+                faixa, pos, n = achado
+                if faixa is not self._edicao or n != self._pagina_edicao:
+                    self._trocar_faixa(faixa.onde, n)
+                self._selecionar_objeto(pos)
+                self._iniciar_arraste(pos, ev.position(), None)
+                ev.accept()
+                return
             self._clique_na_faixa(ev)
             ev.accept()
             return
@@ -1039,8 +1466,9 @@ class PainelDocumento(VistaPaginas):
             flutuante = None if ev.modifiers() & Shift else self.flutuante_em(ev.position())
             if flutuante is not None:
                 # Clique no objeto flutuante seleciona o objeto (0.1.7): o contorno aparece, e
-                # Delete apaga (com desfazer).
+                # Delete apaga (com desfazer). Arrastar move (0.1.9).
                 self._selecionar_objeto(flutuante)
+                self._iniciar_arraste(flutuante, ev.position(), None)
                 ev.accept()
                 return
             imagem = None if ev.modifiers() & Shift else self.imagem_em(ev.position())
@@ -1062,6 +1490,19 @@ class PainelDocumento(VistaPaginas):
     def mouseDoubleClickEvent(self, ev) -> None:  # noqa: N802
         if ev.button() == Qt.MouseButton.LeftButton:
             zona, n = self.zona_em(ev.position())
+            achado = self.flutuante_das_faixas_em(ev.position()) if self._edicao is not None \
+                else None
+            if achado is not None:
+                # Objeto do cabecalho ou do rodape na edicao (0.1.9): a caixa abre o editor.
+                from editdoc.interface import dialogo_caixa
+                faixa, pos, n = achado
+                if faixa is not self._edicao or n != self._pagina_edicao:
+                    self._trocar_faixa(faixa.onde, n)
+                self._selecionar_objeto(pos)
+                if dialogo_caixa.caixa_em(self.document(), pos) is not None:
+                    self.editar_caixa(pos)
+                ev.accept()
+                return
             if self._edicao is None and zona != "corpo":
                 # Duplo clique na margem de cima ou de baixo: edita o cabecalho ou o rodape.
                 self.entrar_na_faixa(zona, n, ev.position())
@@ -1111,8 +1552,25 @@ class PainelDocumento(VistaPaginas):
         ev.accept()
 
     def mouseMoveEvent(self, ev) -> None:  # noqa: N802
+        if self._arraste is not None:
+            # Arraste de objeto flutuante (0.1.9): so' o contorno fantasma acompanha; o objeto
+            # e o texto em volta mudam ao soltar.
+            a = self._arraste
+            inicio = a["inicio"]
+            if not a["ativo"] and (abs(ev.position().x() - inicio.x()) > 3
+                                   or abs(ev.position().y() - inicio.y()) > 3):
+                a["ativo"] = True
+            if a["ativo"]:
+                a["fantasma"] = self._geometria_do_arraste(ev.position(), ev.modifiers())
+                self.viewport().update()
+            ev.accept()
+            return
+        if not self._arrastando and self._redim is None:
+            self._cursor_do_mouse(ev.position())
+            ev.accept()
+            return
         if self._redim is not None:
-            self._redim_atual = self._retangulo_do_arrasto(ev.position())
+            self._redim_atual = self._retangulo_do_arrasto(ev.position(), ev.modifiers())
             self.viewport().update()
         elif self._arrastando and self._edicao is not None:
             self._cursor.setPosition(self._posicao_na_faixa(self._edicao, self._pagina_edicao,
@@ -1124,13 +1582,27 @@ class PainelDocumento(VistaPaginas):
         ev.accept()
 
     def mouseReleaseEvent(self, ev) -> None:  # noqa: N802
+        if self._arraste is not None:
+            self._soltar_arraste(ev.position(), ev.modifiers())
+            self._arrastando = False
+            ev.accept()
+            return
         if self._redim is not None:
             pos = self._redim[0]
-            novo = self._retangulo_do_arrasto(ev.position())
+            novo = self._retangulo_do_arrasto(ev.position(), ev.modifiers())
             self._redim = self._redim_atual = None
             # Pixels de tela -> px96: a tela mostra m.escala pixels por twip, e 1 px96 = 15 twips.
             por_px96 = self._mapa().escala * 15.0
-            ed_imagens.redimensionar(self, pos, novo.width() / por_px96, novo.height() / por_px96)
+            if ed_imagens.formato_em(self.document(), pos) is not None:
+                ed_imagens.redimensionar(self, pos, novo.width() / por_px96,
+                                         novo.height() / por_px96)
+            else:
+                # Objeto preservado na linha (0.1.9): wp:extent e o xfrm de dentro.
+                from editdoc.edicao import objetos as ed_objetos
+                escala = self._mapa().escala
+                if ed_objetos.redimensionar_na_linha(self.document(), pos, novo.width() / escala,
+                                                     novo.height() / escala):
+                    self._depois_de_mudar_objeto(pos)
             self.viewport().update()
         self._arrastando = False
         ev.accept()
@@ -1150,6 +1622,14 @@ class PainelDocumento(VistaPaginas):
         if caixa is not None:
             menu.addSeparator()
             menu.addAction("Editar texto da caixa", lambda: self.editar_caixa(caixa))
+        if self.objeto_selecionado() is not None and self._acoes_quebra:
+            # Objeto selecionado (0.1.9): a galeria da quebra e o dialogo, como no Word.
+            menu.addSeparator()
+            submenu = menu.addMenu("Quebra de texto")
+            for acao in self._acoes_quebra:
+                submenu.addAction(acao)
+            if self._acao_posicao is not None:
+                menu.addAction(self._acao_posicao)
         extras = [a for a in self._acoes_contexto if a.isEnabled()]
         if extras:
             menu.addSeparator()

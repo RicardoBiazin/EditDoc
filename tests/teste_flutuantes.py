@@ -539,7 +539,9 @@ def testar_interacao() -> None:
     checa_igual((c.selectionStart(), c.selectionEnd()), (pos, pos + 1), "clique na caixa seleciona o objeto")
     painel._limpar_cache()
     img = painel.viewport().grab().toImage()
-    borda = img.pixelColor(round(r.left()), round(r.center().y()))
+    # Reescrita na 0.1.9: o meio de cada lado ganhou uma alca de redimensionar (oito alcas, como
+    # no Word), branca por dentro; o contorno e' conferido a um quarto da altura, entre as alcas.
+    borda = img.pixelColor(round(r.left()), round(r.top() + r.height() / 4))
     checa((borda.red(), borda.green(), borda.blue()) == (0, 120, 215),
           f"o contorno de selecao aparece na borda do objeto ({borda.name()})")
     abriu = []

@@ -45,6 +45,24 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   objeto para selecioná-lo (contorno azul); Delete apaga, Ctrl+Z traz de volta; duplo
   clique na caixa de texto abre o editor do texto. O arquivo não muda se você não mexe no
   objeto.
+- **Mover e redimensionar objetos** (0.1.9), como no Word: clique no objeto flutuante
+  (imagem, caixa de texto, forma, grupo, VML) e **arraste o corpo** para mover; um contorno
+  tracejado mostra onde ele vai ficar, e o texto em volta se refaz ao soltar. As **oito
+  alças** (cantos e meio de cada lado) mudam o tamanho; **Shift** trava a proporção (nos
+  cantos de uma imagem ela já fica travada, como no Word). Com o objeto selecionado, as
+  **setas** movem 1 pixel de tela e **Ctrl+setas** um quarto de pixel; **Esc** tira a
+  seleção. Arrastar para outra página leva a âncora para o parágrafo de lá, como o Word. A
+  caixa de texto e a forma **na linha do texto** ganham as alças como a imagem. No
+  **cabeçalho e no rodapé**, os objetos se selecionam, movem e redimensionam durante a edição
+  deles (duplo clique no alto ou no pé da página). **Layout > Organizar > Quebra de texto**
+  (ou o menu de contexto do objeto) troca a disposição: Alinhado ao texto, Quadrado,
+  Comprimido, Através, Superior e inferior, Atrás do texto e Na frente do texto; **Posição**
+  abre o diálogo **Posição e tamanho** (posição horizontal e vertical em cm, relativa à
+  página, à margem, à coluna, ao parágrafo, ao caractere ou à linha; largura e altura com a
+  proporção travada; a quebra). Cada arraste, tecla ou diálogo é um passo de desfazer. No
+  arquivo só muda a posição e o tamanho do objeto (o resto do XML volta igual); um objeto
+  alinhado (centro, direita) passa a ter a posição em centímetros quando é arrastado, como
+  no Word.
 - **Digitação rápida em documento pesado** (0.1.8): num manual real de 51 páginas (capa com
   imagem de página inteira e caixas de texto, sumário com links e números de página,
   49 desenhos), digitar na capa, no sumário e no corpo fica abaixo de 16 ms por tecla
@@ -161,7 +179,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.8-win64.zip` da página
+1. Baixe `EditDoc-0.1.9-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -210,6 +228,9 @@ Requer Windows 10 ou 11, 64 bits.
 | Tabela: próxima e célula anterior | Tab, Shift+Tab (Tab na última célula cria uma linha) |
 | Tabulação dentro da célula | Ctrl+Tab |
 | Sair da edição do cabeçalho e do rodapé | Esc |
+| Objeto selecionado: mover 1 px de tela, ou um quarto de px | Setas, Ctrl+setas |
+| Objeto selecionado: tirar a seleção | Esc |
+| Arrastar a alça do objeto mantendo a proporção | Shift + arrastar |
 
 **Faixa pelo teclado**, como no Word: **Alt** (apertar e soltar) ou **F10** mostra uma letra
 em cada aba (P Página Inicial, N Inserir, L Layout, R Revisão, E Exibir, H Cabeçalho e Rodapé,
@@ -261,10 +282,20 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   o arquivo pede), e a faixa reservada começa na linha do parágrafo onde o objeto está
   preso (o texto acima dela não contorna); "Justo" e "Através" seguem o retângulo, não o
   desenho; dois objetos presos no mesmo parágrafo reservam juntos a faixa de cada lado.
-  Mover ou redimensionar o objeto com o mouse ainda não existe; o objeto do cabeçalho não
-  se seleciona na página. Formas fora do conjunto básico aparecem como retângulo com as
+  Formas fora do conjunto básico aparecem como retângulo com as
   cores, e o gráfico e o SmartArt como um quadro do tamanho certo (ou a imagem de
   reserva, quando o arquivo tem).
+- Mover e redimensionar (0.1.9): a posição fica entre -55,88 e +55,88 cm da referência e
+  o tamanho entre 1 pixel e 176 cm (o maior papel); a linha reta continua com altura zero. A
+  âncora só muda de parágrafo no corpo, fora de tabela e sem a âncora travada; no cabeçalho,
+  no rodapé, numa tabela, ou com a âncora travada, o objeto arrastado para outra página fica
+  na página da âncora, na altura onde foi solto (relativo à página). As setas nunca mudam a
+  âncora. Redimensionar um objeto de tamanho relativo (porcentagem da página) o deixa com
+  tamanho fixo. "Comprimido" e "Através" gravam o polígono retangular padrão (a tela já os
+  trata como Quadrado). A imagem flutuante que vai para "Alinhado ao texto" vira imagem do
+  EditDoc; se ela estiver girada, espelhada, com borda ou efeito, a troca é recusada (o Word
+  faz isso sem perda). A cópia VML que o Word guarda junto do desenho (para programas antigos)
+  acompanha a posição e o tamanho em pontos, com duas casas.
 - Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
   caixa de texto perdem a referência ao salvar (com aviso), porque essas partes não voltam
@@ -319,7 +350,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.8-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.9-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

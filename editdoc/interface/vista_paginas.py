@@ -341,6 +341,14 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             painter.restore()
 
 
+def alcas_do_retangulo(r: QRectF) -> dict:
+    """As oito alcas do objeto flutuante selecionado (0.1.9): nome -> ponto."""
+    cx, cy = r.center().x(), r.center().y()
+    return {"no": r.topLeft(), "n": QPointF(cx, r.top()), "ne": r.topRight(),
+            "e": QPointF(r.right(), cy), "se": r.bottomRight(), "s": QPointF(cx, r.bottom()),
+            "so": r.bottomLeft(), "o": QPointF(r.left(), cy)}
+
+
 class VistaPaginas(QAbstractScrollArea):
     zoomAlterado = Signal(float)
 
@@ -794,6 +802,7 @@ class VistaPaginas(QAbstractScrollArea):
         self._desenhar_caret(p, m, dpr, n_total)
         self._desenhar_imagem_selecionada(p)
         self._desenhar_flutuante_selecionado(p, m)
+        self._desenhar_fantasma(p)
         p.end()
 
     def _faixa_da_tela(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float, n_total: int,
@@ -902,6 +911,22 @@ class VistaPaginas(QAbstractScrollArea):
         """O objeto flutuante selecionado sozinho (o painel informa)."""
         return None
 
+    def _retangulo_fantasma(self) -> QRectF | None:
+        """Contorno do objeto durante o arraste (0.1.9), em px do viewport (o painel informa)."""
+        return None
+
+    def _desenhar_fantasma(self, p: QPainter) -> None:
+        """O contorno tracejado de onde o objeto vai ficar. Barato: um retangulo por quadro;
+        o objeto e o texto em volta so' mudam ao soltar."""
+        r = self._retangulo_fantasma()
+        if r is None:
+            return
+        p.save()
+        p.setPen(QPen(COR_SELECAO, 1, Qt.PenStyle.DashLine))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(r)
+        p.restore()
+
     def retangulo_flutuante_na_tela(self, pos: int) -> QRectF | None:
         """Retangulo do objeto flutuante do corpo em `pos`, em pixels do viewport (0.1.7)."""
         achado = pq_flutuantes.retangulo_de(self.layout_pag.doc, pos)
@@ -925,8 +950,9 @@ class VistaPaginas(QAbstractScrollArea):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(r)
         lado = ALCA_TELA_PX
-        for canto in (r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()):
-            alca = QRectF(canto.x() - lado / 2, canto.y() - lado / 2, lado, lado)
+        # Oito alcas (0.1.9): os cantos e o meio de cada lado, como no Word.
+        for ponto in alcas_do_retangulo(r).values():
+            alca = QRectF(ponto.x() - lado / 2, ponto.y() - lado / 2, lado, lado)
             p.fillRect(alca, COR_FOLHA)
             p.drawRect(alca)
         p.restore()

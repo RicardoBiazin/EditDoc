@@ -18,7 +18,8 @@ from PySide6.QtWidgets import QComboBox, QFontComboBox, QTextEdit
 from editdoc.edicao import imagens, tabelas
 from editdoc.edicao.estado import ler
 from editdoc.interface.comandos import (ALINHAMENTOS, COMENTARIO, EDICAO_DE_FAIXA, ESPACAMENTOS,
-                                        LINK, LISTA_NUMERADA, TABELA, Comandos)
+                                        LINK, LISTA_NUMERADA, OBJETO, QUEBRA_DAS_ACOES, TABELA,
+                                        Comandos)
 from editdoc.ponte_qt import links
 
 
@@ -83,6 +84,12 @@ class AtualizadorDeEstado(QObject):
             c.acao("mesclar_celulas").setEnabled(tabelas.pode_mesclar(cursor))
             c.acao("dividir_celula").setEnabled(tabelas.pode_dividir(cursor))
         c.acao("tamanho_imagem").setEnabled(imagens.imagem_selecionada(self._editor) is not None)
+        # Objeto selecionado (0.1.9): posicao, tamanho e quebra; a quebra atual fica marcada.
+        quebra = getattr(self._editor, "quebra_do_selecionado", lambda: None)()
+        for id_ in OBJETO:
+            c.acao(id_).setEnabled(quebra is not None)
+        for id_, valor in QUEBRA_DAS_ACOES.items():
+            c.acao(id_).setChecked(valor == quebra)
         # Link (0.1.3): remover e abrir so' com o cursor num link.
         no_link = links.link_no_cursor(self._editor.document(), cursor) is not None
         for id_ in LINK:

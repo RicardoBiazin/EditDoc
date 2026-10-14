@@ -1,3 +1,70 @@
+## 0.1.9 - 2026-10-14
+
+Mover e redimensionar objetos com o mouse e o teclado, e a quebra de texto, como no Word.
+
+Pedido: até a 0.1.8 o objeto flutuante se selecionava e se apagava, mas não se movia nem mudava
+de tamanho; o objeto do cabeçalho não se selecionava; a quebra de texto não se trocava; e a
+caixa de texto ou a forma na linha não tinham alças.
+
+- Arrastar o corpo do objeto flutuante (imagem, caixa, forma, grupo, VML) move; as oito alças
+  (cantos e meio dos lados) redimensionam. Durante o arraste só um contorno tracejado
+  acompanha o mouse; o objeto e o texto em volta mudam ao soltar (o contorno de texto é
+  refeito uma vez). Shift trava a proporção (os cantos da imagem travam sem Shift, como no
+  Word) e, ao mover, o eixo. Um passo de desfazer por arraste.
+- No arquivo muda só a posição e o tamanho (`formato_docx/posicao.py`): `wp:posOffset` no
+  mesmo `relativeFrom` (o `wp:align` e o `wp14:pctPosHOffset` viram posOffset, como o Word),
+  `wp:simplePos` quando o objeto o usa, `wp:extent` e o `a:ext` do desenho de cima (no grupo o
+  `chOff/chExt` fica e os filhos acompanham), e no VML o `style` (margin-left/top,
+  width/height) do objeto e do `mc:Fallback`. O resto do XML do objeto fica igual em c14n.
+- Arrastar para outra página leva a âncora ao parágrafo mais perto do topo novo (o caractere
+  do objeto vai para o começo dele), como o Word; o objeto preso ao parágrafo arrastado para
+  outro parágrafo também. Âncora travada, cabeçalho e rodapé, tabela: a âncora fica e a
+  posição passa a ser relativa à página.
+- Setas movem o objeto selecionado 1 px de tela; Ctrl+setas, um quarto de px (no mínimo
+  1 twip); Esc tira a seleção. Um passo de desfazer por tecla.
+- Objeto preservado na linha (caixa de texto, forma, objeto com tamanho): as alças da imagem
+  (`wp:extent` e o xfrm de dentro; sem Shift a caixa não trava a proporção). A imagem na
+  linha do M4 continua igual.
+- Quebra de texto: Layout > Organizar > Quebra de texto (e o menu de contexto do objeto) com
+  Alinhado ao texto, Quadrado, Comprimido, Através, Superior e inferior, Atrás do texto e Na
+  frente do texto. Regrava o `wp:wrap*` (Comprimido e Através com o `wp:wrapPolygon` que o
+  esquema exige) e o `behindDoc`; Alinhado ao texto converte `wp:anchor` em `wp:inline` e de
+  volta, com os atributos que o esquema exige (distâncias, simplePos, relativeHeight único,
+  behindDoc, locked, layoutInCell, allowOverlap). A imagem do EditDoc que passa a flutuar vira
+  objeto (o desenho que o escritor grava); a figura simples que volta para a linha vira
+  imagem do EditDoc (é o que o leitor lê de um `wp:inline`). A figura girada, espelhada, com
+  borda ou efeito não volta para a linha: a troca é recusada com o motivo.
+- Diálogo Posição e tamanho (Layout > Organizar > Posição, ou o menu de contexto): posição
+  horizontal e vertical em cm relativa à página, margem, coluna ou caractere (e parágrafo ou
+  linha), largura e altura com a proporção travada, e a quebra. Trocar a referência mostra o
+  mesmo lugar medido da referência nova; só o que mudou vai para o arquivo. Um passo de
+  desfazer.
+- Cabeçalho e rodapé: na edição deles (duplo clique no alto ou no pé da página), o objeto se
+  seleciona (o de trás só fora do texto), arrasta, redimensiona, anda com as setas e se
+  desfaz no desfazer da faixa; duplo clique na caixa abre o editor.
+- Limites: posição de -55,88 a +55,88 cm da referência (o que o Word aceita; ST_PositionOffset
+  é inteiro de 32 bits) e tamanho de 1 px a 176 cm (ST_PositiveCoordinate nunca negativo); a
+  linha reta continua com altura zero. O validador de gravação confere os atributos do
+  `wp:anchor`, a quebra, as posições e o extent.
+- Arquivo real (manual de 51 páginas, capa com 5 objetos): mover o ícone da capa 2 cm para
+  cima e redimensionar a caixa do título gravam `posOffset` -939075 (era -219075, relativo à
+  margem de baixo) e `extent` 5541600 x 2163150 (era 5181600 x 2343150); ao reabrir os objetos
+  estão no lugar (deslocamento de -1133,9 twips e +566,9 / -283,5 twips, como pedido); das 76
+  partes do pacote só o `document.xml` difere de uma gravação sem mexer, e nele só os dois
+  objetos, e só na posição e no tamanho (c14n).
+
+Testes: `teste_mover_redimensionar.py` (166 verificações: XML contra o oráculo em
+EMU, c14n do resto com contraprova, grupo, linha reta, simplePos, as sete quebras, inline <->
+anchor com os atributos do esquema, VML, limites, validador com contraprova, a conta de volta
+de `retangulo`; arraste com QTest sobre a VistaPaginas com o contorno fantasma, o texto que
+volta a contornar, desfazer e refazer; Shift, alça de lado e de canto, imagem; setas e Esc;
+reancorar para a página 2 e gravar; objeto na linha; quebra pela galeria, linha <-> flutuante
+da caixa e da imagem do EditDoc, com gravação, validador e conferência pós-gravação; recusa da
+figura girada; diálogo; comandos da janela; cabeçalho em edição; VML; p95 do arraste no gate).
+Checagem reescrita, com o motivo no teste: em `teste_flutuantes.py`, "o contorno de seleção
+aparece na borda do objeto" passou a olhar a borda a um quarto da altura (o meio do lado agora
+é uma alça, branca por dentro).
+
 ## 0.1.8 - 2026-10-14
 
 Digitação abaixo de 16 ms num manual real pesado, e o corpo de cada página começa onde termina
