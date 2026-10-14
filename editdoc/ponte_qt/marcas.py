@@ -201,6 +201,11 @@ def nomes_de_marcadores(doc: QTextDocument) -> list[str]:
 
 # -- pintura ---------------------------------------------------------------------------
 
+#: Tamanho da marca por fonte (0.1.8): a chave e' a fonte padrao e as propriedades de fonte.
+_TAMANHOS: dict[tuple, tuple[float, float]] = {}
+_P = QTextFormat.Property
+
+
 class ManipuladorDeMarca(QPyTextObject):
     """Tamanho e pintura das marcas. Erro aqui nao pode derrubar a pintura: vira log."""
 
@@ -208,8 +213,21 @@ class ManipuladorDeMarca(QPyTextObject):
         try:
             if fmt.objectType() == TIPO_MARCADOR:
                 return QSizeF(0.0, 0.0)
-            metrica = QFontMetricsF(fonte_de(doc, fmt))
-            return QSizeF(max(metrica.height() * 0.22, 1.0), max(metrica.ascent(), 1.0))
+            # O Qt pede o tamanho a cada pintura do bloco (0.1.8, medido: 400 vezes por tecla
+            # num sumario com links). So' a fonte decide: guarda pelo que a compoe.
+            familias = fmt.property(_P.FontFamilies)
+            chave_doc = doc.chave_da_fonte() if hasattr(doc, "chave_da_fonte")                 else doc.defaultFont().key()
+            chave = (chave_doc, tuple(familias) if isinstance(familias, list) else familias,
+                     fmt.property(_P.FontPointSize), fmt.property(_P.FontPixelSize),
+                     fmt.property(_P.FontWeight), fmt.property(_P.FontItalic))
+            tamanho = _TAMANHOS.get(chave)
+            if tamanho is None:
+                metrica = QFontMetricsF(fonte_de(doc, fmt))
+                tamanho = (max(metrica.height() * 0.22, 1.0), max(metrica.ascent(), 1.0))
+                if len(_TAMANHOS) > 512:
+                    _TAMANHOS.clear()
+                _TAMANHOS[chave] = tamanho
+            return QSizeF(*tamanho)
         except Exception:  # noqa: BLE001 - chamado pelo Qt no meio do layout
             log.exception("tamanho da marca")
             return QSizeF(1.0, 1.0)

@@ -16,6 +16,8 @@ deixada vazia nao vai para o arquivo. A que veio do arquivo volta, mesmo vazia.
 
 from __future__ import annotations
 
+import itertools
+
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QFont
 
@@ -27,6 +29,8 @@ from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt.imagens import DocumentoQt
 
 ONDES = ("cabecalho", "rodape")
+#: Numero de serie de cada FaixaQt (0.1.8): a chave do cache da tela nao confia em id().
+_SERIE = itertools.count(1)
 
 
 class FaixaQt:
@@ -39,6 +43,7 @@ class FaixaQt:
         self.onde = onde
         self.tipo = tipo
         self.do_arquivo = do_arquivo
+        self.serie = next(_SERIE)
         self._dispositivo = criar_dispositivo_layout()
         self.doc = DocumentoQt()
         self.doc.setDocumentMargin(0)

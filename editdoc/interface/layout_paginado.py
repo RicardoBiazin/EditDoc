@@ -17,7 +17,15 @@ processo (medido no spike, C13): ele vive enquanto o layout viver.
 Cabecalho e rodape (M5): ficam em `faixas` (interface/cabecalhos.py), fora do corpo.
 Duas paginas: `pagina_arquivo` e' a do arquivo (o que se grava e o que a faixa de
 opcoes mostra); `pagina` e' a efetiva, com o corpo empurrado pelo cabecalho ou pelo
-rodape que nao cabem na margem. Toda a geometria da tela usa a efetiva.
+rodape que nao cabem na margem.
+
+Altura por pagina (0.1.8): o topo do corpo de cada folha segue o cabecalho DA PAGINA
+(primeira, par ou padrao), como no Word: `efetiva_da(n)` e `topo_da_pagina(n)`. O que nao
+varia e' a altura do corpo (`hb`): o QTextDocument pagina com um tamanho so', e ela continua
+a da pagina efetiva com a maior altura de cabecalho e de rodape (a de menor corpo). Na folha
+com cabecalho menor o corpo comeca mais acima e termina mais acima; a capacidade (quantas
+linhas cabem) e' a mesma em todas. Limite registrado em docs/ARQUITETURA.md. Toda a geometria
+da tela, do PDF, do clique e dos objetos flutuantes usa a efetiva da pagina.
 
 Objetos flutuantes (0.1.7): `flutuantes` (ponte_qt/flutuantes.py) sabe onde o corpo fica na
 folha (pagina do arquivo, efetiva e altura do corpo); `atualizar_flutuantes` confere a reserva
@@ -30,11 +38,13 @@ corpo; quando o total muda, os campos sao medidos de novo (`atualizar_campos`).
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF
 from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument
 
 from editdoc.interface.cabecalhos import ConjuntoDeFaixas
+from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina, pagina_efetiva
 from editdoc.ponte_qt import campos
 from editdoc.ponte_qt import estilos as pq_estilos
@@ -90,6 +100,10 @@ class LayoutPaginado:
         self.doc.documentLayout().setPaintDevice(self._dispositivo)
         self.pagina_arquivo = pagina
         self.pagina = pagina
+        #: topo do corpo (twips) por tipo de pagina ("primeira", "par", "padrao"), e as
+        #: efetivas por tipo (0.1.8)
+        self._topos: dict[str, int] = {}
+        self._efetivas: dict[str, Pagina] = {}
         self.faixas = ConjuntoDeFaixas(padrao, pagina.corpo_largura_tw())
         self.faixas.doc_estilos = self.doc
         pq_estilos.definir_catalogo_base(self.doc, None)
@@ -120,24 +134,75 @@ class LayoutPaginado:
         self._chave_campos = None
         ctx = self.flutuantes.contexto
         ctx.pagina, ctx.efetiva, ctx.hb = self.pagina_arquivo, self.pagina, self.hb
+        ctx.topos = self.topos()
 
     def definir_pagina(self, pagina: Pagina) -> None:
         """Troca papel ou margens: o documento e' refeito para o novo corpo."""
         self.pagina_arquivo = pagina
         self.faixas.definir_largura(pagina.corpo_largura_tw())
         self.pagina = self._efetiva()
+        self._topos = self._calcular_topos()
+        self._efetivas = {}
         self._aplicar()
 
     def _efetiva(self) -> Pagina:
         cab, rod = self.faixas.alturas(self.pagina_arquivo)
         return pagina_efetiva(self.pagina_arquivo, cab, rod)
 
+    def _calcular_topos(self) -> dict[str, int]:
+        """Topo do corpo de cada tipo de pagina, pela altura do cabecalho e do rodape DELA.
+
+        O corpo tem a altura `hb` em todas as folhas; o topo fica onde o Word o poria,
+        max(margem de cima, distancia do cabecalho + altura do cabecalho da pagina), sem deixar
+        o pe' do corpo passar do rodape da pagina."""
+        arquivo = self.pagina_arquivo
+        hb = self.pagina.corpo_altura_tw()
+        topos = {}
+        for tipo in ("primeira", "par", "padrao"):
+            alturas = []
+            for onde in ("cabecalho", "rodape"):
+                faixa = self.faixas.obter(onde, tipo)
+                alturas.append(faixa.altura() if faixa is not None else 0.0)
+            ef = pagina_efetiva(arquivo, alturas[0], alturas[1])
+            topo = min(ef.margem_sup_tw, arquivo.altura_tw - ef.margem_inf_tw - hb)
+            topos[tipo] = max(0, topo)
+        return topos
+
+    def topos(self) -> tuple:
+        """((tipo de pagina, topo do corpo em twips), ...): o que os objetos flutuantes usam."""
+        return tuple(sorted(self._topos.items()))
+
+    def efetiva_da(self, n: int) -> Pagina:
+        """A pagina efetiva da folha n (0.1.8): o topo do corpo pelo cabecalho dela, a mesma
+        altura de corpo (`hb`) em todas."""
+        tipo = tipo_da_pagina(max(0, int(n)), self.pagina_arquivo)
+        ef = self._efetivas.get(tipo)
+        if ef is None:
+            base = self.pagina
+            topo = self._topos.get(tipo, base.margem_sup_tw)
+            if topo == base.margem_sup_tw:
+                ef = base
+            else:
+                ef = replace(base, margem_sup_tw=topo,
+                             margem_inf_tw=base.altura_tw - topo - base.corpo_altura_tw())
+            self._efetivas[tipo] = ef
+        return ef
+
+    def topo_da_pagina(self, n: int) -> float:
+        """Y do topo do corpo na folha n, em twips (0.1.8)."""
+        return float(self.efetiva_da(n).margem_sup_tw)
+
     def recalcular_margens(self) -> bool:
         """O cabecalho ou o rodape mudou de altura: o corpo desce ou sobe. True se mudou."""
         efetiva = self._efetiva()
+        topos = None
         if efetiva == self.pagina:
-            return False
+            topos = self._calcular_topos()
+            if topos == self._topos:
+                return False
         self.pagina = efetiva
+        self._topos = topos if topos is not None else self._calcular_topos()
+        self._efetivas = {}
         self._aplicar()
         return True
 

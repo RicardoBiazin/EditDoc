@@ -45,6 +45,11 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   objeto para selecioná-lo (contorno azul); Delete apaga, Ctrl+Z traz de volta; duplo
   clique na caixa de texto abre o editor do texto. O arquivo não muda se você não mexe no
   objeto.
+- **Digitação rápida em documento pesado** (0.1.8): num manual real de 51 páginas (capa com
+  imagem de página inteira e caixas de texto, sumário com links e números de página,
+  49 desenhos), digitar na capa, no sumário e no corpo fica abaixo de 16 ms por tecla
+  (era 48 a 91 ms). E o corpo de cada página começa onde termina o cabeçalho dela: na capa
+  com o cabeçalho da primeira página vazio, o título e as caixas ficam onde o Word os põe.
 - **Comentários** (desde a 0.1.6): os comentários do Word aparecem no **painel de
   comentários** à direita (Revisão > Mostrar comentários), um cartão por conversa, com
   autor, data, texto, as respostas e o estado "Resolvido"; o trecho comentado fica realçado
@@ -156,7 +161,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.7-win64.zip` da página
+1. Baixe `EditDoc-0.1.8-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -278,8 +283,15 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   arquivo é guardada, mas a tela não a aplica; "Dividir células" só desfaz mescla.
 - A quebra de página não acompanha a do Word linha a linha (não há viúva e órfã, e a
   medida das fontes é a do Qt). O número de páginas pode diferir em documentos longos.
-- O cabeçalho que passa da margem empurra o corpo de todas as páginas pela altura do
-  maior deles (o Word ajusta página a página).
+- Cabeçalho e rodapé que passam da margem (desde a 0.1.8): o corpo de cada página começa
+  onde termina o cabeçalho dela (primeira página, par ou ímpar), como no Word, na tela, no
+  PDF e na impressão. O que ainda não segue o Word: a altura do corpo é a mesma em todas as
+  páginas (a da página com o maior cabeçalho e o maior rodapé), então na página de
+  cabeçalho menor o corpo termina mais acima e cabe a mesma quantidade de texto que nas
+  outras.
+- Digitação: num documento longo, digitar perto do começo custa mais que no fim (o Qt
+  refaz a posição dos parágrafos de baixo a cada tecla; medido: 7 ms por tecla no 1º de
+  600 parágrafos).
 - Leitor de tela: o documento é exposto como texto editável com o parágrafo do cursor
   como valor; a navegação por palavra e por linha dentro do texto, pelo leitor de tela,
   não existe ainda (limite do PySide6 6.11, ver `docs/SPIKES.md`).
@@ -307,7 +319,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.7-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.8-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

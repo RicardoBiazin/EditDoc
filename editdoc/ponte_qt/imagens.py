@@ -22,6 +22,7 @@ de outra janela, ou depois de desfazer), ele o busca no registro.
 from __future__ import annotations
 
 import hashlib
+import itertools
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPen, QTextDocument, QTextImageFormat
@@ -159,6 +160,9 @@ def png_de(img: QImage) -> bytes:
     return bytes(dados.data())
 
 
+_SERIE_DOCUMENTOS = itertools.count(1)
+
+
 class DocumentoQt(QTextDocument):
     """QTextDocument que acha no registro a imagem que nao esta' nos seus recursos.
 
@@ -173,6 +177,20 @@ class DocumentoQt(QTextDocument):
         self._manipulador_opacos = opacos.registrar_manipulador(self)
         # Marcas de campo e de marcador (0.1.3).
         self._manipulador_marcas = marcas.registrar_manipulador(self)
+        self._chave_fonte: str | None = None
+        #: Numero de serie (0.1.8): chave de cache que nao confia em id() (reusado pelo coletor).
+        self.serie = next(_SERIE_DOCUMENTOS)
+
+    def setDefaultFont(self, fonte) -> None:  # noqa: N802 - nome do Qt
+        super().setDefaultFont(fonte)
+        self._chave_fonte = None
+
+    def chave_da_fonte(self) -> str:
+        """`defaultFont().key()` guardada (0.1.8): o tamanho das marcas e' pedido centenas de
+        vezes por tecla, e montar a QFont padrao a cada pedido pesava na pintura."""
+        if self._chave_fonte is None:
+            self._chave_fonte = self.defaultFont().key()
+        return self._chave_fonte
 
     def loadResource(self, tipo, url):  # noqa: N802 - nome do Qt
         """Recurso que falta: so' as imagens do registro. Nada vem de arquivo nem de rede.

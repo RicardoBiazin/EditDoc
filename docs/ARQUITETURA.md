@@ -59,6 +59,10 @@ digitação passa de 16 ms. Medido no Gate do M3, em docs/SPIKES.md.
 
 Cache de páginas: a folha é cortada em tiles de 256 px lógicos, no DPR da tela. Edição só invalida a
 faixa alterada, ou tudo abaixo quando a altura do documento muda. O cache tem teto de 64 MB.
+Desde a 0.1.8 a faixa alterada é a das linhas (a anterior à da mudança e da linha da mudança até
+a base do bloco, a de antes ou a de agora), não o bloco inteiro; o tile guarda a faixa do
+documento cortada no corpo da página dele; e a conferência dos objetos flutuantes que refaz um
+trecho tira do cache só dali para baixo.
 
 Quebra de página: um atributo do parágrafo (`quebra_antes`). No `.docx` é `w:br w:type="page"` no
 começo do parágrafo. Quebra no meio do texto, ao ler, vira dois parágrafos: é a única perda de
@@ -126,13 +130,26 @@ Implementados no M5 (0.0.8).
   sendo pintada e o layout é refeito com `markContentsDirty`; no corpo, a página sai da posição
   do objeto, e a largura é a do maior valor possível.
 - Visão: o cabeçalho e o rodapé não entram no cache de tiles; são pintados por cima, em cada
-  folha visível (`desenhar_faixas`), esmaecidos fora da edição. Na edição o corpo esmaece, e
-  uma linha tracejada com rótulo ("Cabeçalho - Primeira página") marca a área.
+  folha visível (`desenhar_faixas`), esmaecidos fora da edição. Desde a 0.1.8, fora da edição,
+  cada faixa de cada folha é pintada uma vez num QPixmap guardado (`VistaPaginas._faixa_da_tela`,
+  chave com a revisão da faixa, a página, o total, o zoom e o DPR); na edição, direto. Na edição
+  o corpo esmaece, e uma linha tracejada com rótulo ("Cabeçalho - Primeira página") marca a área.
 - Corpo empurrado: se o cabeçalho passa da margem de cima (ou o rodapé da de baixo), o corpo
-  desce, como no Word. `LayoutPaginado` tem duas páginas: a do arquivo (`pagina_arquivo`, que
-  se grava) e a efetiva (`pagina`, que a tela usa). Diferença do Word: a altura é a mesma em
-  todas as páginas (a maior das variantes em uso), porque o corpo de cada página tem o mesmo
-  tamanho no layout do Qt.
+  desce, como no Word. `LayoutPaginado` tem a página do arquivo (`pagina_arquivo`, que se
+  grava), a efetiva (`pagina`, com a maior altura de cabeçalho e de rodapé entre as variantes)
+  e, desde a 0.1.8, a efetiva de cada folha (`efetiva_da(n)`, `topo_da_pagina(n)`): o topo do
+  corpo da folha n é max(margem de cima, distância do cabeçalho + altura do cabeçalho DA
+  PÁGINA: primeira, par ou padrão), sem o pé do corpo passar do rodapé da página. A tela
+  (tiles, `Mapa.topo_da_pagina`), o PDF e a impressão (`desenhar_folha`), o clique
+  (`tela_para_doc`, `zona_em`), os objetos flutuantes (`Contexto.topos`) e o rótulo da edição
+  usam a efetiva da folha. Os campos não mudam (a página sai da posição no documento, que é a
+  mesma). Limite: a altura do corpo (`hb`) é a mesma em todas as folhas, a da efetiva com o
+  maior cabeçalho e o maior rodapé, porque o `QTextDocument` pagina com um tamanho só
+  (`pageSize`). O topo por página é exato; a capacidade é a da menor página: na folha de
+  cabeçalho menor o corpo termina mais acima e cabe o mesmo texto que nas outras (o Word poria
+  mais). Caminhos estudados: margem do quadro raiz (vale em todas as páginas, o Qt não separa
+  a primeira) e margem negativa no primeiro bloco (é conteúdo: entraria no arquivo, no
+  desfazer e no Enter). Ficam para um layout próprio.
 - Edição no lugar: duplo clique na margem entra; duplo clique no corpo ou Esc sai. Na edição,
   `PainelDocumento.document()` devolve o documento do cabeçalho, e os comandos (formatação,
   tabela, imagem, busca) funcionam sem mudança. O corpo é sempre `documento_corpo()`: é ele que
@@ -610,6 +627,15 @@ imagens viravam "Imagem flutuante". O arquivo já saía certo; só a aparência 
   o texto das faixas (o objeto do cabeçalho fica atrás do texto do corpo, como no Word). Na
   tela, com objeto em cabeçalho ou rodapé, os tiles ficam transparentes e os objetos das
   faixas são pintados antes deles. Um objeto que muda de lugar limpa o cache de tiles.
+  Desde a 0.1.8 a tela pinta cada objeto uma vez num QPixmap alinhado ao pixel do
+  dispositivo (`_pintar_na_tela`, chave com o objeto, o tamanho, a escala e a fração de pixel)
+  e o copia nos tiles; o PDF e a impressão pintam de verdade.
+- Conferência que não converge (0.1.8): a linha que não cabe no pé da página ao lado de um
+  float desce para a página seguinte com a largura estreita (medido no Qt 6.11.2), e
+  `markContentsDirty` não a refaz. Quando uma rodada de conferência acha as mesmas faixas da
+  anterior, as linhas são aceitas como estão (`_aceitas`, pela assinatura das linhas do
+  bloco) e só voltam a ser conferidas se mudarem. Antes, cada tecla refazia isso 6 vezes e
+  conferia até o fim do documento.
 - Interação: clique no objeto seleciona (contorno com alças); o de trás só fora do texto.
   Delete e Backspace apagam, com desfazer; duplo clique na caixa abre o editor da 0.1.5.
 
@@ -660,6 +686,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Sem perda | 0.1.5 (feito) | rPr/pPr/tabela preservados, controles de conteúdo, texto da caixa editável, EMF/WMF/TIFF/SVG na tela |
 | Comentários | 0.1.6 (feito) | comments.xml e partes estendidas, painel, aba Revisão, referências de estilo preservadas |
 | Flutuantes | 0.1.7 (feito) | objeto na posição da página, texto em volta, atrás e na frente, cabeçalho, PDF |
+| Desempenho e cabeçalho por página | 0.1.8 (feito) | digitação ≤ 16 ms num manual pesado; topo do corpo pelo cabeçalho de cada página |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em

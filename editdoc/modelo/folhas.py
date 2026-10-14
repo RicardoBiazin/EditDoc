@@ -19,6 +19,7 @@ ESCALA_DISPOSITIVO_MAXIMA. Medido no Gate do M3 (docs/SPIKES.md).
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from editdoc.modelo.pagina import Pagina
@@ -89,6 +90,14 @@ class Mapa:
     origem_x: float = 0.0
     origem_y: float = 0.0
     colunas: int = 1
+    #: Topo do corpo na folha n, em twips (0.1.8): o cabecalho de cada pagina empurra o corpo
+    #: dela. None = o `margem_sup_tw` da pagina, igual em todas.
+    topo_da_pagina: Callable[[int], float] | None = None
+
+    def topo(self, n: int) -> float:
+        if self.topo_da_pagina is not None:
+            return float(self.topo_da_pagina(n))
+        return float(self.pagina.margem_sup_tw)
 
     @property
     def escala(self) -> float:
@@ -169,7 +178,7 @@ class Mapa:
         n = self.pagina_de_y(y_doc, paginas)
         cfg = self.pagina
         tx = x_doc + cfg.margem_esq_tw
-        ty = y_doc - n * self.hb + cfg.margem_sup_tw
+        ty = y_doc - n * self.hb + self.topo(n)
         x0, y0, _l, _a = self.folha_na_tela(n)
         return x0 + tx * self.escala, y0 + ty * self.escala
 
@@ -180,7 +189,7 @@ class Mapa:
         x0, y0, _l, _a = self.folha_na_tela(n)
         tx = (x_tela - x0) / self.escala
         ty = (y_tela - y0) / self.escala
-        return tx - cfg.margem_esq_tw, ty - cfg.margem_sup_tw + n * self.hb
+        return tx - cfg.margem_esq_tw, ty - self.topo(n) + n * self.hb
 
     def altura_total(self, paginas: int) -> float:
         linhas = math.ceil(max(paginas, 0) / max(1, int(self.colunas)))

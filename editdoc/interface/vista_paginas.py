@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
+from dataclasses import astuple
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QAbstractTextDocumentLayout, QColor, QPainter, QPalette,
@@ -51,6 +52,9 @@ from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
 
 TILE_PX = 256
 LIMITE_DO_CACHE_BYTES = 64 * 1024 * 1024
+#: Cabecalho e rodape ja' pintados (0.1.8): teto do cache e a maior faixa que entra nele.
+LIMITE_FAIXAS_BYTES = 24 * 1024 * 1024
+MAIOR_FAIXA_BYTES = 8 * 1024 * 1024
 PERIODO_DO_CARET_MS = 530
 
 COR_FUNDO = QColor(0xB9, 0xBE, 0xC6)
@@ -163,16 +167,18 @@ PALETA_TEXTO.setColor(QPalette.ColorRole.Highlight, COR_SELECAO)
 
 def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
                    corpo_recorte=None, selecao=None, marcas: bool = False,
-                   comentarios: bool = False) -> None:
+                   comentarios: bool = False, tela: bool = False) -> None:
     """Pinta o corpo da pagina n. Funcao unica de pintura de folha.
 
     transf leva twips da folha (origem no canto superior esquerdo da folha) para o
     painter. corpo_recorte: (x, y, w, h) em twips do corpo, para pintar so' um tile;
     None pinta o corpo inteiro. selecao: QTextCursor com selecao, ou None.
     comentarios (0.1.6): o realce dos trechos comentados, so' na tela (a impressao e o PDF
-    nao o passam).
+    nao o passam). tela (0.1.8): so' na tela, os objetos flutuantes vem do cache ja' pintados
+    na escala do pintor (ponte_qt/flutuantes.py).
     """
-    cfg = layout.pagina
+    # A efetiva da pagina n (0.1.8): o topo do corpo segue o cabecalho dela.
+    cfg = layout.efetiva_da(n)
     hb = layout.hb
     corpo_h = cfg.corpo_altura_tw()
     # Objetos flutuantes (0.1.7): pintados na folha inteira (podem estar na margem), os de
@@ -183,7 +189,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
                        corpo_recorte[2], corpo_recorte[3]).intersected(folha)
     postos = layout.flutuantes.postos(n) if not folha.isEmpty() else []
     if postos:
-        _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=True)
+        _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=True,
+                             tela=tela)
     # Na horizontal o recorte e' a folha inteira, nao so' o corpo (M8): a tabela mais larga
     # que o corpo (e o recuo negativo) entra na margem, como no Word. Na vertical continua
     # o corpo, que e' o que separa uma pagina da outra.
@@ -196,7 +203,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             # Recorte fora do corpo (margem): nada a pintar. Um setClipRect vazio NAO recorta
             # nada, e o Qt pintaria a pagina inteira para jogar fora (medido: 45 ms por tile).
             if postos:
-                _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False)
+                _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False,
+                                     tela=tela)
             return
     painter.save()
     painter.setWorldTransform(transf)
@@ -227,11 +235,12 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         desenhar_marcas(painter, layout.doc, ctx.clip)
     painter.restore()
     if postos:
-        _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False)
+        _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False,
+                             tela=tela)
 
 
 def _desenhar_flutuantes(painter, doc, n: int, transf: QTransform, folha: QRectF,
-                         atras: bool) -> None:
+                         atras: bool, tela: bool = False) -> None:
     """Objetos flutuantes da pagina n (0.1.7), recortados em `folha` (twips da folha)."""
     if folha.isEmpty():
         return
@@ -240,7 +249,7 @@ def _desenhar_flutuantes(painter, doc, n: int, transf: QTransform, folha: QRectF
     painter.setClipRect(folha)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    pq_flutuantes.desenhar_pagina(painter, doc, n, atras, folha)
+    pq_flutuantes.desenhar_pagina(painter, doc, n, atras, folha, tela)
     painter.restore()
 
 
@@ -268,7 +277,8 @@ def rotulo_da_faixa(onde: str, indice: int, pagina: Pagina) -> str:
 
 def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform, total: int,
                     opacidade: float = 1.0, editada=None, selecao=None,
-                    marcas: bool = False, parte: str = "tudo") -> None:
+                    marcas: bool = False, parte: str = "tudo",
+                    tela: bool = False, so: str | None = None) -> None:
     """Pinta o cabecalho e o rodape da pagina n. Mesma funcao para a tela e para o PDF.
 
     transf leva twips da folha para o painter (como em desenhar_folha). `editada` e' a
@@ -276,25 +286,30 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     `parte` (0.1.7): "objetos" pinta so' os objetos flutuantes da faixa (atras e na frente),
     "texto" so' o texto, "tudo" os dois. Como no Word, os objetos do cabecalho ficam atras do
     texto do corpo: a impressao pinta "objetos", depois o corpo, depois "texto".
+    `so` (0.1.8): "cabecalho" ou "rodape" pinta so' aquela faixa (o cache da tela).
     """
     pagina = layout.pagina_arquivo
     for onde in ("cabecalho", "rodape"):
+        if so is not None and onde != so:
+            continue
         faixa = layout.faixas.da_pagina(onde, n, pagina)
         if faixa is None:
             continue
         faixa.preparar(n, total, pagina)
         x, y = origem_da_faixa(pagina, onde, faixa.altura())
         # Objetos flutuantes da faixa (0.1.7): referencia na folha, e os de tras antes do texto.
-        faixa.posicionar(pagina, layout.pagina, n)
+        faixa.posicionar(pagina, layout.efetiva_da(n), n)
         faixa.flutuantes.atualizar()
         postos = faixa.flutuantes.postos(n) if parte != "texto" else []
         folha = QRectF(0, 0, float(pagina.largura_tw), float(pagina.altura_tw))
         if postos:
             painter.save()
             painter.setOpacity(opacidade)
-            _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=True)
+            _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=True,
+                                 tela=tela)
             if parte == "objetos":
-                _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=False)
+                _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=False,
+                                     tela=tela)
             painter.restore()
         if parte == "objetos":
             continue
@@ -321,7 +336,8 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         if postos and parte == "tudo":
             painter.save()
             painter.setOpacity(opacidade)
-            _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=False)
+            _desenhar_flutuantes(painter, faixa.doc, n, transf, folha, atras=False,
+                                 tela=tela)
             painter.restore()
 
 
@@ -340,6 +356,10 @@ class VistaPaginas(QAbstractScrollArea):
         #: os tiles tem fundo transparente (ha' objeto no cabecalho ou rodape, pintado antes).
         self._assinatura_flutuantes: tuple | None = None
         self._tiles_transparentes = False
+        #: Cabecalho e rodape pintados por folha (0.1.8): chave -> (QPixmap, x, y) em px logicos
+        #: da folha. Antes eram pintados (e os campos refeitos) em cada quadro, em cada folha.
+        self._faixas_pintadas: OrderedDict = OrderedDict()
+        self._bytes_faixas = 0
         self._caret_ligado = True
         #: Exibir (M6): marcas de formatacao e folhas lado a lado.
         self._marcas = False
@@ -454,7 +474,7 @@ class VistaPaginas(QAbstractScrollArea):
                     largura_viewport=float(vp.width()), altura_viewport=float(vp.height()),
                     origem_x=float(self.horizontalScrollBar().value()),
                     origem_y=float(self.verticalScrollBar().value()),
-                    colunas=self._colunas)
+                    colunas=self._colunas, topo_da_pagina=self.layout_pag.topo_da_pagina)
 
     def _atualizar_geometria(self) -> None:
         vp = self.viewport()
@@ -472,6 +492,8 @@ class VistaPaginas(QAbstractScrollArea):
     def _limpar_cache(self) -> None:
         self._cache.clear()
         self._bytes_no_cache = 0
+        self._faixas_pintadas.clear()
+        self._bytes_faixas = 0
         self._pendencias = []
 
     def _invalidar_faixa(self, y0: float, y1: float) -> None:
@@ -485,7 +507,11 @@ class VistaPaginas(QAbstractScrollArea):
         Nao se pode ler a altura do documento aqui: no sinal o layout ainda nao foi refeito, e a
         altura lida seria a antiga (medido: a quebra de linha deixava tiles velhos na tela).
         """
-        self._pendencias.append((pos, adicionado))
+        # A base do bloco ANTES da mudanca (o layout ainda e' o velho aqui): uma linha que sai do
+        # bloco deixa tinta abaixo da base nova, e a faixa invalidada tem de chegar ate' la'.
+        doc = self.layout_pag.doc
+        base_antiga = doc.documentLayout().blockBoundingRect(doc.findBlock(pos)).bottom()
+        self._pendencias.append((pos, adicionado, base_antiga))
         self.viewport().update()
 
     def _aplicar_pendencias(self) -> None:
@@ -495,20 +521,63 @@ class VistaPaginas(QAbstractScrollArea):
         texto de baixo se moveu). Se nao mudou, so' a faixa da linha alterada sai. Mais de
         uma mudanca na mesma pintura: vale o caso conservador, de cima para baixo.
         """
-        if not self._pendencias:
-            return
         doc = self.layout_pag.doc
         dl = doc.documentLayout()
+        if not self._pendencias:
+            if self._altura_doc_anterior is None:
+                # Cache recem-limpo (0.1.8): a altura de agora e' a dos tiles que vao ser feitos.
+                # Sem isto a tecla seguinte achava "altura mudou" e refazia a tela inteira de novo.
+                self._altura_doc_anterior = dl.blockBoundingRect(doc.lastBlock()).bottom()
+            return
         pendencias, self._pendencias = self._pendencias, []
         altura = dl.blockBoundingRect(doc.lastBlock()).bottom()
         anterior, self._altura_doc_anterior = self._altura_doc_anterior, altura
         if anterior is None or abs(altura - anterior) >= 0.5 or len(pendencias) > 1:
-            topo = min(self._faixa_de(p, p)[0] for p, _ in pendencias)
+            topo = min(self._faixa_de(p[0], p[0])[0] for p in pendencias)
             self._invalidar_faixa(topo, math.inf)
             return
-        pos, adicionado = pendencias[0]
+        pos, adicionado, base_antiga = pendencias[0]
         topo, base = self._faixa_de(pos, pos + adicionado)
-        self._invalidar_faixa(topo, base)
+        # So' as linhas que podem ter mudado (0.1.8): da linha anterior a' da mudanca (apagar
+        # pode puxar uma palavra para cima) ate' a base do bloco, a de antes ou a de agora. Num
+        # paragrafo alto (a ancora da capa, com objetos que reservam a pagina inteira) o bloco
+        # todo era a folha inteira, refeita a cada tecla.
+        linhas = self._linhas_da_mudanca(pos)
+        if linhas is None:
+            self._invalidar_faixa(topo, max(base, base_antiga))
+            return
+        anterior, atual = linhas
+        if anterior is not None:
+            self._invalidar_faixa(max(topo, anterior[0]), anterior[1])
+        self._invalidar_faixa(max(topo, atual), max(base, base_antiga))
+
+    def _linhas_da_mudanca(self, pos: int):
+        """((topo, base) da linha anterior, topo da linha de `pos`), em twips do documento, ou
+        None dentro de tabela ou sem layout (vale o bloco inteiro). A linha anterior vai a' parte:
+        entre ela e a da mudanca pode haver uma pagina inteira (a linha que desceu para baixo de
+        um objeto), e nada ali muda."""
+        doc = self.layout_pag.doc
+        bloco = doc.findBlock(pos)
+        lay = bloco.layout()
+        if lay is None or lay.lineCount() == 0 or QTextCursor(bloco).currentTable() is not None:
+            return None
+        linha = lay.lineForTextPosition(max(0, pos - bloco.position()))
+        if not linha.isValid():
+            return None
+        topo_bloco = doc.documentLayout().blockBoundingRect(bloco).top()
+        # Folga de meia linha: a tinta da letra pode passar um pouco da caixa da linha.
+        topo_linha = topo_bloco + linha.y()
+        hb = self.layout_pag.hb
+        # A folga nao passa para a pagina de cima: cada pagina recorta o proprio corpo.
+        atual = max(topo_linha - linha.height() / 2.0, math.floor(topo_linha / hb + 1e-6) * hb)
+        anterior = lay.lineAt(linha.lineNumber() - 1) if linha.lineNumber() > 0 else None
+        if anterior is None or anterior.height() <= 0:
+            # Linha de altura zero (so' objetos que flutuam) nao tem tinta; nem antes: digitar e
+            # apagar na linha de baixo nao descem texto para ela.
+            return None, atual
+        folga = anterior.height() / 2.0
+        return ((topo_bloco + anterior.y() - folga,
+                 topo_bloco + anterior.y() + anterior.height() + folga), atual)
 
     def _faixa_de(self, inicio: int, fim: int) -> tuple[float, float]:
         """Faixa vertical (twips) afetada por uma mudanca entre `inicio` e `fim`.
@@ -538,7 +607,7 @@ class VistaPaginas(QAbstractScrollArea):
         if entrada is not None:
             self._cache.move_to_end(chave)
             return entrada[0]
-        cfg = self.layout_pag.pagina
+        cfg = self.layout_pag.efetiva_da(n)
         e = m.escala
         tw = TILE_PX / e
         lado = round(TILE_PX * dpr)
@@ -553,11 +622,18 @@ class VistaPaginas(QAbstractScrollArea):
         t.scale(e, e)
         desenhar_folha(pintor, self.layout_pag, n, t,
                        corpo_recorte=(i * tw - cfg.margem_esq_tw, j * tw - cfg.margem_sup_tw,
-                                      tw, tw), marcas=self._marcas, comentarios=True)
+                                      tw, tw), marcas=self._marcas, comentarios=True,
+                       tela=True)
         pintor.end()
-        dy0 = n * self.layout_pag.hb + (j * tw - cfg.margem_sup_tw)
+        # Faixa do documento que o tile mostra, cortada no corpo da pagina (0.1.8): o texto de
+        # uma pagina nunca e' pintado fora do corpo dela, entao o tile da margem de baixo nao
+        # sai do cache por uma mudanca no alto da pagina seguinte.
+        hb = self.layout_pag.hb
+        dy0 = n * hb + (j * tw - cfg.margem_sup_tw)
+        dy1 = min(dy0 + tw, (n + 1) * hb)
+        dy0 = max(dy0, n * hb)
         nbytes = lado * lado * 4
-        self._cache[chave] = (pm, dy0, dy0 + tw, nbytes)
+        self._cache[chave] = (pm, dy0, dy1, nbytes)
         self._bytes_no_cache += nbytes
         while self._bytes_no_cache > LIMITE_DO_CACHE_BYTES and self._cache:
             _, valor = self._cache.popitem(last=False)
@@ -697,13 +773,12 @@ class VistaPaginas(QAbstractScrollArea):
             if self._tiles_transparentes and self._faixa_editada() is None:
                 # Objetos do cabecalho e do rodape atras do corpo (0.1.7): os tiles sao
                 # transparentes, e o texto da faixa vem depois, por cima, como antes.
-                t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
-                desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA,
-                                parte="objetos")
+                for onde in ("cabecalho", "rodape"):
+                    self._faixa_da_tela(p, m, n, x0, y0, n_total, onde, "objetos")
             if com_selecao:
                 t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
                 desenhar_folha(p, self.layout_pag, n, t, selecao=selecao, marcas=self._marcas,
-                               comentarios=True)
+                               comentarios=True, tela=True)
             else:
                 nx = math.ceil(m.largura_folha / TILE_PX)
                 ny = math.ceil(m.altura_folha / TILE_PX)
@@ -721,6 +796,78 @@ class VistaPaginas(QAbstractScrollArea):
         self._desenhar_flutuante_selecionado(p, m)
         p.end()
 
+    def _faixa_da_tela(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float, n_total: int,
+                       onde: str, parte: str) -> None:
+        """Cabecalho (ou rodape) da folha n fora da edicao, por um QPixmap guardado (0.1.8).
+
+        A chave tem tudo o que muda o desenho: a faixa e a revisao dela, a fonte padrao, a
+        pagina (numero e total, para os campos), o papel, o topo do corpo, o zoom, o DPR, as
+        marcas e a parte. A faixa grande demais (objeto de pagina inteira) e' pintada direto."""
+        layout = self.layout_pag
+        pagina = layout.pagina_arquivo
+        faixa = layout.faixas.da_pagina(onde, n, pagina)
+        if faixa is None:
+            return
+        dpr = p.device().devicePixelRatioF() or 1.0
+        e = m.escala
+        t = QTransform().translate(x0, y0).scale(e, e)
+        chave = (onde, n, n_total, parte, self._zoom, dpr, self._marcas, faixa.serie,
+                 faixa.doc.revision(), faixa.doc.chave_da_fonte(), astuple(pagina),
+                 layout.topo_da_pagina(n))
+        guardado = self._faixas_pintadas.get(chave)
+        if guardado is None:
+            regiao = self._regiao_da_faixa(faixa, n, n_total, onde, parte)
+            if regiao is None:
+                return
+            # Canto e tamanho em pixel inteiro do dispositivo: o QPixmap e' copiado 1:1.
+            px0, py0 = math.floor(regiao.x() * e * dpr), math.floor(regiao.y() * e * dpr)
+            pw = math.ceil(regiao.right() * e * dpr) - px0
+            ph = math.ceil(regiao.bottom() * e * dpr) - py0
+            if pw <= 0 or ph <= 0 or pw * ph * 4 > MAIOR_FAIXA_BYTES:
+                desenhar_faixas(p, layout, n, t, n_total, OPACIDADE_FAIXA, marcas=self._marcas,
+                                parte=parte, tela=True, so=onde)
+                return
+            pm = QPixmap(pw, ph)
+            pm.setDevicePixelRatio(dpr)
+            pm.fill(Qt.GlobalColor.transparent)
+            pintor = QPainter(pm)
+            ft = QTransform().translate(-px0 / dpr, -py0 / dpr).scale(e, e)
+            desenhar_faixas(pintor, layout, n, ft, n_total, OPACIDADE_FAIXA, marcas=self._marcas,
+                            parte=parte, tela=True, so=onde)
+            pintor.end()
+            guardado = (pm, px0 / dpr, py0 / dpr)
+            self._faixas_pintadas[chave] = guardado
+            self._bytes_faixas += pw * ph * 4
+            while self._bytes_faixas > LIMITE_FAIXAS_BYTES and len(self._faixas_pintadas) > 1:
+                _k, velho = self._faixas_pintadas.popitem(last=False)
+                self._bytes_faixas -= velho[0].width() * velho[0].height() * 4
+        else:
+            self._faixas_pintadas.move_to_end(chave)
+        pm, fx, fy = guardado
+        p.drawPixmap(QPointF(x0 + fx, y0 + fy), pm)
+
+    def _regiao_da_faixa(self, faixa, n: int, n_total: int, onde: str, parte: str):
+        """Retangulo (twips da folha) onde a faixa pinta: o texto (com folga para a tinta e os
+        numeros de lista na margem) e os objetos flutuantes dela. None se nada a pintar."""
+        layout = self.layout_pag
+        pagina = layout.pagina_arquivo
+        faixa.preparar(n, n_total, pagina)
+        folha = QRectF(0, 0, float(pagina.largura_tw), float(pagina.altura_tw))
+        regiao = QRectF()
+        if parte != "objetos":
+            _x, y = origem_da_faixa(pagina, onde, faixa.altura())
+            regiao = QRectF(0.0, y - 240.0, float(pagina.largura_tw), faixa.altura() + 480.0)
+        faixa.posicionar(pagina, layout.efetiva_da(n), n)
+        faixa.flutuantes.atualizar()
+        if parte != "texto":
+            for posto in faixa.flutuantes.postos(n):
+                rx, ry, rw, rh = posto.rect
+                folga = 240.0 + max(rw, rh)  # giro e contorno
+                novo = QRectF(rx - folga, ry - folga, rw + 2 * folga, rh + 2 * folga)
+                regiao = novo if regiao.isEmpty() else regiao.united(novo)
+        regiao = regiao.intersected(folha)
+        return None if regiao.isEmpty() else regiao
+
     def _flutuantes_mudaram(self) -> None:
         self._limpar_cache()
         self._altura_doc_anterior = None
@@ -731,8 +878,16 @@ class VistaPaginas(QAbstractScrollArea):
         o cache inteiro sai (o objeto pode estar longe do texto que mudou, ate' na margem)."""
         layout = self.layout_pag
         if layout.atualizar_flutuantes():
-            self._limpar_cache()
-            self._altura_doc_anterior = None
+            desde = layout.flutuantes.refeito_desde
+            if desde is None:
+                self._limpar_cache()
+                self._altura_doc_anterior = None
+            else:
+                # So' dali para baixo (0.1.8): o que esta' acima do primeiro bloco refeito nao
+                # mudou. Os objetos que mudam de lugar limpam tudo pela assinatura, abaixo.
+                doc = layout.doc
+                topo = doc.documentLayout().blockBoundingRect(doc.findBlock(desde)).top()
+                self._invalidar_faixa(topo, math.inf)
         assinatura = layout.flutuantes.assinatura()
         if assinatura != self._assinatura_flutuantes:
             if self._assinatura_flutuantes is not None or assinatura:
@@ -782,17 +937,17 @@ class VistaPaginas(QAbstractScrollArea):
         editada = self._faixa_editada()
         t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
         if editada is None:
-            desenhar_faixas(p, self.layout_pag, n, t, n_total, OPACIDADE_FAIXA,
-                            marcas=self._marcas,
-                            parte="texto" if self._tiles_transparentes else "tudo")
+            parte = "texto" if self._tiles_transparentes else "tudo"
+            for onde in ("cabecalho", "rodape"):
+                self._faixa_da_tela(p, m, n, x0, y0, n_total, onde, parte)
             return
         faixa, cursor = editada
-        efetiva = self.layout_pag.pagina
+        efetiva = self.layout_pag.efetiva_da(n)
         corpo = QRectF(x0 + efetiva.margem_esq_tw * m.escala, y0 + efetiva.margem_sup_tw * m.escala,
                        efetiva.corpo_largura_tw() * m.escala, efetiva.corpo_altura_tw() * m.escala)
         p.fillRect(corpo, COR_VEU)
         desenhar_faixas(p, self.layout_pag, n, t, n_total, 1.0, faixa, cursor,
-                        marcas=self._marcas)
+                        marcas=self._marcas, tela=True)
         # Linha tracejada e rotulo no limite de cada area, em todas as paginas.
         p.save()
         fonte = p.font()

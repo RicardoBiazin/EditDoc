@@ -40,6 +40,7 @@ tamanho certo. A mesma funcao serve a tela, o PDF e a impressao.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, QTimer
 from PySide6.QtGui import (QAbstractTextDocumentLayout, QBrush, QColor, QFont, QFontMetricsF,
@@ -140,12 +141,24 @@ class Contexto:
         #: cabecalho e rodape: canto do documento na folha (twips), e a pagina pintada.
         self.origem: tuple[float, float] = (0.0, 0.0)
         self.indice = 0
+        #: corpo (0.1.8): ((tipo de pagina, topo do corpo), ...), de `LayoutPaginado.topos()`.
+        self.topos: tuple | None = None
 
     def chave(self) -> tuple:
         p, e = self.pagina, self.efetiva
         return (self.historia, self.hb, self.origem, self.indice % 2,
                 p.largura_tw, p.altura_tw, p.margem_esq_tw, p.margem_dir_tw, p.margem_sup_tw,
-                p.margem_inf_tw, e.margem_sup_tw, e.margem_esq_tw, e.corpo_largura_tw())
+                p.margem_inf_tw, e.margem_sup_tw, e.margem_esq_tw, e.corpo_largura_tw(),
+                self.topos)
+
+    def topo_da_pagina(self, n: int) -> float:
+        """Topo do corpo na folha n (0.1.8): o do tipo da pagina (primeira, par, padrao)."""
+        if self.topos:
+            from editdoc.modelo.campos import tipo_da_pagina
+            topo = dict(self.topos).get(tipo_da_pagina(max(0, n), self.pagina))
+            if topo is not None:
+                return float(topo)
+        return float(self.efetiva.margem_sup_tw)
 
     def corpo_largura(self) -> float:
         return float(self.efetiva.corpo_largura_tw())
@@ -154,7 +167,7 @@ class Contexto:
         """(pagina, dx, dy): somar (dx, dy) leva um ponto do documento para a folha."""
         if self.hb:
             n = max(0, math.floor(y_doc / self.hb))
-            return n, float(self.efetiva.margem_esq_tw), self.efetiva.margem_sup_tw - n * self.hb
+            return n, float(self.efetiva.margem_esq_tw), self.topo_da_pagina(n) - n * self.hb
         return self.indice, self.origem[0], self.origem[1]
 
 
@@ -168,7 +181,13 @@ class Gerente:
         self.reservas: dict[int, tuple] = {}
         #: objectIndex -> posicao do fim do ultimo bloco ao lado do float (ultima conferencia)
         self._alcance: dict[int, int] = {}
+        #: numero do bloco -> assinatura das linhas que o Qt nao refaz (0.1.8, ver `atualizar`)
+        self._aceitas: dict[int, tuple] = {}
+        self._linhas_falhas: dict[int, tuple] = {}
+        self._alcances_conferidos: dict[int, int] = {}
         self.zerar = False
+        #: primeira posicao refeita pela ultima conferencia (None = nada refeito)
+        self.refeito_desde: int | None = None
         self._lista_chave = None
         self._lista: list = []
         self._quadros: dict[int, object] = {}
@@ -197,6 +216,7 @@ class Gerente:
         """O documento foi esvaziado (clear): os frames e os indices de objeto sao outros."""
         self.reservas.clear()
         self._alcance.clear()
+        self._aceitas.clear()
         self._quadros.clear()
         self._cursores.clear()
         self._planos.clear()
@@ -495,7 +515,9 @@ class Gerente:
     # ----- conferencia depois do layout -----------------------------------------------
     def atualizar(self) -> bool:
         """Refaz o que o layout deixou velho (reserva ou linhas ao lado de um float que
-        mudou). True se algo foi refeito (quem pinta limpa o cache)."""
+        mudou). True se algo foi refeito: `refeito_desde` diz a primeira posicao refeita (quem
+        pinta tira do cache dali para baixo, 0.1.8)."""
+        self.refeito_desde = None
         if self.contexto is None or self._curando:
             return False
         doc = self.doc
@@ -505,12 +527,22 @@ class Gerente:
         if chave == self._estavel:
             return False
         mudou = False
+        anteriores = None
         for _rodada in range(6):
             faixas = self._conferir()
             if not faixas:
                 break
+            if faixas == anteriores and self._linhas_falhas:
+                # Refazer nao mudou nada (0.1.8): a linha que o Qt desce para a pagina seguinte
+                # guarda a largura que tinha ao lado do float (medido no Qt 6.11.2). Sem aceitar,
+                # cada tecla refazia isso 6 vezes e conferia ate' o fim do documento.
+                self._aceitas.update(self._linhas_falhas)
+                self._alcance.update(self._alcances_conferidos)
+                break
+            anteriores = faixas
             for ini, fim in faixas:
                 doc.markContentsDirty(ini, max(1, fim - ini))
+                self.refeito_desde = ini if self.refeito_desde is None                     else min(self.refeito_desde, ini)
             dl.blockBoundingRect(doc.lastBlock())
             mudou = True
         altura = dl.blockBoundingRect(doc.lastBlock()).bottom()
@@ -562,6 +594,8 @@ class Gerente:
             return faixas
         largura = self.contexto.corpo_largura() if self.contexto else doc.textWidth()
         vistos = set()
+        self._linhas_falhas = {}
+        self._alcances_conferidos = alcances
         for ini, fim in verificar:
             bloco = doc.findBlock(ini)
             while bloco.isValid() and bloco.position() < fim:
@@ -570,7 +604,10 @@ class Gerente:
                     vistos.add(bloco.blockNumber())
                     r = dl.blockBoundingRect(bloco)
                     if not self._linhas_certas(bloco, r, retangulos, largura):
-                        faixas.append((bloco.position(), bloco.position() + bloco.length()))
+                        marca = _marca_das_linhas(bloco, r)
+                        if self._aceitas.get(bloco.blockNumber()) != marca:
+                            self._linhas_falhas[bloco.blockNumber()] = marca
+                            faixas.append((bloco.position(), bloco.position() + bloco.length()))
                 bloco = bloco.next()
         if not faixas:
             self._alcance.update(alcances)
@@ -738,6 +775,16 @@ class Gerente:
                     ry - folga <= y <= ry + max(rh, 1) + folga:
                 return posto
         return None
+
+
+def _marca_das_linhas(bloco, r: QRectF) -> tuple:
+    """Assinatura das linhas de um bloco (topo, texto, largura e posicao de cada linha): a
+    linha aceita como esta' (que o Qt nao refaz) so' volta a ser conferida se mudar."""
+    lay = bloco.layout()
+    linhas = tuple((round(lay.lineAt(i).y()), round(lay.lineAt(i).width()),
+                    lay.lineAt(i).textStart(), lay.lineAt(i).textLength())
+                   for i in range(lay.lineCount())) if lay is not None else ()
+    return (round(r.top()), round(r.left()), bloco.length(), linhas)
 
 
 def _formato_em(doc: QTextDocument, pos: int):
@@ -1051,10 +1098,85 @@ def pintar(painter, doc: QTextDocument, posto: mf.Posto) -> None:
         log.exception("pintura do objeto flutuante")
 
 
+#: Objetos ja' pintados na escala da tela (0.1.8): chave -> QPixmap, com teto de memoria.
+_PINTADOS: "OrderedDict[tuple, object]" = OrderedDict()
+_PINTADOS_BYTES = [0]
+#: Teto do cache de objetos pintados, e o maior objeto que entra nele (bytes).
+LIMITE_PINTADOS_BYTES = 48 * 1024 * 1024
+MAIOR_PINTADO_BYTES = 16 * 1024 * 1024
+
+
+def _folga_de_pintura(posto: mf.Posto) -> float:
+    """Quanto a tinta do objeto pode passar do retangulo (twips): contorno, e o giro."""
+    _x, _y, w, h = posto.rect
+    fl = posto.extra.get("fl")
+    fig = fl.figura if fl is not None else None
+    folga = 60.0
+    if fig is not None and fig.rot:
+        folga += (math.hypot(w, h) - min(w, h)) / 2.0
+    return folga
+
+
+def _pintar_na_tela(painter, doc: QTextDocument, posto: mf.Posto) -> bool:
+    """Pinta o objeto por um QPixmap ja' na escala da tela. False se o objeto e' grande demais
+    para o cache, ou o pintor esta' girado (quem chama pinta direto).
+
+    Medido no manual real: a imagem da capa (a folha inteira) e as caixas de texto eram
+    pintadas de novo em cada tile refeito, a cada tecla. O QPixmap fica alinhado ao pixel do
+    dispositivo (copia 1:1, sem reamostrar: o texto da caixa sai tao nitido quanto direto). A
+    impressao e o PDF nao passam por aqui: pintam o objeto de verdade."""
+    from PySide6.QtGui import QPainter, QPixmap
+    t = painter.worldTransform()
+    if t.isRotating() or t.m11() <= 0 or abs(t.m11() - t.m22()) > 1e-9:
+        return False
+    dpr = painter.device().devicePixelRatioF() or 1.0
+    x, y, w, h = posto.rect
+    folga = _folga_de_pintura(posto)
+    area = QRectF(x - folga, y - folga, w + 2 * folga, h + 2 * folga)
+    tela = t.mapRect(area)
+    x0, y0 = math.floor(tela.x() * dpr), math.floor(tela.y() * dpr)
+    pw, ph = math.ceil(tela.right() * dpr) - x0, math.ceil(tela.bottom() * dpr) - y0
+    if pw <= 0 or ph <= 0 or pw * ph * 4 > MAIOR_PINTADO_BYTES:
+        return False
+    escala = t.m11() * dpr
+    # A fracao de pixel do canto entra na chave: o objeto pintado e' o mesmo em todos os tiles
+    # (o tile comeca em pixel inteiro), e muda so' se o objeto andar.
+    dx, dy = tela.x() * dpr - x0, tela.y() * dpr - y0
+    chave = (posto.chave, round(w, 1), round(h, 1), round(escala, 6), round(dx, 2), round(dy, 2),
+             getattr(doc, "serie", id(doc)), doc.defaultFont().toString())
+    pm = _PINTADOS.get(chave)
+    if pm is None:
+        img = QImage(pw, ph, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+        p2 = QPainter(img)
+        p2.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p2.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        p2.translate(dx, dy)
+        p2.scale(escala, escala)
+        p2.translate(-area.x(), -area.y())
+        pintar(p2, doc, posto)
+        p2.end()
+        pm = QPixmap.fromImage(img)
+        _PINTADOS[chave] = pm
+        _PINTADOS_BYTES[0] += pw * ph * 4
+        while _PINTADOS_BYTES[0] > LIMITE_PINTADOS_BYTES and len(_PINTADOS) > 1:
+            _k, velho = _PINTADOS.popitem(last=False)
+            _PINTADOS_BYTES[0] -= velho.width() * velho.height() * 4
+    else:
+        _PINTADOS.move_to_end(chave)
+    pm.setDevicePixelRatio(dpr)
+    painter.save()
+    painter.resetTransform()
+    painter.drawPixmap(QPointF(x0 / dpr, y0 / dpr), pm)
+    painter.restore()
+    return True
+
+
 def desenhar_pagina(painter, doc: QTextDocument, indice: int, atras: bool,
-                    recorte: QRectF | None = None) -> None:
+                    recorte: QRectF | None = None, tela: bool = False) -> None:
     """Os objetos da pagina `indice` (atras do texto ou na frente). `painter` em twips da
-    folha. `recorte`: so' os que cruzam o retangulo (twips da folha)."""
+    folha. `recorte`: so' os que cruzam o retangulo (twips da folha). `tela` (0.1.8): so' na
+    tela, o objeto vem do cache ja' pintado na escala do pintor."""
     g = gerente_se_houver(doc)
     if g is None or g.contexto is None:
         return
@@ -1065,6 +1187,8 @@ def desenhar_pagina(painter, doc: QTextDocument, indice: int, atras: bool,
             x, y, w, h = posto.rect
             if not QRectF(x - 200, y - 200, w + 400, h + 400).intersects(recorte):
                 continue
+        if tela and _pintar_na_tela(painter, doc, posto):
+            continue
         pintar(painter, doc, posto)
 
 

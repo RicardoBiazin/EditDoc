@@ -409,6 +409,120 @@ nos tiles invalidados). O gate continua valendo para os documentos que passavam.
 cache do plano de reserva, o Qt pedia o `intrinsicSize` 130 vezes por tecla (a cada
 pintura do bloco) e o manual chegava a 46 ms.
 
+## 0.1.8: digitação num documento real pesado e cabeçalho por página
+
+Feito em 14/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6 6.11.2,
+offscreen, Segoe UI e Calibri carregadas). Documento real (fora do repositório): manual de 51
+páginas no EditDoc (58 no Word), 4260 palavras, capa com imagem de página inteira e caixas de
+texto, sumário com 11 PAGEREF dentro de links e pontilhado, 49 desenhos, 19 hiperlinks,
+controles de conteúdo. Método do gate: janela de produção (1400 × 950), p95 de 80 teclas, cada
+uma com `viewport().grab()`; um processo por ponto; a coluna 0.1.7 é o mesmo script sobre o
+código da 0.1.7 extraído do git. Mediana de 3 rodadas. Os scripts (`medir.py`, `etapas.py`,
+`medir_gate.py`, `matriz.py`) ficaram no rascunho, fora do repositório.
+
+### Perfil (cProfile e cronômetro por etapa, ms por tecla, média de 80)
+
+| Etapa | âncoras 0.1.7 | âncoras 0.1.8 | sumário 0.1.7 | sumário 0.1.8 | corpo 0.1.7 | corpo 0.1.8 |
+|---|---|---|---|---|---|---|
+| Tecla (texto, relayout do Qt, sinais) | 1,9 | 1,7 | 2,5 | 1,5 | 1,2 | 0,8 |
+| Estado da faixa e da galeria (timer de 0 ms) | 0,3 | 0,3 | 1,4 | 0,7 | 0,3 | 0,3 |
+| Conferência dos floats (`markContentsDirty`) | 0,7 | 0,6 | 13,9 | 0,9 | 32,7 | 0,8 |
+| Tiles refeitos (corpo) | 23,5 | 5,8 | 20,6 | 3,7 | 7,7 | 1,6 |
+| dos quais: objetos flutuantes | 1,3 | 0,0 | 6,2 | 0,7 | 0,4 | 0,0 |
+| Cabeçalho e rodapé (com os campos refeitos) | 1,9 | 0,1 | 1,3 | 0,1 | 3,1 | 0,1 |
+| Total por tecla | 30,6 | 9,6 | 41,8 | 7,9 | 47,8 | 4,7 |
+
+O que o perfil mostrou, por ordem de peso:
+
+1. **Conferência dos floats que nunca converge.** Uma linha do sumário que não cabia no pé da
+   página 1 ao lado da reserva da capa desce para a página 2 com a largura estreita (o Qt mede
+   a linha ao lado do float e só depois a muda de página). `markContentsDirty` não muda nada, e a
+   conferência refazia o trecho 6 vezes por tecla e, como nunca ficava estável, conferia até o
+   fim do documento (139 mil chamadas de `_linhas_certas` em 80 teclas). Correção: quando duas
+   rodadas seguidas acham as mesmas faixas, as linhas são aceitas (`Gerente._aceitas`, pela
+   assinatura das linhas do bloco) e só voltam a ser conferidas se mudarem.
+2. **O bloco inteiro saía do cache.** O parágrafo das âncoras tem a altura da folha (o texto
+   dele desce para baixo dos objetos): cada tecla refazia 12 a 16 tiles, e cada tile repintava a
+   imagem de página inteira, as caixas de texto e o sumário por trás. Agora sai a faixa das
+   linhas (a anterior e da linha da mudança até a base do bloco, a de antes ou a de agora; a
+   linha de altura zero, só com objetos, não conta), o tile guarda a faixa cortada no corpo da
+   página dele, a conferência que refaz um trecho invalida só dali para baixo, e a tecla seguinte
+   a um cache limpo já não acha "altura mudou". Âncoras: 16 → 4 tiles por tecla.
+3. **Pontilhado ponto a ponto.** O preenchimento da tabulação do sumário era um `drawText` por
+   ponto (190 mil em 80 teclas, 2 ms por tile). Agora é um `drawText` com o espaçamento entre
+   letras.
+4. **Objetos e faixas pintados em cada tile e em cada quadro.** Na tela, cada objeto flutuante é
+   pintado uma vez num QPixmap alinhado ao pixel do dispositivo e copiado 1:1 nos tiles (cache
+   de 48 MB, objeto até 16 MB); o cabeçalho e o rodapé de cada folha também (24 MB), e com isso
+   os campos do cabeçalho já não são refeitos a cada quadro. O PDF e a impressão pintam de
+   verdade. A tela com os caches é a da pintura direta (meio pixel no texto, nenhum pixel com
+   mais de 40 níveis de diferença).
+5. **Tamanho das marcas.** O Qt pede o `intrinsicSize` das marcas de campo e de link a cada
+   pintura do bloco (570 vezes por tecla no sumário). Fica guardado pela fonte.
+
+O que foi medido e não precisou de adiamento: os sinais síncronos da tecla (barra de status,
+acessibilidade, rótulo da página) somam 0,2 ms; a faixa e a galeria (timer de 0 ms, roda antes
+do quadro seguinte) 0,3 a 0,7 ms; a contagem de palavras, os comentários e o painel de navegação
+já esperam 300 a 400 ms. A numeração de listas custa 0,1 ms.
+
+### Tabela do gate (p95 em ms, mediana de 3 rodadas)
+
+| Documento | Onde digita | 0.1.7 | 0.1.8 |
+|---|---|---|---|
+| manual real | parágrafo das âncoras (capa) | 77,1 | 10,6 |
+| idem | sumário (página 1, atrás da capa) | 47,9 | 9,6 |
+| idem | corpo, 1/3 do documento (página 13) | 91,0 | 6,8 |
+| idem | corpo, 2/3 do documento (página 31) | 90,2 | 7,0 |
+| 600 parágrafos, sem objetos | 1º parágrafo | 10,9 | 10,4 |
+| 600 parágrafos, imagem à esquerda e caixa à direita | ao lado da imagem | 13,7 | 13,9 |
+| idem | longe dos objetos | 8,0 | 8,0 |
+| capítulo real de 4 páginas (faixa e caixa no cabeçalho) | capa | 4,8 | 4,6 |
+| idem | corpo | 7,9 | 5,1 |
+| 600 parágrafos, sem objetos, DPR 1 a 300% | 1º parágrafo | 12,1 | 11,3 |
+| 600 parágrafos, sem objetos, DPR 2 a 150% | 1º parágrafo | 18,3 | 18,7 |
+
+Os números da 0.1.7 do manual são maiores que os da tabela da 0.1.7 (27 ms): aquela tabela
+saiu de outro roteiro (outra janela e outros pontos de digitação), e não se compara com esta;
+as duas colunas acima são o mesmo roteiro nas duas versões. A linha de DPR 2 a 150% passa de 16 ms nas
+duas versões nesta medida (janela grande, digitando no 1º de 600 parágrafos): 7,7 ms são o Qt
+refazendo a posição dos parágrafos de baixo no `insertText` (cresce com o que vem depois do
+cursor); repetida 4 vezes, a mediana é 18,2 na 0.1.7 e 18,3 na 0.1.8 (ruído). No gate do M3 o
+mesmo caso media 11,7 ms, com a janela menor.
+
+Teste de regressão: `tests/teste_desempenho.py`, com um manual sintético (capa com imagem de
+página inteira atrás do texto, título que empurra o parágrafo, sumário com links, PAGEREF e
+pontilhado, cabeçalho da primeira página vazio). As verificações que não dependem do relógio
+pegam cada correção (com contraprova): refações por tecla na fixture que não converge (0 contra
+1 sem aceitar; eram 6), tiles por tecla na capa (4 contra 16 invalidando o bloco), tela com cache
+igual à refeita tecla a tecla, objetos e faixas não repintados num quadro novo, pontilhado num
+`drawText`. O p95 (capa, sumário e corpo) passa se ficar no gate ou até 2,5× o de um documento
+simples medido na mesma hora (a 0.1.7 media 94 ms no sumário sintético contra 4,6 do simples).
+
+### Altura do cabeçalho por página
+
+O corpo usava a mesma altura de cabeçalho em todas as páginas (a maior das variantes). Na capa
+do manual (cabeçalho da primeira página vazio, de 706 twips, contra 1080 do padrão), o corpo
+começava em 1477 twips em vez de 1134: o título, a caixa vazia e "Portal Documentação" ficavam
+em 3,89 / 7,65 / 28,00 cm. Com a 0.1.8: 3,29 / 7,05 / 27,39 cm (o Word mostra 3,29 / 7,05 /
+27,4).
+
+Caminhos estudados para a altura variável:
+
+| Caminho | Resultado |
+|---|---|
+| `pageSize` por página | Não existe: o `QTextDocumentLayout` pagina com um tamanho só. |
+| Margem de cima e de baixo do quadro raiz | Vale em todas as páginas (o Qt usa a mesma `pageTopMargin` na primeira e nas outras): só desloca. |
+| Margem negativa no primeiro bloco | Daria mais altura só à primeira página, mas é conteúdo: entraria no arquivo, no desfazer, no Enter, e o primeiro bloco pode ser uma tabela. |
+| **Topo por página, altura do corpo única** | **Escolhido.** O documento do Qt não muda (os campos, o hit-test no documento e a paginação ficam iguais); muda onde o corpo de cada folha começa. |
+
+Limite registrado: a altura do corpo é a da página efetiva com o maior cabeçalho e o maior rodapé.
+Na página com cabeçalho menor o corpo termina mais acima e cabe o mesmo texto que nas outras
+(no manual, a capa do Word tem 2 cm a mais de corpo). O número de páginas é o mesmo da 0.1.7.
+Teste: `tests/teste_cabecalho_por_pagina.py` (primeira com cabeçalho vazio, par e ímpar com
+alturas diferentes, rodapés diferentes; topo por página no layout, no mapa da tela, no PDF e nos
+tiles contra o oráculo em twips; número de páginas igual ao do layout com o cabeçalho alto em
+todas; objeto relativo ao parágrafo na página 1; clique e zona; contraprova com a altura única).
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.

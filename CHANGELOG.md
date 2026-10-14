@@ -1,3 +1,53 @@
+## 0.1.8 - 2026-10-14
+
+Digitação abaixo de 16 ms num manual real pesado, e o corpo de cada página começa onde termina
+o cabeçalho dela.
+
+Defeito 1: num manual real de 51 páginas (capa com imagem de página inteira e caixas de texto,
+sumário com links, PAGEREF e pontilhado, 49 desenhos), cada tecla levava de 48 a 91 ms (p95)
+no parágrafo das âncoras, no sumário e no corpo. Causas, pelo perfil (docs/SPIKES.md, "0.1.8"):
+a conferência dos objetos flutuantes nunca ficava estável (uma linha que o Qt desce de página
+ao lado de um objeto guarda a largura estreita, e refazer não muda nada), então cada tecla
+refazia o trecho 6 vezes e conferia até o fim do documento; o parágrafo das âncoras tem a
+altura da folha, e cada tecla tirava do cache a folha inteira; o pontilhado do sumário era um
+`drawText` por ponto; os objetos flutuantes, o cabeçalho e o rodapé eram pintados de novo em
+cada tile e em cada quadro.
+
+- Conferência dos floats: as linhas que o Qt não refaz são aceitas (pela assinatura delas) e
+  só voltam a ser conferidas se mudarem.
+- Cache de tiles: sai da tela a faixa das linhas que mudaram (a anterior e da linha da mudança
+  até a base do bloco, a de antes ou a de agora), não o bloco inteiro; o tile guarda a faixa
+  cortada no corpo da página dele; a conferência que refaz um trecho invalida só dali para
+  baixo; a tecla depois de um cache limpo não refaz a tela inteira de novo.
+- Objetos flutuantes, cabeçalho e rodapé pintados uma vez na tela (QPixmap alinhado ao pixel
+  do dispositivo, copiado 1:1); o PDF e a impressão pintam de verdade.
+- Pontilhado da tabulação num `drawText` só; tamanho das marcas de campo e de link guardado
+  pela fonte.
+- Resultado (p95, janela de produção, mesmo roteiro nas duas versões, mediana de 3 rodadas):
+  âncoras 77,1 → 10,6 ms; sumário 47,9 → 9,6; corpo 91,0 → 6,8 e 90,2 → 7,0. Os outros
+  cenários do gate ficam iguais ou melhores (capítulo de 4 páginas, corpo: 7,9 → 5,1); a
+  tabela inteira está em docs/SPIKES.md.
+
+Defeito 2: o corpo usava a mesma altura de cabeçalho em todas as páginas (a maior das
+variantes). Na capa de um manual com o cabeçalho da primeira página vazio, o corpo, o título e
+as caixas ancoradas nele ficavam 0,6 cm abaixo do Word (título em 3,89 cm; o Word mostra 3,29).
+
+- O topo do corpo de cada folha é max(margem de cima, distância do cabeçalho + altura do
+  cabeçalho da página: primeira, par ou padrão), sem o pé do corpo passar do rodapé da
+  página (`LayoutPaginado.efetiva_da(n)`). A tela, o PDF, a impressão, o clique, a zona do
+  cabeçalho, o rótulo da edição e os objetos flutuantes seguem. Na capa do manual: título,
+  caixa vazia e "Portal Documentação" em 3,29 / 7,05 / 27,39 cm, como no Word.
+- Limite: a altura do corpo continua a mesma em todas as páginas (a da página com o maior
+  cabeçalho e o maior rodapé), porque o `QTextDocument` pagina com um tamanho só. Na página
+  de cabeçalho menor o corpo termina mais acima; o número de páginas não muda.
+
+Testes: `teste_desempenho.py` (22 verificações: refações por tecla na linha que não
+converge, tiles por tecla, tela com cache igual à refeita tecla a tecla, objetos e faixas não
+repintados, pontilhado, marcas, p95 num manual sintético; cada estrutural com contraprova) e
+`teste_cabecalho_por_pagina.py` (28: topo por página no layout, no mapa da tela, nos tiles e no
+PDF contra o oráculo em twips, número de páginas, objeto relativo ao parágrafo, clique, zona,
+cabeçalho que cresce, contraprova). Nenhuma verificação existente foi retirada ou reescrita.
+
 ## 0.1.7 - 2026-10-14
 
 Objetos flutuantes na posição da página, com o texto em volta.

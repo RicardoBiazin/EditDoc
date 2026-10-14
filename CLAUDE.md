@@ -34,6 +34,9 @@ causou defeito.
 - Comentários (0.1.6): `modelo/comentarios.py`, `formato_docx/comentarios.py` (partes
   estendidas, people.xml, validador), `ponte_qt/comentarios.py`, `edicao/comentarios.py`,
   `interface/painel_comentarios.py` e `interface/dialogo_comentario.py`.
+- Altura por página (0.1.8): `LayoutPaginado.efetiva_da(n)` e `topo_da_pagina(n)` (o topo do corpo
+  pelo cabeçalho da página); `Mapa.topo_da_pagina` e `flutuantes.Contexto.topos` seguem. Desempenho
+  (0.1.8): `tests/teste_desempenho.py`, scripts de medição fora do repositório (docs/SPIKES.md).
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -195,3 +198,9 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | `intrinsicSize` (0.1.7) | O Qt chama a cada pintura do bloco, nao so' no layout (medido: 130 vezes por tecla num documento real). O plano de reserva fica em cache por bloco, revisao e geracao das reservas. |
 | linha da ancora (0.1.7) | A linha onde o float nasce so' e' refeita se o texto nao cabe no que sobrou: a linha curta fica com a largura de antes do float. A conferencia so' acusa linha mais estreita que o espaco, ou mais larga com texto passando. |
 | cabecalho com objeto (0.1.7) | O objeto do cabecalho fica atras do texto do corpo: a impressao pinta `desenhar_faixas(parte="objetos")`, o corpo e `parte="texto"`. Mudar a ordem do texto no PDF quebra os testes que leem o numero da pagina (o rodape tem de vir depois do corpo). Na tela, com objeto em faixa, os tiles sao transparentes. |
+| linha que desce de pagina ao lado do float (0.1.8) | Medido no Qt 6.11.2: a linha que nao cabe no pe' da pagina ao lado de um float desce para a pagina seguinte com a largura estreita, e `markContentsDirty` nao a refaz. A conferencia que acha as mesmas faixas duas rodadas seguidas aceita as linhas (`Gerente._aceitas`, pela assinatura); sem isso cada tecla refazia 6 vezes e conferia ate' o fim do documento (no manual real, 36 dos 52 ms de cada tecla no corpo). |
+| topo do corpo por pagina (0.1.8) | `layout.pagina` e' a efetiva com o MAIOR cabecalho (da' o `hb`); a folha n usa `layout.efetiva_da(n)`. Codigo novo que poe o corpo na folha (`margem_sup_tw`) usa a da pagina, senao a capa com cabecalho vazio fica 0,6 cm abaixo. A altura do corpo e' a mesma em todas: o `QTextDocument` pagina com um `pageSize` so'. |
+| cache de pintura e `id()` (0.1.8) | `id()` de documento ou faixa fechados volta para o objeto seguinte: chave de cache usa `DocumentoQt.serie` e `FaixaQt.serie`. A revisao (`doc.revision()`) recomeca baixa num documento novo e nao serve sozinha. |
+| `QTextFormat` sem hash (0.1.8) | O PySide 6.11 nao deixa usar `QTextFormat` como chave (`unhashable`). O tamanho da marca e' guardado pelas propriedades de fonte e por `DocumentoQt.chave_da_fonte()`, que `setDefaultFont` (sobrescrito em Python) zera: trocar a fonte padrao sem passar por ele deixaria o tamanho velho. |
+| fontes nos testes de tempo (0.1.8) | Fonte carregada (`addApplicationFont`) DEPOIS de um documento aberto no processo nao substitui o fallback que o Qt ja' escolheu: o p95 dobra. `teste_desempenho` carrega as fontes no inicio e mede o relogio antes das conferencias de pixel (que esquentam a maquina) e com um painel por medida (um segundo painel aberto entra na conta). |
+| pontilhado da tabulacao (0.1.8) | Um `drawText` com os pontos e o espaco no `letterSpacing` absoluto; um `drawText` por ponto custava ate' 2 ms por tile num sumario. |

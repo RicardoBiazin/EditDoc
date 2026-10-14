@@ -491,7 +491,7 @@ class PainelDocumento(VistaPaginas):
         n = m.pagina_no_ponto(p.x(), p.y(), n_total)
         x, y, largura, altura = m.folha_na_tela(n)
         tx, ty = (p.x() - x) / m.escala, (p.y() - y) / m.escala
-        efetiva = self.layout_pag.pagina
+        efetiva = self.layout_pag.efetiva_da(n)  # a da pagina (0.1.8): o topo varia por pagina
         if 0 <= tx <= efetiva.largura_tw and 0 <= ty <= efetiva.altura_tw:
             if ty < efetiva.margem_sup_tw:
                 return "cabecalho", n
@@ -927,7 +927,7 @@ class PainelDocumento(VistaPaginas):
                 return posto.posicao
             posto = g.em(n, sx, sy, atras=True)
             if posto is not None:
-                cfg = self.layout_pag.pagina
+                cfg = self.layout_pag.efetiva_da(n)
                 ponto = QPointF(sx - cfg.margem_esq_tw, sy - cfg.margem_sup_tw + n * self.layout_pag.hb)
                 no_corpo = 0 <= ponto.x() <= cfg.corpo_largura_tw() and                     0 <= sy - cfg.margem_sup_tw <= cfg.corpo_altura_tw()
                 exato = self.layout_pag.doc.documentLayout().hitTest(

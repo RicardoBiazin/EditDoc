@@ -28,6 +28,8 @@ extras dos trechos e dos blocos numa marca propria da area de transferencia, e
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QPen, QTextBlockFormat,
                            QTextCharFormat, QTextCursor, QTextDocument, QTextFormat, QTextOption)
@@ -406,17 +408,20 @@ def _preenchimentos(painter, bloco, ap) -> None:
         fonte = QFont(cf.font()) if cf is not None else QFont(bloco.document().defaultFont())
         if fonte.pointSizeF() > 0:
             fonte.setPixelSize(max(1, round(fonte.pointSizeF() * 20)))
-        painter.setFont(fonte)
-        painter.setPen(QColor(0, 0, 0))
         largura = max(QFontMetricsF(fonte).horizontalAdvance(simbolo), 1.0)
         passo = largura * (1.0 if simbolo in "_-" else 1.6)
         y = origem.y() + linha.y() + linha.ascent()
         x = x0 + passo * 0.5
-        n = 0
-        while x + largura <= x1 - passo * 0.3 and n < 2000:
-            painter.drawText(QPointF(origem.x() + x, y), simbolo)
-            x += passo
-            n += 1
+        n = min(2000, math.floor((x1 - passo * 0.3 - largura - x) / passo) + 1)
+        if n <= 0:
+            continue
+        # Um drawText so' (0.1.8): o espaco entre os simbolos vai no espacamento de letras.
+        # Um drawText por ponto custava ate' 2 ms por tile num sumario (medido).
+        fonte.setKerning(False)
+        fonte.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, passo - largura)
+        painter.setFont(fonte)
+        painter.setPen(QColor(0, 0, 0))
+        painter.drawText(QPointF(origem.x() + x, y), simbolo * n)
 
 
 def desenhar(painter, doc: QTextDocument, recorte: QRectF | None) -> None:
