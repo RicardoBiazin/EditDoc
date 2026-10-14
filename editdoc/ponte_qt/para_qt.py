@@ -58,6 +58,8 @@ from editdoc.modelo.unidades import px_de_emu, px_de_oitavos_pt, px_de_twips
 from editdoc.modelo.numeracao import materializado
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import comentarios as pq_comentarios
+from editdoc.ponte_qt import notas as pq_notas
+from editdoc.modelo.documento import MarcaNota
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
 
@@ -355,6 +357,10 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
     for r in p.runs:
         if r.imagem is not None:
             inserir_imagem(cursor, r.imagem, r.link, r.extras)
+        elif isinstance(r.marca, MarcaNota):
+            # Nota de rodape ou de fim (0.1.10): a referencia, ou o numero da propria nota.
+            pq_notas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res),
+                                                             r.link))
         elif r.marca is not None:
             # Campo ou marcador (0.1.3): a marca leva a formatacao do run (o codigo do campo
             # e o resultado recalculado pelo Word saem com ela).
@@ -487,9 +493,12 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     listas.definir_catalogo_base(documento_qt, modelo.numeracao)
     pq_estilos.definir_catalogo_base(documento_qt, modelo.estilos)
     pq_comentarios.definir_base(documento_qt, modelo.comentarios)
+    pq_notas.definir_base(documento_qt, getattr(modelo, "notas", None))
     res = pq_estilos.Resolvedor(pq_estilos.catalogo(documento_qt))
     cursor = QTextCursor(documento_qt)
     _inserir_blocos(cursor, modelo.paragrafos, res)
+    # Notas (0.1.10): o numero de cada referencia antes do primeiro plano da pagina.
+    documento_qt._numeros_notas = pq_notas.numeros_continuos(documento_qt)
     concluir_listas(documento_qt)
 
 

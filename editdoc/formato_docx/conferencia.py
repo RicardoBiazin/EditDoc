@@ -15,6 +15,9 @@ Listas (0.1.4): o numId e o nivel de cada paragrafo (o numbering.xml passa pelo 
 Comentarios (0.1.6): as ancoras de cada paragrafo (com as outras marcas) e, de cada
 comentario, o autor, as iniciais, a data, o pai, o resolvido, os ids das partes estendidas e
 o conteudo (texto, estilos, links e marcas, paragrafo a paragrafo).
+Notas (0.1.10): as referencias de cada paragrafo (com as outras marcas) e, de cada nota, o
+tipo, o id e o conteudo (texto, estilos, links e marcas), depois de `notas.preparar`; e as
+propriedades efetivas (formato, inicio, reinicio, posicao).
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -32,6 +35,7 @@ from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import texto_gravavel
 from editdoc.modelo import marcas
+from editdoc.modelo import notas as mod_notas
 from editdoc.modelo.documento import CARACTERE_OBJETO, Documento, Tabela, normalizar
 
 
@@ -114,6 +118,20 @@ def _comentarios(doc: Documento) -> tuple:
     return tuple(saida)
 
 
+def _notas(doc: Documento) -> tuple:
+    """O que se compara de cada nota (0.1.10), na ordem do catalogo, e as propriedades."""
+    cat = doc.notas
+    if cat is None:
+        return ()
+    saida = []
+    for n in cat.todas():
+        itens: list = []
+        _itens(normalizar(Documento(paragrafos=list(n.paragrafos))).paragrafos, itens, "")
+        saida.append((n.tipo, n.id, tuple(x[1:] for x in itens)))
+    props = tuple(cat.propriedades(t) for t in mod_notas.TIPOS)
+    return tuple(saida), props
+
+
 def conferir(dados: bytes, esperado: Documento) -> None:
     """Relê `dados` com o proprio leitor e compara estrutura, texto e imagens."""
     from editdoc.formato_docx.leitor import ler
@@ -124,7 +142,7 @@ def conferir(dados: bytes, esperado: Documento) -> None:
     a: list = []
     b: list = []
     # O escritor grava as marcas em pares (marcas.equilibrar): e' isso que tem de voltar.
-    esperado = fx_comentarios.preparar(marcas.equilibrar(esperado)[0])
+    esperado = mod_notas.preparar(fx_comentarios.preparar(marcas.equilibrar(esperado)[0]))
     esperado_n, lido_n = normalizar(esperado), normalizar(lido)
     _itens(esperado_n.paragrafos, a, "")
     _itens(lido_n.paragrafos, b, "")
@@ -172,6 +190,11 @@ def conferir(dados: bytes, esperado: Documento) -> None:
     for x, y in zip(a_coment, b_coment):
         if x != y:
             raise FalhaDeConferencia(f"comentario {x[0]} diferente no arquivo gravado")
+    a_notas, b_notas = _notas(esperado), _notas(lido)
+    if (a_notas[0] if a_notas else ()) != (b_notas[0] if b_notas else ()):
+        raise FalhaDeConferencia("notas de rodape ou de fim diferentes no arquivo gravado")
+    if a_notas and b_notas and a_notas[1] != b_notas[1]:
+        raise FalhaDeConferencia("propriedades das notas diferentes no arquivo gravado")
     if fx_pacote.assinatura(esperado.pacote) != fx_pacote.assinatura(lido.pacote):
         raise FalhaDeConferencia("partes preservadas do pacote (propriedades, customXml, "
                                  "fontes...) diferentes")

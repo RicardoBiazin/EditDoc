@@ -177,6 +177,9 @@ class DocumentoQt(QTextDocument):
         self._manipulador_opacos = opacos.registrar_manipulador(self)
         # Marcas de campo e de marcador (0.1.3).
         self._manipulador_marcas = marcas.registrar_manipulador(self)
+        # Marcas de nota de rodape e de fim (0.1.10).
+        from editdoc.ponte_qt import notas
+        self._manipulador_notas = notas.registrar_manipulador(self)
         self._chave_fonte: str | None = None
         #: Numero de serie (0.1.8): chave de cache que nao confia em id() (reusado pelo coletor).
         self.serie = next(_SERIE_DOCUMENTOS)

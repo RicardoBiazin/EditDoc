@@ -360,9 +360,11 @@ Implementados na 0.1.3.
   tirado; e, se as notas não voltam, as referências `footnotePr/footnote` e
   `endnotePr/endnote` às separadoras. Sem mudança, sai byte a byte. Relação interna do
   settings que não pode voltar: o elemento que a cita sai, com aviso.
-- Notas: `footnotes.xml` e `endnotes.xml` voltam só com as notas separadoras (separator,
-  continuationSeparator, continuationNotice), que o settings.xml cita. As notas de verdade
-  não voltam (aviso NOTA): as referências a elas já saíam do texto.
+- Notas: até a 0.1.9, `footnotes.xml` e `endnotes.xml` voltavam só com as notas separadoras
+  (separator, continuationSeparator, continuationNotice), que o settings.xml cita, e as notas
+  de verdade saíam com o aviso NOTA. Desde a 0.1.10 o leitor e o escritor as tratam (ver
+  "Notas de rodapé e de fim"); esse caminho ficou só para a parte que o leitor não consegue
+  ler (acima dos limites, XML que não abre).
 - `core.xml` e `app.xml`: os originais voltam com título, autor, criação e modificação
   reescritos (core) e o aplicativo "EditDoc" sem a AppVersion de origem (app). Assunto,
   palavras-chave, categoria, revisão, empresa e gerente ficam.
@@ -695,18 +697,104 @@ mudam só os elementos e atributos de posição e tamanho dentro dele.
 - Validador (`posicao.problemas`, chamado por `ordem.validar_estrutura`): atributos do
   `wp:anchor`, a quebra, `positionH/V`, posOffset inteiro de 32 bits e extent não negativo.
 
+## Notas de rodapé e de fim (0.1.10)
+
+Até a 0.1.9 a referência saía do texto e a nota do arquivo (aviso NOTA, com perda); só as
+separadoras voltavam.
+
+- Modelo: a referência é uma marca no fluxo (`MarcaNota(tipo, id)`, com `personalizada` e o
+  `simbolo` do `w:customMarkFollows`), como as âncoras de comentário; o número da própria nota
+  (`w:footnoteRef`) é a mesma marca com `propria`. O conteúdo fica no catálogo `Documento.notas`
+  (`modelo/notas.py`, fora da comparação): `Nota` (tipo, id, parágrafos, o XML de origem e as
+  relações que ele cita, com os bytes das imagens), as separadoras (`Especial`, XML de origem),
+  os bytes de cada parte, as relações dela e as propriedades (`PropriedadesNota`: numFmt,
+  numStart, numRestart, pos; a do sectPr vence a do settings.xml, que vence o padrão do Word).
+  `numeros` calcula o número de cada referência (contínuo ou por página, no formato do
+  numFmt; a marca personalizada não conta).
+- Leitura (`formato_docx/leitor.py`, `_ler_notas`): as partes antes do corpo (as referências
+  citam os ids); o conteúdo pelo leitor de parágrafos, com as relações da parte; referência só
+  no corpo, uma por nota; a nota sem referência sai, com NOTA. O símbolo da marca personalizada
+  é o run seguinte, guardado em forma canônica (`propriedades.canonico`). Limites: 5000 notas
+  por tipo, 1 MB por nota, 32 MB por parte, 2000 parágrafos por nota; acima disso a parte não é
+  lida e o pacote preserva só as separadoras (o caminho da 0.1.3), e o EditDoc não cria nota
+  daquele tipo (`ed_notas.pode_inserir`).
+- Escrita: `notas.preparar` (escritor e conferência) deixa só as notas com referência, na
+  ordem do texto, e dá id novo à referência repetida. A parte sem mudança volta com os bytes de
+  origem (as relações mantêm o Id; a imagem vai para a mídia do escritor, só o alvo muda); com
+  mudança, a raiz de origem com as separadoras, o XML de origem das notas que não mudaram e o
+  conteúdo gerado das outras. O documento que ganha a primeira nota ganha as separadoras do
+  Word, e o settings.xml passa a citá-las (`pacote._citar_especiais`, ou o settings gerado). O
+  footnotePr/endnotePr do sectPr volta como veio enquanto as propriedades não mudam. Ids de
+  marcador e de `wp:docPr` das notas de origem ficam reservados para o que o escritor gera.
+- Validador (`formato_docx/notas.py`): toda referência cita uma nota normal que existe, uma
+  vez; toda nota normal tem referência; ids numéricos e únicos; o settings.xml só cita
+  especiais que existem; `w:footnoteRef` só na nota; nenhuma referência dentro de nota,
+  cabeçalho ou rodapé. A ordem, o `xml:space`, os campos, os marcadores, as tabelas e os estilos
+  valem nas partes de notas como no corpo.
+- Conferência: as marcas de cada parágrafo (com as referências) e, de cada nota, o tipo, o id e
+  o conteúdo; e as propriedades efetivas.
+- Qt (`ponte_qt/notas.py`): a marca é o caractere de objeto `TIPO_NOTA` (UserObject + 5) com a
+  `MarcaNota` em JSON (`PROP_NOTA` = UserProperty + 31); o manipulador pinta o número
+  sobrescrito, que sai do mapa do documento (`_numeros_notas`) ou, na nota, do número dela. O
+  catálogo vai no quadro raiz (`PROP_NOTAS` = + 32), como o dos comentários: chaves de um
+  registro de `Nota` imutáveis e as propriedades, no desfazer.
+
+### Paginação com notas
+
+Decidida por um spike (docs/SPIKES.md, "0.1.10"). O `QTextDocument` do corpo pagina com um
+tamanho só; a área de notas tem de encolher o corpo só na página da referência. O que não é
+conteúdo e mexe no layout do Qt não existe (o `intrinsicSize` dos objetos só muda a linha
+deles; o float do Qt começa na linha da âncora, não no pé da página; a margem do quadro raiz
+vale em todas as páginas). O caminho escolhido é um **espaçador no fluxo**: o primeiro bloco
+que não cabe acima da área de notas recebe a quebra de página do Qt com uma marca
+(`PROP_QUEBRA_NOTA` = UserProperty + 33) e começa na página seguinte. A marca não é quebra do
+usuário: não volta ao arquivo (`de_qt`), não aparece como "Quebra de página", sai no Enter e no
+copiar (`_html_sem_espacador`).
+
+- `interface/notas.py`, `ConjuntoDeNotas.atualizar` (na pintura, antes de imprimir e ao abrir):
+  página a página, a linha que não cabe com as notas das referências até ela (as anteriores
+  inteiras, as da própria linha ao menos com a primeira linha) empurra o bloco (ou a tabela)
+  dela; a primeira unidade da página nunca é empurrada; o bloco empurrado volta quando, no
+  lugar dele (simulado com as alturas das linhas dele), tudo o que ficaria na página caberia.
+  Depois, a distribuição: continuação primeiro (separador da largura toda), separador curto
+  (2 polegadas, como o Word), notas inteiras ou cortadas numa linha; o que não cabe continua na
+  página seguinte; notas de fim depois do texto; páginas a mais (`extras`) depois da última,
+  que `LayoutPaginado.numero_paginas` conta. A distribuição nunca põe nota em cima do texto: o
+  espaço é o que sobra abaixo da última linha da página.
+- Só o que mudou: a conferência começa na página antes da edição e para quando uma página
+  fica igual à do plano anterior (linhas, notas, continuação); as marcas são seguidas pelo
+  `contentsChange` (sem varrer o documento a cada tecla).
+- Desfazer: o espaçador é formato de bloco e entra no desfazer. O ajuste depois de uma edição
+  do usuário é um passo próprio, anotado (`passos`); `PainelDocumento.undo/redo` passam por ele
+  junto com o passo do usuário (`ConjuntoDeNotas.desfazer/refazer`), e o estado de antes já
+  estava ajustado. A edição de uma nota no lugar é uma sessão: o primeiro toque cria um passo
+  no corpo (o catálogo com uma chave provisória), os ajustes da sessão e o conteúdo final
+  entram nele; dentro da nota, Ctrl+Z desfaz as teclas da nota (o documento dela).
+- Tela, PDF e impressão: `desenhar_notas` pinta a área de cada folha (separadores e trechos dos
+  documentos das notas, recortados), a mesma função nos três; na tela por cima dos tiles. Clique
+  na área edita a nota (`PainelDocumento.entrar_na_nota`, `document()` passa a ser o da nota).
+
+Limites: o bloco inteiro desce (o Word parte o parágrafo e leva só as linhas que não cabem),
+então sobra branco no pé da página com parágrafo longo; tabela que começou na página anterior
+não é empurrada (a nota continua na seguinte); as notas depois de uma que continua esperam a
+continuação; formatos de número fora de decimal, letras, romanos e chicago aparecem em decimal;
+"fim da seção" é o fim do documento; o aviso de continuação do Word não aparece; objeto
+flutuante perto do pé não contorna a área de notas; desfazer no corpo depois de editar uma nota
+cujo ajuste caiu fora da sessão pode perder o refazer (o ajuste novo trunca a pilha).
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
 0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3; definições de
 numeração, desde a 0.1.4; formatação que o modelo não representa e controles de conteúdo de
 parágrafo e de bloco, desde a 0.1.5; comentários editáveis e referências de estilo sem
-definição, desde a 0.1.6) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
+definição, desde a 0.1.6; notas de rodapé e de fim, desde a 0.1.10) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
 LISTA_NIVEL só para referência quebrada, nível fora de 0 a 8 ou numeração acima dos
 limites, e LISTA_EM_CAIXA só quando a numeração do arquivo não pôde ser lida. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
 confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
-não pede confirmação. Revisões, notas de rodapé de verdade e controles de
-conteúdo de linha ou célula de tabela entram aqui até as versões que os implementam. Nenhuma parte do pacote sai sem
+não pede confirmação. Revisões e controles de conteúdo de linha ou célula de tabela entram
+aqui até as versões que os implementam; NOTA, desde a 0.1.10, é só a nota que não pode ser lida
+(sem referência no corpo, acima dos limites, referência fora do corpo). Nenhuma parte do pacote sai sem
 aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
 NOTA, MINIATURA). COMENTARIO desde a 0.1.6 é só o comentário que não pode ser lido.
 
@@ -736,6 +824,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Flutuantes | 0.1.7 (feito) | objeto na posição da página, texto em volta, atrás e na frente, cabeçalho, PDF |
 | Desempenho e cabeçalho por página | 0.1.8 (feito) | digitação ≤ 16 ms num manual pesado; topo do corpo pelo cabeçalho de cada página |
 | Mover e redimensionar | 0.1.9 (feito) | arrastar, alças, setas, quebra de texto, diálogo Posição e tamanho, cabeçalho |
+| Notas | 0.1.10 (feito) | footnotes.xml e endnotes.xml, numeração, área de notas na página, edição no lugar, aba Referências, PDF |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em
@@ -743,7 +832,7 @@ modo contínuo, com paginação só na impressão.
 
 ## Fora da 0.1.0
 
-Revisão com controle de alterações, notas de rodapé (comentários desde a 0.1.6), gerar e atualizar
+Revisão com controle de alterações (comentários desde a 0.1.6; notas de rodapé desde a 0.1.10), gerar e atualizar
 índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações e formas (preservadas sem
 edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas, seções múltiplas editáveis, ortografia (prevista para a
 0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).

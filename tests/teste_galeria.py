@@ -32,7 +32,9 @@ ALT = Qt.KeyboardModifier.AltModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
 LARGURAS = (1920, 1400, 1200, 1000, 820)
 # 0.1.6: a aba Revisao (comentarios) entrou entre Layout e Exibir, como no Word.
-ABAS = ("Página Inicial", "Inserir", "Layout", "Revisão", "Exibir")
+# Reescrita na 0.1.10: a aba Referencias (notas de rodape e de fim) entrou entre Layout e
+# Revisao, na ordem do Word. A conferencia continua a mesma: todas as abas, nada cortado.
+ABAS = ("Página Inicial", "Inserir", "Layout", "Referências", "Revisão", "Exibir")
 
 
 def _janela() -> JanelaPrincipal:
@@ -213,11 +215,11 @@ def _cortados(faixa) -> list[str]:
 
 
 def testar_faixa_em_todas_as_abas() -> None:
-    secao("faixa final: cinco abas, nada cortado de 1920 a 820 px")
+    secao("faixa final: seis abas, nada cortado de 1920 a 820 px")
     j = _janela()
     faixa = j.faixa
     checa_igual(faixa.abas_visiveis(), list(ABAS),
-                "abas Pagina Inicial, Inserir, Layout, Revisao e Exibir")
+                "abas Pagina Inicial, Inserir, Layout, Referencias, Revisao e Exibir")
     checa(faixa.minimumWidth() <= 820, f"a faixa cabe em 820 px (minimo {faixa.minimumWidth()})")
     miniaturas = {}
     fonte_recolhida = {}

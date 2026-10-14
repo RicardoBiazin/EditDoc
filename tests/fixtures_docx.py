@@ -1000,3 +1000,142 @@ CORPO_COM_CAMPOS = (
 def docx_com_campos(corpo_xml: str = CORPO_COM_CAMPOS) -> bytes:
     """.docx com o sumario e os campos de CORPO_COM_CAMPOS (e o estilo Hyperlink)."""
     return docx_com_links(corpo_xml, relacoes=[])
+
+
+# -- notas de rodape e de fim (0.1.10) ------------------------------------------------------
+
+RT_NOTAS_RODAPE = _RT_DOC + "footnotes"
+_ESTILOS_NOTAS = (
+    '<w:style w:type="paragraph" w:styleId="Textodenotaderodap"><w:name w:val="footnote text"/>'
+    '<w:basedOn w:val="Normal"/><w:link w:val="TextodenotaderodapChar"/><w:uiPriority w:val="99"/>'
+    '<w:semiHidden/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" '
+    'w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>'
+    '<w:style w:type="character" w:customStyle="1" w:styleId="TextodenotaderodapChar">'
+    '<w:name w:val="Texto de nota de rodapé Char"/><w:basedOn w:val="Fontepargpadro"/>'
+    '<w:link w:val="Textodenotaderodap"/><w:uiPriority w:val="99"/><w:semiHidden/>'
+    '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>'
+    '<w:style w:type="character" w:styleId="Refdenotaderodap"><w:name w:val="footnote reference"/>'
+    '<w:basedOn w:val="Fontepargpadro"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/>'
+    '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>'
+    '<w:style w:type="paragraph" w:styleId="Textodenotadefim"><w:name w:val="endnote text"/>'
+    '<w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/>'
+    '<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+    '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>'
+    '<w:style w:type="character" w:styleId="Refdenotadefim"><w:name w:val="endnote reference"/>'
+    '<w:basedOn w:val="Fontepargpadro"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/>'
+    '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>')
+ESTILOS_COM_NOTAS = ESTILOS_DO_WORD.replace("</w:styles>", _ESTILOS_NOTAS + "</w:styles>")
+
+
+def ref_nota(ident: int, tipo: str = "footnote", personalizada: str = "") -> str:
+    """O run da referencia como o Word grava; `personalizada`: o simbolo (customMarkFollows)."""
+    estilo = "Refdenotaderodap" if tipo == "footnote" else "Refdenotadefim"
+    if personalizada:
+        return (f'<w:r><w:rPr><w:rStyle w:val="{estilo}"/></w:rPr><w:{tipo}Reference '
+                f'w:customMarkFollows="1" w:id="{ident}"/></w:r><w:r><w:rPr><w:rStyle '
+                f'w:val="{estilo}"/></w:rPr><w:t>{personalizada}</w:t></w:r>')
+    return (f'<w:r><w:rPr><w:rStyle w:val="{estilo}"/></w:rPr>'
+            f'<w:{tipo}Reference w:id="{ident}"/></w:r>')
+
+
+def nota_xml(ident: int, texto: str, tipo: str = "footnote", extra: str = "", marca: bool = True,
+             para_id: str = "") -> str:
+    """Um w:footnote (ou w:endnote) como o Word grava: o numero da nota, um espaco e o texto."""
+    estilo_p = "Textodenotaderodap" if tipo == "footnote" else "Textodenotadefim"
+    estilo_r = "Refdenotaderodap" if tipo == "footnote" else "Refdenotadefim"
+    numero = (f'<w:r><w:rPr><w:rStyle w:val="{estilo_r}"/></w:rPr><w:{tipo}Ref/></w:r>'
+              '<w:r><w:t xml:space="preserve"> </w:t></w:r>') if marca else ""
+    pid = f' w14:paraId="{para_id}" w14:textId="77777777" w:rsidR="00A1B2C3"' if para_id else ""
+    return (f'<w:{tipo} w:id="{ident}"><w:p{pid}><w:pPr><w:pStyle w:val="{estilo_p}"/></w:pPr>'
+            f'{numero}<w:r><w:t xml:space="preserve">{texto}</w:t></w:r>{extra}</w:p></w:{tipo}>')
+
+
+def parte_notas(tipo: str, notas: str) -> bytes:
+    """footnotes.xml (tipo "footnote") ou endnotes.xml com as duas separadoras e `notas`."""
+    raiz = "footnotes" if tipo == "footnote" else "endnotes"
+    especiais = (f'<w:{tipo} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" '
+                 f'w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p>'
+                 f'</w:{tipo}><w:{tipo} w:type="continuationSeparator" w:id="0"><w:p><w:pPr>'
+                 '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r>'
+                 f'<w:continuationSeparator/></w:r></w:p></w:{tipo}>')
+    return (_XML + f'<w:{raiz} xmlns:w="{_NS_W}" xmlns:r="{_NS_R}" '
+            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
+            f'{_NS_EXTRA}>{especiais}{notas}</w:{raiz}>').encode("utf-8")
+
+
+def imagem_na_nota(rid: str, ident: int = 901) -> str:
+    return ('<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
+            '<wp:extent cx="457200" cy="228600"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+            f'<wp:docPr id="{ident}" name="Imagem {ident}"/><wp:cNvGraphicFramePr>'
+            '<a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic>'
+            '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+            '<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="nota.png"/><pic:cNvPicPr/>'
+            f'</pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/>'
+            '</a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" '
+            'cy="228600"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+            '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>')
+
+
+#: Corpo com duas notas de rodape, uma de fim, uma com marca personalizada e uma com link e
+#: imagem.
+CORPO_COM_NOTAS = (
+    '<w:p><w:r><w:t xml:space="preserve">Texto com nota</w:t></w:r>' + ref_nota(1)
+    + '<w:r><w:t xml:space="preserve"> e continua.</w:t></w:r></w:p>'
+    '<w:p><w:r><w:t>Outra</w:t></w:r>' + ref_nota(2)
+    + '<w:r><w:t xml:space="preserve"> e uma nota de fim</w:t></w:r>' + ref_nota(1, "endnote")
+    + '<w:r><w:t>.</w:t></w:r></w:p>'
+    '<w:p><w:r><w:t>Marca personalizada</w:t></w:r>' + ref_nota(3, personalizada="*")
+    + '<w:r><w:t xml:space="preserve"> no fim.</w:t></w:r></w:p>'
+    '<w:p><w:r><w:t>Com link e imagem</w:t></w:r>' + ref_nota(4) + '</w:p>')
+
+NOTAS_RODAPE_XML = (
+    nota_xml(1, "Primeira nota de rodapé.", para_id="2A000001")
+    + nota_xml(2, "Segunda nota.")
+    + nota_xml(3, "* Nota de marca personalizada.", marca=False)
+    + nota_xml(4, "Veja ", extra='<w:hyperlink r:id="rId1" w:history="1"><w:r><w:t>o site</w:t>'
+               '</w:r></w:hyperlink><w:r><w:t xml:space="preserve"> e a figura </w:t></w:r>'
+               + imagem_na_nota("rId2")))
+NOTAS_FIM_XML = nota_xml(1, "Nota de fim.", "endnote")
+SETTINGS_NOTAS_RODAPE = '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>'
+SETTINGS_NOTAS_FIM = '<w:endnotePr><w:endnote w:id="-1"/><w:endnote w:id="0"/></w:endnotePr>'
+RELS_NOTAS = (_XML + _RELS + f'<Relationship Id="rId1" Type="{RT_LINK}" '
+              'Target="https://exemplo.invalid/nota" TargetMode="External"/>'
+              f'<Relationship Id="rId2" Type="{_RT_DOC}image" Target="media/nota1.png"/>'
+              '</Relationships>')
+
+
+def docx_com_notas(corpo_xml: str = CORPO_COM_NOTAS, notas_xml: str = NOTAS_RODAPE_XML,
+                   notas_fim_xml: str | None = NOTAS_FIM_XML, sect_xml: str = "",
+                   rels_notas: str | None = RELS_NOTAS, settings_extra: str | None = None) -> bytes:
+    """.docx com word/footnotes.xml (separadoras e as notas), word/endnotes.xml, os estilos de
+    nota do Word, o settings.xml citando as separadoras (depois do defaultTabStop, como no
+    esquema) e as relacoes da parte de notas (link e imagem). `notas_fim_xml` None: sem
+    endnotes.xml."""
+    relacoes = [("rId95", RT_NOTAS_RODAPE, "footnotes.xml")]
+    tipos = [("/word/footnotes.xml", CT_NOTAS)]
+    partes = {"word/footnotes.xml": parte_notas("footnote", notas_xml),
+              "word/media/nota1.png": png(12, 6, (20, 120, 200)),
+              "word/styles.xml": ESTILOS_COM_NOTAS.encode("utf-8")}
+    if rels_notas:
+        partes["word/_rels/footnotes.xml.rels"] = rels_notas.encode("utf-8")
+    cfg = SETTINGS_NOTAS_RODAPE
+    if notas_fim_xml is not None:
+        relacoes.append(("rId96", RT_NOTAS_FIM, "endnotes.xml"))
+        tipos.append(("/word/endnotes.xml", CT_NOTAS_FIM))
+        partes["word/endnotes.xml"] = parte_notas("endnote", notas_fim_xml)
+        cfg += SETTINGS_NOTAS_FIM
+    docx = docx_com_xml(corpo_xml, sect_xml, partes, relacoes, tipos)
+    p = partes_de(docx)
+    config = p["word/settings.xml"].decode("utf-8")
+    marca = "<w:characterSpacingControl"
+    p["word/settings.xml"] = config.replace(
+        marca, (cfg if settings_extra is None else settings_extra) + marca, 1).encode("utf-8")
+    ct = p["[Content_Types].xml"].decode("utf-8")
+    if 'Extension="png"' not in ct:
+        p["[Content_Types].xml"] = ct.replace(
+            "</Types>", '<Default Extension="png" ContentType="image/png"/></Types>').encode("utf-8")
+    if not rels_notas:
+        p.pop("word/media/nota1.png", None)
+    return montar(p)

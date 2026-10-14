@@ -39,6 +39,15 @@ Comentarios (0.1.6, edicao/comentarios.py): apagar uma selecao com ancoras segue
 Word (`_remover_selecao`): o comentario cujo trecho inteiro (ou a referencia) foi apagado vai
 junto; o que perdeu so' uma ponta fica ancorado no que sobrou. As ancoras nao tem largura e
 o teclado as pula, como as dos marcadores. `comentariosAlterados` avisa o painel lateral.
+
+Notas (0.1.10, interface/notas.py, edicao/notas.py): clicar na area de notas do pe' da pagina
+edita a nota no lugar (`entrar_na_nota`): `document()` passa a ser o documento da nota, como no
+cabecalho; Esc, clique no corpo ou duplo clique no numero da nota voltam ao corpo. A edicao da
+nota e' um passo de desfazer do corpo (a sessao, ver interface/notas.py); dentro dela o
+Ctrl+Z desfaz as teclas da nota. Desfazer e refazer no corpo passam pelos ajustes do
+espacador da area de notas junto com o passo do usuario. Duplo clique na marca da nota leva a
+nota. Copiar leva as notas da selecao (MIME_NOTAS, so' no mesmo processo); colar cria notas
+novas com os mesmos conteudos.
 """
 
 from __future__ import annotations
@@ -71,6 +80,7 @@ from editdoc.ponte_qt import imagens as pq_imagens
 from editdoc.ponte_qt import links as pq_links
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import marcas as pq_marcas
+from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import opacos as pq_opacos
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
@@ -97,6 +107,8 @@ MIME_OPACOS_OMITIDOS = "application/x-editdoc-objetos-omitidos"
 MIME_LISTAS = "application/x-editdoc-listas"
 #: Marca na area de transferencia: os extras de run e de paragrafo copiados, em JSON (0.1.5).
 MIME_PROPRIEDADES = "application/x-editdoc-propriedades"
+#: Marca na area de transferencia: as notas da selecao (0.1.10), chaves do registro em JSON.
+MIME_NOTAS = "application/x-editdoc-notas"
 #: Esquemas de endereco que o Ctrl+clique nunca abre (o link pode rodar codigo).
 ESQUEMAS_PROIBIDOS = ("javascript", "vbscript", "data")
 
@@ -147,6 +159,8 @@ class PainelDocumento(VistaPaginas):
         #: Cabecalho ou rodape em edicao (None = corpo), a pagina onde se edita, e o
         #: cursor do corpo guardado durante a edicao.
         self._edicao: FaixaQt | None = None
+        #: Nota em edicao (0.1.10): a NotaQt de interface/notas.py, ou None.
+        self._nota_ed = None
         self._pagina_edicao = 0
         self._cursor_corpo: QTextCursor | None = None
         #: Arraste de objeto flutuante (0.1.9): mover ou redimensionar, com o contorno fantasma.
@@ -161,8 +175,18 @@ class PainelDocumento(VistaPaginas):
 
     # ----- API do QTextEdit usada pelos comandos -------------------------
     def document(self) -> QTextDocument:
-        """O documento que o teclado edita: o corpo, ou o cabecalho em edicao."""
+        """O documento que o teclado edita: o corpo, ou o cabecalho (ou a nota) em edicao."""
+        if self._nota_ed is not None:
+            return self._nota_ed.doc
         return self._edicao.doc if self._edicao is not None else self.layout_pag.doc
+
+    def _no_corpo(self) -> bool:
+        """O teclado edita o corpo (nem cabecalho, nem rodape, nem nota)."""
+        return self._edicao is None and self._nota_ed is None
+
+    def editando_nota(self):
+        """A nota em edicao (NotaQt), ou None (0.1.10)."""
+        return self._nota_ed
 
     def documento_corpo(self) -> QTextDocument:
         """O corpo, sempre (o que se grava e o que diz se ha' alteracao)."""
@@ -202,18 +226,26 @@ class PainelDocumento(VistaPaginas):
         doc = self.document()
         if doc.isUndoAvailable():
             antes = self._assinatura_comentarios()
-            doc.undo(self._cursor)
+            if doc is self.layout_pag.doc:
+                # Notas (0.1.10): o ajuste do espacador sai junto com o passo do usuario.
+                self.layout_pag.notas.desfazer(doc, self._cursor)
+            else:
+                doc.undo(self._cursor)
             self._depois_do_desfazer(antes)
 
     def redo(self) -> None:
         doc = self.document()
         if doc.isRedoAvailable():
             antes = self._assinatura_comentarios()
-            doc.redo(self._cursor)
+            if doc is self.layout_pag.doc:
+                self.layout_pag.notas.refazer(doc, self._cursor)
+            else:
+                doc.redo(self._cursor)
             self._depois_do_desfazer(antes)
 
     def _assinatura_comentarios(self):
-        return pq_comentarios.assinatura(self.documento_corpo())[:2]
+        return (pq_comentarios.assinatura(self.documento_corpo())[:2],
+                pq_notas.assinatura(self.documento_corpo()))
 
     def _depois_do_desfazer(self, antes) -> None:
         if self._assinatura_comentarios() != antes:
@@ -224,7 +256,7 @@ class PainelDocumento(VistaPaginas):
 
     def _remover_selecao(self) -> None:
         """Apaga a selecao; com ancoras de comentario, pela regra do Word (0.1.6)."""
-        if self._edicao is not None or not ed_comentarios.remover_selecao(self._cursor):
+        if not self._no_corpo() or not ed_comentarios.remover_selecao(self._cursor):
             self._cursor.removeSelectedText()
         else:
             self._limpar_cache()
@@ -239,7 +271,7 @@ class PainelDocumento(VistaPaginas):
             return
         frag = QTextDocumentFragment(self._cursor)
         md = QMimeData()
-        md.setHtml(frag.toHtml())
+        md.setHtml(_html_sem_espacador(frag))
         # O HTML do Qt nao leva o objeto opaco (caixa de texto, forma...): ele fica fora do
         # que se cola. A marca deixa o colar avisar, em vez de sumir calado.
         inicio, fim = self._cursor.selectionStart(), self._cursor.selectionEnd()
@@ -256,6 +288,12 @@ class PainelDocumento(VistaPaginas):
             import json
             md.setData(MIME_PROPRIEDADES, json.dumps(extras).encode("utf-8"))
         md.setText(frag.toPlainText().replace(chr(0xFFFC), ""))
+        if self._no_corpo():
+            from editdoc.edicao import notas as ed_notas
+            notas = ed_notas.dados_para_copiar(self.document(), inicio, fim)
+            if notas is not None:
+                import json
+                md.setData(MIME_NOTAS, json.dumps(notas).encode("utf-8"))
         pos = ed_imagens.imagem_selecionada(self)
         if pos is not None:
             # So' a imagem selecionada: outro programa recebe a imagem, nao o HTML.
@@ -325,6 +363,17 @@ class PainelDocumento(VistaPaginas):
             if isinstance(dado, dict):
                 ed_listas.aplicar_colado(self, dado, inicio_colado, self._cursor.position(),
                                          no_inicio_vazio)
+        if md.hasFormat(MIME_NOTAS) and self._no_corpo():
+            # Notas (0.1.10): as referencias voltam ao texto colado, com notas novas.
+            import json
+            from editdoc.edicao import notas as ed_notas
+            try:
+                dado = json.loads(bytes(md.data(MIME_NOTAS)).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                dado = None
+            if isinstance(dado, dict):
+                ed_notas.aplicar_colado(self.document(), dado, inicio_colado,
+                                        self._cursor.position())
         self._cursor.endEditBlock()
         self._depois_de_mover()
         if md.hasFormat(MIME_OPACOS_OMITIDOS):
@@ -389,7 +438,7 @@ class PainelDocumento(VistaPaginas):
 
     def pagina_atual(self) -> int:
         """Pagina do caret, a partir de 0. Na edicao do cabecalho, a pagina editada."""
-        if self._edicao is not None:
+        if not self._no_corpo():
             return self._pagina_edicao
         return self.layout_pag.pagina_do_cursor(self._cursor.position())
 
@@ -414,7 +463,7 @@ class PainelDocumento(VistaPaginas):
         if indice is None:
             indice = self.pagina_atual()
         indice = min(max(int(indice), 0), self._paginas() - 1)
-        if self._edicao is None:
+        if self._no_corpo():
             self._cursor_corpo = QTextCursor(self._cursor)
         self._trocar_faixa(onde, indice, ponto)
 
@@ -435,8 +484,57 @@ class PainelDocumento(VistaPaginas):
         self.modoFaixaAlterado.emit()
         self._depois_de_mover()
 
+    def preparar_notas_ao_abrir(self) -> None:
+        """Documento recem-aberto (0.1.10): area de notas e espacadores feitos, desfazer zerado e
+        documento sem alteracao."""
+        doc = self.layout_pag.doc
+        self.layout_pag.atualizar_notas()
+        doc.clearUndoRedoStacks()
+        doc.setModified(False)
+        self.layout_pag.notas.zerar_desfazer()
+        self._limpar_cache()
+        self._altura_doc_anterior = None
+        self._atualizar_geometria()
+
+    def entrar_na_nota(self, nota, pos: int | None = None) -> None:
+        """Edita a nota no lugar (0.1.10), com o cursor em `pos` (padrao: o fim do texto)."""
+        if self._edicao is not None:
+            self.sair_da_faixa()
+        if self._nota_ed is not None and self._nota_ed is not nota:
+            self.layout_pag.notas.concluir_sessao()
+        elif self._no_corpo():
+            self._cursor_corpo = QTextCursor(self._cursor)
+        if self._nota_ed is not nota:
+            self.layout_pag.notas.iniciar_sessao(nota)
+            if not getattr(nota.doc, "_desfazer_ligado", False):
+                nota.doc._desfazer_ligado = True
+                self._ligar_desfazer(nota.doc)
+        self._nota_ed = nota
+        self._cursor = QTextCursor(nota.doc)
+        fim = nota.doc.characterCount() - 1
+        self._cursor.setPosition(fim if pos is None else min(max(pos, 0), fim))
+        achado = self.layout_pag.notas.caret(nota, self._cursor.position())
+        if achado is not None:
+            self._pagina_edicao = achado[0]
+        self._repassar_estado_do_desfazer()
+        self.modoFaixaAlterado.emit()
+        self._depois_de_mover()
+
     def sair_da_faixa(self) -> None:
         """Volta ao corpo, com o cursor onde estava. Sem efeito fora da edicao."""
+        if self._nota_ed is not None:
+            self._nota_ed = None
+            mudou = self.layout_pag.notas.concluir_sessao()
+            cursor = self._cursor_corpo
+            self._cursor_corpo = None
+            self._cursor = QTextCursor(cursor) if cursor is not None else \
+                QTextCursor(self.layout_pag.doc)
+            if mudou:
+                self._limpar_cache()
+            self._repassar_estado_do_desfazer()
+            self.modoFaixaAlterado.emit()
+            self._depois_de_mover()
+            return
         if self._edicao is None:
             return
         self._edicao = None
@@ -511,7 +609,20 @@ class PainelDocumento(VistaPaginas):
                 return "rodape", n
         return "corpo", n
 
+    def _nota_editada(self):
+        if self._nota_ed is None:
+            return None
+        return self._nota_ed, self._cursor
+
     def _retangulo_do_caret(self, m, n_total: int) -> QRectF | None:
+        if self._nota_ed is not None:
+            achado = self.layout_pag.notas.caret(self._nota_ed, self._cursor.position())
+            if achado is None:
+                return None
+            n, r = achado
+            self._pagina_edicao = n
+            x, y = m.doc_para_tela(r.x(), r.y(), n_total)
+            return QRectF(x, y, 1.0, r.height() * m.escala)
         if self._edicao is None:
             return super()._retangulo_do_caret(m, n_total)
         x, y, escala = self._origem_da_faixa_na_tela(self._edicao, self._pagina_edicao)
@@ -569,12 +680,12 @@ class PainelDocumento(VistaPaginas):
         Dentro de tabela, e no cabecalho e no rodape, vira Enter comum: o EditDoc nao
         quebra pagina dentro de celula, e cabecalho nao tem pagina.
         """
-        self._quebrar(quebra=self._cursor.currentTable() is None and self._edicao is None)
+        self._quebrar(quebra=self._cursor.currentTable() is None and self._no_corpo())
 
     # ----- estado e sinais internos ----------------------------------------
     def _depois_de_mover(self) -> None:
         self.mostrar_caret_agora()
-        if self._edicao is not None:
+        if not self._no_corpo():
             r = self._retangulo_do_caret(self._mapa(), self._paginas())
             if r is not None:
                 self._garantir_visivel_na_tela(r)
@@ -594,11 +705,11 @@ class PainelDocumento(VistaPaginas):
 
     def _selecao_atual(self) -> QTextCursor | None:
         # Na edicao do cabecalho a selecao e' do cabecalho (desenhar_faixas a pinta).
-        return self._cursor if self._edicao is None else None
+        return self._cursor if self._no_corpo() else None
 
     def _posicao_imagem_selecionada(self) -> int | None:
         # As alcas de imagem sao do corpo; no cabecalho, o tamanho muda pelo dialogo.
-        return self.objeto_na_linha_selecionado() if self._edicao is None else None
+        return self.objeto_na_linha_selecionado() if self._no_corpo() else None
 
     def objeto_na_linha_selecionado(self) -> int | None:
         """A imagem, ou o objeto preservado na linha com tamanho (caixa, forma: 0.1.9),
@@ -607,7 +718,7 @@ class PainelDocumento(VistaPaginas):
         if pos is not None:
             return pos
         c = self._cursor
-        if self._edicao is not None or not c.hasSelection() or \
+        if not self._no_corpo() or not c.hasSelection() or \
                 c.selectionEnd() - c.selectionStart() != 1:
             return None
         pos = c.selectionStart()
@@ -629,7 +740,7 @@ class PainelDocumento(VistaPaginas):
 
     def _inserir(self, texto: str) -> None:
         # Selecao com ancora de comentario (0.1.6): apagar e digitar sao um passo so'.
-        estrutural = self._estrutural() or (self._cursor.hasSelection() and self._edicao is None)
+        estrutural = self._estrutural() or (self._cursor.hasSelection() and self._no_corpo())
         if estrutural:
             self._cursor.beginEditBlock()
         if self._cursor.hasSelection():
@@ -639,7 +750,12 @@ class PainelDocumento(VistaPaginas):
         # Logo depois de um link, o texto digitado nao entra no link (0.1.3).
         para_digitar = ed_links.formato_para_digitar(self.document(), self._cursor.position(),
                                                      formato)
-        if formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato) \
+        if pq_notas.eh_nota(formato):
+            # Depois da marca da nota (0.1.10): o texto nao sai sobrescrito nem com o estilo da
+            # referencia; vem o formato do texto de antes da marca.
+            limpo = ed_links_formato_antes_da_nota(self.document(), self._cursor.position())
+            self._cursor.insertText(texto, limpo)
+        elif formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato) \
                 or pq_marcas.eh_marca(formato):
             # Digitar logo depois de uma imagem, de um campo, de um objeto opaco ou de uma
             # marca: o texto nao herda o formato de objeto (cada letra viraria outro objeto).
@@ -701,6 +817,7 @@ class PainelDocumento(VistaPaginas):
         # Enter no fim de um Titulo: o paragrafo novo usa o estilo seguinte (`next`) (M6).
         no_fim = self._cursor.atBlockEnd() and self._cursor.currentTable() is None
         bf = QTextBlockFormat(self._cursor.blockFormat())
+        bf.clearProperty(pq_notas.PROP_QUEBRA_NOTA)  # o espacador das notas nao passa adiante
         bf.setPageBreakPolicy(_QUEBRA if quebra else _SEM_QUEBRA)
         bf.clearProperty(pq_listas.PROP_SAIU_DA_LISTA)  # a marca do Backspace nao passa adiante
         proximo = ed_estilos.formatos_do_proximo(self.document(), bf) if no_fim else None
@@ -809,7 +926,7 @@ class PainelDocumento(VistaPaginas):
 
     def _pagina_do_teclado(self, anterior: bool, modo) -> None:
         """PageUp/PageDown: anda uma altura de tela, mantendo a coluna do caret."""
-        if self._edicao is not None:
+        if not self._no_corpo():
             # Cabecalho nao tem paginas: vai ao inicio ou ao fim dele.
             self._cursor.movePosition(M.Start if anterior else M.End, modo)
             self._depois_de_mover()
@@ -861,7 +978,7 @@ class PainelDocumento(VistaPaginas):
                 self.mover_objeto_selecionado(dx * passo, dy * passo)
                 return True
 
-        if k == Key.Key_Escape and self._edicao is not None:
+        if k == Key.Key_Escape and not self._no_corpo():
             self.sair_da_faixa()
             return True
 
@@ -952,7 +1069,7 @@ class PainelDocumento(VistaPaginas):
 
         O da frente ganha. O que fica atras do texto so' e' pego fora do texto (clicar numa
         letra sobre uma imagem de fundo poe o cursor na letra, como no Word)."""
-        if self._edicao is not None:
+        if not self._no_corpo():
             return None
         g = self.layout_pag.flutuantes
         if g.contexto is None or not g.lista():
@@ -1078,7 +1195,7 @@ class PainelDocumento(VistaPaginas):
         ix, iy = self._ponto_na_folha(a["inicio"], n0)
         if a["alca"] is None:
             n = n0
-            if self._edicao is None:
+            if self._no_corpo():
                 n = self._mapa().pagina_no_ponto(p.x(), p.y(), self._paginas())
             px, py = self._ponto_na_folha(p, n)
             dx, dy = px - ix, py - iy
@@ -1146,7 +1263,7 @@ class PainelDocumento(VistaPaginas):
         """Seleciona o objeto de novo e refaz a tela (o texto em volta mudou)."""
         self._limpar_cache()
         self._altura_doc_anterior = None
-        if self._edicao is None:
+        if self._no_corpo():
             self.layout_pag.atualizar_flutuantes()
         self._cursor = QTextCursor(self.document())
         self._cursor.setPosition(min(pos, self.document().characterCount() - 1))
@@ -1216,7 +1333,7 @@ class PainelDocumento(VistaPaginas):
         achado = self.objeto_na_folha(pos)
         if achado is not None:
             return achado
-        if self._edicao is not None:
+        if not self._no_corpo():
             return None
         r = self.layout_pag.retangulo_imagem(pos)
         if r is None:
@@ -1350,7 +1467,7 @@ class PainelDocumento(VistaPaginas):
 
     def imagem_em(self, p: QPointF) -> int | None:
         """Posicao da imagem sob o ponto do viewport, ou None (sempre None no cabecalho)."""
-        if self._edicao is not None:
+        if not self._no_corpo():
             return None
         pos = self.posicao_em(p)
         for k in (pos, pos - 1):
@@ -1361,7 +1478,7 @@ class PainelDocumento(VistaPaginas):
 
     def alca_em(self, p: QPointF) -> tuple[int, str, QRectF] | None:
         """(imagem, canto, retangulo) se o ponto esta' numa alca da imagem selecionada."""
-        if self._edicao is not None:
+        if not self._no_corpo():
             return None
         pos = self.objeto_na_linha_selecionado()
         if pos is None:
@@ -1421,9 +1538,41 @@ class PainelDocumento(VistaPaginas):
             self._depois_de_mover()
         self._arrastando = True
 
+    def nota_no_ponto(self, p: QPointF):
+        """(NotaQt, posicao) da nota sob o ponto do viewport (0.1.10), ou None."""
+        g = self.layout_pag.notas
+        if not g.paginas:
+            return None
+        m = self._mapa()
+        n_total = self._paginas()
+        n = m.pagina_no_ponto(p.x(), p.y(), n_total)
+        x, y = m.tela_para_doc(p.x(), p.y(), n_total)
+        if not (0 <= x <= self.layout_pag.efetiva_da(n).corpo_largura_tw()):
+            return None
+        return g.nota_em(n, x, y)
+
+    def _clique_na_nota(self, ev, achado) -> None:
+        nota, pos = achado
+        estender = bool(ev.modifiers() & Shift)
+        if nota is not self._nota_ed:
+            self.entrar_na_nota(nota, pos)
+        else:
+            self._cursor.setPosition(pos, Selecionar if estender else Mover)
+            self._depois_de_mover()
+        self._arrastando = True
+
     def mousePressEvent(self, ev) -> None:  # noqa: N802
         self.setFocus()
         self._arraste = None
+        if ev.button() == Qt.MouseButton.LeftButton and self._edicao is None:
+            # Notas (0.1.10): clique na area de notas edita a nota; fora dela, volta ao corpo.
+            achado = self.nota_no_ponto(ev.position())
+            if achado is not None:
+                self._clique_na_nota(ev, achado)
+                ev.accept()
+                return
+            if self._nota_ed is not None:
+                self.sair_da_faixa()
         if ev.button() == Qt.MouseButton.LeftButton and not ev.modifiers() & Ctrl:
             # Alca do objeto flutuante selecionado (0.1.9): redimensionar.
             alca = self.alca_flutuante_em(ev.position())
@@ -1488,6 +1637,39 @@ class PainelDocumento(VistaPaginas):
         ev.accept()
 
     def mouseDoubleClickEvent(self, ev) -> None:  # noqa: N802
+        if ev.button() == Qt.MouseButton.LeftButton and self._edicao is None:
+            # Notas (0.1.10): duplo clique no numero da nota volta a referencia; na marca da
+            # referencia, vai a nota.
+            from editdoc.edicao import notas as ed_notas
+            achado = self.nota_no_ponto(ev.position())
+            if achado is not None:
+                nota, pos = achado
+                if nota is not self._nota_ed:
+                    self.entrar_na_nota(nota, pos)
+                for k in (pos, pos - 1):
+                    cf = pq_links.formato_em(nota.doc, k) if k >= 0 else None
+                    m = pq_notas.marca_de(cf) if cf is not None else None
+                    if m is not None and m.propria:
+                        ed_notas.ir_para_referencia(self, nota.tipo, nota.id)
+                        self._arrastando = False
+                        ev.accept()
+                        return
+                self._cursor.setPosition(pos)
+                self._cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+                self._arrastando = False
+                self._depois_de_mover()
+                ev.accept()
+                return
+            if self._nota_ed is None:
+                pos = self.posicao_em(ev.position())
+                for k in (pos, pos - 1):
+                    cf = pq_links.formato_em(self.layout_pag.doc, k) if k >= 0 else None
+                    m = pq_notas.marca_de(cf) if cf is not None else None
+                    if m is not None and not m.propria:
+                        self._arrastando = False
+                        ed_notas.ir_para_nota(self, m.tipo, m.id)
+                        ev.accept()
+                        return
         if ev.button() == Qt.MouseButton.LeftButton:
             zona, n = self.zona_em(ev.position())
             achado = self.flutuante_das_faixas_em(ev.position()) if self._edicao is not None \
@@ -1572,6 +1754,11 @@ class PainelDocumento(VistaPaginas):
         if self._redim is not None:
             self._redim_atual = self._retangulo_do_arrasto(ev.position(), ev.modifiers())
             self.viewport().update()
+        elif self._arrastando and self._nota_ed is not None:
+            achado = self.nota_no_ponto(ev.position())
+            if achado is not None and achado[0] is self._nota_ed:
+                self._cursor.setPosition(achado[1], Selecionar)
+                self._depois_de_mover()
         elif self._arrastando and self._edicao is not None:
             self._cursor.setPosition(self._posicao_na_faixa(self._edicao, self._pagina_edicao,
                                                             ev.position()), Selecionar)
@@ -1645,7 +1832,7 @@ class PainelDocumento(VistaPaginas):
 
     def link_em(self, p: QPointF) -> int | None:
         """Posicao do caractere de link sob o ponto do viewport, ou None (so' no corpo)."""
-        if self._edicao is not None:
+        if not self._no_corpo():
             return None
         pos = self.posicao_em(p)
         doc = self.layout_pag.doc
@@ -1695,6 +1882,42 @@ class PainelDocumento(VistaPaginas):
     def focusOutEvent(self, ev) -> None:  # noqa: N802
         super().focusOutEvent(ev)
         self.definir_piscar(False)
+
+
+def ed_links_formato_antes_da_nota(doc, pos: int) -> QTextCharFormat:
+    """O formato para o texto digitado logo depois de uma marca de nota: o do caractere antes
+    das marcas (sem objeto), ou o do bloco."""
+    k = pos - 1
+    while k >= 0:
+        cf = pq_links.formato_em(doc, k)
+        if cf is None or not (pq_notas.eh_nota(cf) or pq_marcas.eh_marca(cf)):
+            break
+        k -= 1
+    base = pq_links.formato_em(doc, k) if k >= 0 else None
+    if base is None or base.objectType() >= QTextFormat.ObjectTypes.UserObject.value \
+            or base.isImageFormat():
+        base = doc.findBlock(pos).charFormat()
+    limpo = QTextCharFormat(base)
+    for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO, *pq_opacos.PROPS_DE_OPACO,
+                        *pq_marcas.PROPS_DE_MARCA, *pq_notas.PROPS_DE_NOTA):
+        limpo.clearProperty(propriedade)
+    return limpo
+
+
+def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
+    """O HTML do trecho copiado sem a quebra de pagina do espacador das notas (0.1.10): ela nao
+    e' do usuario, e colar a levaria como quebra de verdade."""
+    from editdoc.ponte_qt.imagens import DocumentoQt
+    tmp = DocumentoQt()
+    QTextCursor(tmp).insertFragment(frag)
+    tem = False
+    bloco = tmp.begin()
+    while bloco.isValid():
+        if pq_notas.eh_espacador(bloco.blockFormat()):
+            QTextCursor(bloco).setBlockFormat(pq_notas.sem_espacador(bloco.blockFormat()))
+            tem = True
+        bloco = bloco.next()
+    return tmp.toHtml() if tem else frag.toHtml()
 
 
 def _confirmar_abrir_link(pai, url: str) -> bool:

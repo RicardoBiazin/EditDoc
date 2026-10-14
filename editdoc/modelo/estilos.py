@@ -398,6 +398,19 @@ def estilos_latentes() -> list[Estilo]:
         Estilo("CommentText", "annotation text", baseado_em="Normal", proximo="CommentText",
                prioridade=99, oculto=True, revelar_ao_usar=True,
                paragrafo={"espacamento_linha_pct": 100}, caractere={"tamanho_meio_pt": 20}),
+        # Notas (0.1.10): a marca sobrescrita e o texto em 10 pt, sem espaco depois, como o Word.
+        Estilo("FootnoteReference", "footnote reference", tipo="caractere", prioridade=99,
+               oculto=True, revelar_ao_usar=True, caractere={"sobrescrito": True}),
+        Estilo("FootnoteText", "footnote text", baseado_em="Normal", proximo="FootnoteText",
+               prioridade=99, oculto=True, revelar_ao_usar=True,
+               paragrafo={"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
+               caractere={"tamanho_meio_pt": 20}),
+        Estilo("EndnoteReference", "endnote reference", tipo="caractere", prioridade=99,
+               oculto=True, revelar_ao_usar=True, caractere={"sobrescrito": True}),
+        Estilo("EndnoteText", "endnote text", baseado_em="Normal", proximo="EndnoteText",
+               prioridade=99, oculto=True, revelar_ao_usar=True,
+               paragrafo={"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
+               caractere={"tamanho_meio_pt": 20}),
     ]
 
 

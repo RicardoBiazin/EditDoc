@@ -18,6 +18,7 @@ from editdoc.edicao import cabecalhos as ed_cabecalhos
 from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import formatacao, tabelas
 from editdoc.edicao import listas as ed_listas
+from editdoc.edicao import notas as ed_notas
 from editdoc.modelo.folhas import passo_de_zoom
 
 
@@ -230,6 +231,16 @@ DEFINICOES = (
     Definicao("comentario_proximo", "Próximo", (), dica="Ir para o próximo comentário"),
     Definicao("mostrar_comentarios", "Mostrar comentários", (), True,
               "Mostrar o painel de comentários"),
+    # Referencias: notas de rodape e de fim (0.1.10).
+    Definicao("inserir_nota_rodape", "Inserir nota de rodapé", ("Ctrl+Alt+F",),
+              dica="Inserir nota de rodapé no cursor"),
+    Definicao("inserir_nota_fim", "Inserir nota de fim", ("Ctrl+Alt+D",),
+              dica="Inserir nota de fim no cursor"),
+    Definicao("proxima_nota", "Próxima nota", (), dica="Ir para a próxima nota de rodapé ou de fim"),
+    Definicao("nota_anterior", "Nota anterior", (),
+              dica="Ir para a nota de rodapé ou de fim anterior"),
+    Definicao("opcoes_notas", "Opções de notas...", (),
+              dica="Formato, início, reinício e posição das notas; converter rodapé e fim"),
 )
 
 #: Estilos que os atalhos aplicam: id da acao -> nome canonico do Word.
@@ -461,6 +472,12 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
     executores.update(executores_inserir)
     for id_, gancho in REVISAO_DAS_ACOES.items():
         executores[id_] = lambda g=gancho: _chamar(revisao, g)
+    # Notas (0.1.10): o dialogo das opcoes e' da janela.
+    executores["inserir_nota_rodape"] = lambda: ed_notas.inserir(editor, "rodape")
+    executores["inserir_nota_fim"] = lambda: ed_notas.inserir(editor, "fim")
+    executores["proxima_nota"] = lambda: ed_notas.proxima(editor)
+    executores["nota_anterior"] = lambda: ed_notas.proxima(editor, anterior=True)
+    executores["opcoes_notas"] = lambda: _chamar(inserir, "opcoes_notas")
     return executores
 
 

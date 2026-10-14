@@ -112,6 +112,8 @@ SUITES = [
      "0.1.8: digitacao num manual pesado: conferencia dos floats, tiles por tecla, caches e p95 do gate"),
     ("teste_mover_redimensionar.py",
      "0.1.9: mover e redimensionar objetos (mouse, setas, dialogo), quebra de texto, linha <-> flutuante, cabecalho, VML"),
+    ("teste_notas.py",
+     "0.1.10: notas de rodape e de fim: c14n, numeracao, nota na pagina da referencia, edicao, PDF"),
     ("teste_galeria.py",
      "galeria e painel de estilos acompanham o cursor; faixa final sem corte em todas as abas"),
     ("teste_exibir.py",

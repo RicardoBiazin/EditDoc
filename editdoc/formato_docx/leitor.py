@@ -52,6 +52,7 @@ from dataclasses import replace
 from lxml import etree
 
 from editdoc.formato_docx import comentarios as fx_comentarios
+from editdoc.formato_docx import notas as fx_notas
 from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos
@@ -67,9 +68,10 @@ from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import (FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO,
                                    normalizar_instrucao, tipo_do_campo)
 from editdoc.modelo import comentarios as mod_comentarios
+from editdoc.modelo import notas as mod_notas
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Campo, Celula,
                                       Documento, Imagem, Linha, Link, MarcaCampo,
-                                      MarcaComentario, MarcaConteudo, Marcador,
+                                      MarcaComentario, MarcaConteudo, Marcador, MarcaNota,
                                       Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
@@ -114,6 +116,8 @@ LIMITES_PADRAO = {
     **mod_numeracao.LIMITES,
     # Comentarios (0.1.6): quantos, o tamanho de cada um e do comments.xml, e respostas.
     **mod_comentarios.LIMITES,
+    # Notas de rodape e de fim (0.1.10): quantas, o tamanho de cada uma e da parte.
+    **mod_notas.LIMITES,
 }
 
 #: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
@@ -262,6 +266,12 @@ class _Contexto:
         #: comentario) nao vale: o comentario sem referencia no corpo sai, com aviso.
         self.historia = "corpo"
         self.comentarios_ids: set[int] = set()
+        #: notas (0.1.10): os w:id lidos de cada parte, os ja' citados no corpo, o tipo da
+        #: nota que se le e a referencia com marca personalizada que espera o simbolo
+        self.notas_ids: dict[str, set[int]] = {"rodape": set(), "fim": set()}
+        self.notas_citadas: dict[str, set[int]] = {"rodape": set(), "fim": set()}
+        self.nota_tipo: str | None = None
+        self.simbolo_pendente: Run | None = None
 
     def estilo_existe(self, sid, tipo: str) -> bool:
         """O estilo vale: existe com o tipo, ou (0.1.6) o arquivo o cita sem definir e a
@@ -565,9 +575,65 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     elif loc == "annotationRef":
         return  # a marca do inicio do comentario (dentro do comments.xml): o escritor a refaz
     elif loc in ("footnoteReference", "endnoteReference"):
-        c.somar("NOTA")
+        _referencia_de_nota(f, loc, partes, ctx)
+    elif loc in ("footnoteRef", "endnoteRef"):
+        # O numero da propria nota (0.1.10), no comeco do conteudo dela.
+        tipo = "rodape" if loc == "footnoteRef" else "fim"
+        if ctx.historia == "nota" and ctx.nota_tipo == tipo and _destino_do_texto(ctx) is None:
+            partes.descarregar()
+            partes.saida.append(replace(partes.base, texto="",
+                                        marca=MarcaNota(tipo, 0, propria=True)))
+        else:
+            c.somar("NOTA")
     else:
         c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _referencia_de_nota(f, loc: str, partes: _Pedacos, ctx: _Contexto) -> None:
+    """w:footnoteReference / w:endnoteReference (0.1.10): marca no fluxo, com a formatacao do
+    run (o rStyle "FootnoteReference"). So' vale no corpo, citando uma nota lida, uma vez; o
+    resto sai com o aviso NOTA (no cabecalho, no rodape, na caixa de texto o Word tambem nao
+    a mostraria como nota do documento)."""
+    tipo = "rodape" if loc == "footnoteReference" else "fim"
+    ident = _inteiro(_atr(f, "id"))
+    if (ident is None or ctx.historia != "corpo" or ident not in ctx.notas_ids[tipo]
+            or ident in ctx.notas_citadas[tipo] or _destino_do_texto(ctx) is not None):
+        ctx.coletor.somar("NOTA")
+        return
+    ctx.notas_citadas[tipo].add(ident)
+    partes.descarregar()
+    marca = MarcaNota(tipo, ident, personalizada=_onoff_atr(f, "customMarkFollows"))
+    run = replace(partes.base, texto="", marca=marca)
+    partes.saida.append(run)
+    if marca.personalizada:
+        # O simbolo e' o run seguinte (o Word grava assim): `_runs_em` o guarda na marca.
+        ctx.simbolo_pendente = run
+
+
+#: Filhos aceitos no run do simbolo da marca personalizada.
+_FILHOS_SIMBOLO = {"rPr", "t", "sym"}
+
+
+def _simbolo_de(r, ctx: _Contexto) -> str | None:
+    """Os filhos do run do simbolo (w:rPr e um w:t curto ou um w:sym) em forma canonica, ou
+    None se o run tem outra coisa (ai' ele fica como texto, e a marca sem simbolo)."""
+    filhos = [f for f in r if isinstance(f.tag, str)]
+    nomes = [_local(f) for f in filhos]
+    if not filhos or any(ns != W or loc not in _FILHOS_SIMBOLO for ns, loc in nomes):
+        return None
+    conteudo = [loc for _ns, loc in nomes if loc != "rPr"]
+    if len(conteudo) != 1:
+        return None
+    if conteudo == ["t"]:
+        t = r.find(q("t"))
+        if not (t.text or "") or len(t.text) > 16:
+            return None
+    rpr = r.find(q("rPr"))
+    if rpr is not None:
+        estilo = rpr.find(q("rStyle"))
+        if estilo is not None and not ctx.estilo_existe(_atr(estilo, "val"), "caractere"):
+            return None
+    return fx_props.canonico("r", filhos)
 
 
 #: Marca de inicio ainda sem o codigo (o end nao chegou). Sobra so' em campo sem fim, e
@@ -858,7 +924,17 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             continue
         if ns != W:
             continue
+        if loc != "r" and loc not in _IGNORADOS_INLINE:
+            ctx.simbolo_pendente = None
         if loc == "r":
+            pendente = ctx.simbolo_pendente
+            if pendente is not None:
+                # Run do simbolo da nota com marca personalizada (0.1.10): vai para a marca.
+                ctx.simbolo_pendente = None
+                simbolo = _simbolo_de(f, ctx)
+                if simbolo is not None:
+                    pendente.marca = replace(pendente.marca, simbolo=simbolo)
+                    continue
             _ler_run(f, ctx, saida)
         elif loc == "hyperlink":
             link = _ler_link(f, ctx)
@@ -967,7 +1043,9 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
     # Marcadores que estavam entre paragrafos (no corpo ou na celula) entram no comeco deste.
     runs: list[Run] = ctx.marcas_pendentes
     ctx.marcas_pendentes = []
+    ctx.simbolo_pendente = None
     _runs_em(p, ctx, runs)
+    ctx.simbolo_pendente = None
     if ctx.nivel_tabela > 0:
         # Quebra de pagina dentro de celula: o EditDoc nao pagina dentro da tabela por
         # quebra manual. Vira quebra de linha, com aviso.
@@ -1500,6 +1578,31 @@ def _faixas_da_secao(sect, ctx: _Contexto, final: bool) -> dict[tuple[str, str],
     return efetivas
 
 
+def _propriedades_das_notas(notas, sect, config: dict, coletor: Coletor):
+    """footnotePr e endnotePr do sectPr final e do settings.xml (0.1.10). Valor fora do esquema
+    sai, com aviso FORMATACAO. Sem notas no arquivo, o catalogo so' existe se ha' propriedade."""
+    secao: dict = {}
+    secao_xml: dict = {}
+    if sect is not None:
+        for tipo in mod_notas.TIPOS:
+            el = sect.find(q(mod_notas.LOCAL[tipo] + "Pr"))
+            pr, descartado = fx_notas.ler_propriedades(el, tipo)
+            if descartado:
+                coletor.somar("FORMATACAO")
+            if pr is not None:
+                secao[tipo] = pr
+                if not descartado:
+                    secao_xml[tipo] = fx_notas.canonico(el)
+    if notas is None and not secao and not config:
+        return None
+    if notas is None:
+        notas = mod_notas.Notas()
+    notas.secao = secao
+    notas.secao_xml = secao_xml
+    notas.configuracao = dict(config)
+    return notas
+
+
 def _numeracao_da_secao(sect, pagina: Pagina, ctx: _Contexto) -> Pagina:
     """Primeira pagina diferente (w:titlePg) e numeracao (w:pgNumType) do sectPr."""
     titulo = sect.find(q("titlePg"))
@@ -1824,6 +1927,161 @@ def _ler_comentarios(relacoes: dict, ctx: _Contexto, ler_parte, relacoes_de, tam
         tipos_rel=tipos)
 
 
+# -- notas (0.1.10) ---------------------------------------------------------------------
+
+#: Relacoes que a nota de origem pode citar e continuar voltando com o XML de origem: o link
+#: (externo) e a imagem (os bytes vao junto; o alvo e' recalculado ao gravar, o Id fica).
+_RELACOES_DA_NOTA = ("/hyperlink", "/image")
+
+
+def _relacoes_da_parte(relacoes: dict, ler_parte, nomes: set) -> tuple[tuple, bool]:
+    """((rId, tipo, alvo, externo, dados), integra): todas as relacoes da parte de notas; integra
+    = so' links e imagens (a parte pode voltar com os bytes de origem)."""
+    saida = []
+    integra = True
+    for rid, (tipo, alvo, externo) in sorted(relacoes.items()):
+        if externo:
+            saida.append((rid, tipo, alvo, True, None))
+            integra = integra and tipo.endswith("/hyperlink")
+            continue
+        if tipo.endswith("/image") and alvo in nomes:
+            try:
+                _validar_nome(alvo)
+                dados = ler_parte(alvo)
+            except ErroDocx:
+                integra = False
+                continue
+            if mod_imagem.formato_de(dados) in mod_imagem.FORMATOS:
+                saida.append((rid, tipo, alvo, False, dados))
+            else:
+                integra = False  # EMF, SVG...: o escritor so' regrava PNG, JPEG, GIF e BMP
+        else:
+            integra = False
+    return tuple(saida), integra
+
+
+def _original_da_nota(el, relacoes: tuple, marcadores_lidos: int) -> tuple[bytes | None, tuple]:
+    """O XML de origem da nota e as relacoes que ele cita, quando ele pode voltar igual: so'
+    links e imagens; sem ancora de comentario (o comentario na nota nao e' lido, e a ancora
+    ficaria pendurada); com todos os marcadores lidos (nome repetido sairia do modelo e ficaria
+    no XML)."""
+    por_id = {r[0]: r for r in relacoes}
+    usadas = []
+    for rid in fx_notas.r_ids(el):
+        rel = por_id.get(rid)
+        if rel is None or not rel[1].endswith(_RELACOES_DA_NOTA) or (not rel[3] and rel[4] is None):
+            return None, ()
+        if rel not in usadas:
+            usadas.append(rel)
+    for local in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+        if el.find(".//" + q(local)) is not None:
+            return None, ()
+    if len(el.findall(".//" + q("bookmarkStart"))) != marcadores_lidos:
+        return None, ()
+    return etree.tostring(el), tuple(usadas)
+
+
+def _ler_notas(relacoes: dict, ctx: _Contexto, ler_parte, relacoes_de, tamanho_de,
+               profundidade: int):
+    """word/footnotes.xml e word/endnotes.xml -> Notas (sem as que nao tem referencia: isso se
+    ve depois do corpo). None se o documento nao tem a parte. A parte que passa dos limites ou
+    nao abre nao e' lida aqui: as separadoras continuam voltando pelo pacote (como ate' a
+    0.1.9), e as referencias a ela saem com o aviso NOTA."""
+    alvos: dict = {}
+    tipos: dict = {}
+    for _rid, (tipo, alvo, externo) in sorted(relacoes.items()):
+        chave = fx_notas.SUFIXOS.get(tipo.rstrip("/").rsplit("/", 1)[-1])
+        if chave is None or externo or alvo not in ctx.nomes or chave in alvos:
+            continue
+        alvos[chave] = alvo
+        tipos[chave] = tipo
+    if not alvos:
+        return None
+    lim = ctx.lim
+    cat = mod_notas.Notas()
+    for tipo, alvo in alvos.items():
+        local = mod_notas.LOCAL[tipo]
+        try:
+            _validar_nome(alvo)
+            if tamanho_de(alvo) > lim["notas_bytes"]:
+                continue
+            dados = ler_parte(alvo)
+            raiz = _parse(dados, alvo, profundidade)
+            if _local(raiz) != (W, fx_notas.RAIZES[tipo]) or _profundidade(raiz) > profundidade:
+                continue
+        except ErroDocx:
+            continue
+        elementos = [el for el in raiz if _local(el) == (W, local)]
+        if sum(1 for el in elementos if (_atr(el, "type") or "normal") == "normal") > lim["notas"]:
+            continue
+        rels = relacoes_de(alvo)
+        relacoes_parte, integra = _relacoes_da_parte(rels, ler_parte, ctx.nomes)
+        relacoes_doc, ignoraveis_doc = ctx.relacoes, ctx.ignoraveis
+        ctx.relacoes = rels
+        ctx.ignoraveis = opacos.ignoraveis_da_raiz(raiz)
+        ctx.historia = "nota"
+        ctx.nota_tipo = tipo
+        itens: list = []
+        especiais: list = []
+        try:
+            for el in elementos:
+                ident = _inteiro(_atr(el, "id"))
+                tipo_nota = _atr(el, "type") or "normal"
+                if ident is None or ident in ctx.notas_ids[tipo] or \
+                        any(e.id == ident for e in especiais):
+                    ctx.coletor.somar("NOTA")
+                    continue
+                if tipo_nota in mod_notas.ESPECIAIS:
+                    especiais.append(mod_notas.Especial(tipo_nota, ident, etree.tostring(el)))
+                    continue
+                if tipo_nota != "normal" or len(etree.tostring(el)) > lim["nota_bytes"] \
+                        or len(el.findall(".//" + q("p"))) > lim["nota_paragrafos"]:
+                    ctx.coletor.somar("NOTA")
+                    continue
+                antes = len(ctx.marcadores_nomes)
+                blocos: list[Bloco] = []
+                _blocos(el, blocos, ctx)
+                _fechar_historia(blocos, ctx)
+                if not blocos:
+                    blocos = [Paragrafo()]
+                blocos = normalizar(Documento(paragrafos=blocos)).paragrafos
+                original, usadas = _original_da_nota(el, relacoes_parte,
+                                                     len(ctx.marcadores_nomes) - antes)
+                ctx.notas_ids[tipo].add(ident)
+                itens.append(mod_notas.Nota(tipo, ident, tuple(blocos), original, usadas))
+        finally:
+            ctx.relacoes, ctx.ignoraveis = relacoes_doc, ignoraveis_doc
+            ctx.historia = "corpo"
+            ctx.nota_tipo = None
+        cat.itens[tipo] = itens
+        cat.especiais[tipo] = especiais
+        # Todas as notas normais da parte de origem, na ordem (a lida, a que passou do limite,
+        # a sem referencia): a parte so' volta com os bytes de origem se o catalogo for este.
+        cat.originais += tuple((tipo, _inteiro(_atr(el, "id"))) for el in elementos
+                               if (_atr(el, "type") or "normal") == "normal")
+        cat.xml[tipo] = dados if integra else None
+        cat.raizes[tipo] = fx_notas.raiz_vazia(dados)
+        cat.relacoes_parte[tipo] = relacoes_parte
+        cat.tipos_rel[tipo] = tipos[tipo]
+    if not cat.tipos_rel:
+        return None
+    return cat
+
+
+def _notas_ancoradas(cat, paras: list, coletor: Coletor):
+    """So' ficam as notas com referencia no corpo. A nota sem referencia sai, com o aviso NOTA
+    (o Word nao a mostraria, mas o arquivo tinha)."""
+    if cat is None:
+        return None
+    citadas = {(r.marca.tipo, r.marca.id) for _p, r in mod_notas.referencias_do_corpo(paras)}
+    for tipo in mod_notas.TIPOS:
+        fora = [n for n in cat.itens.get(tipo, []) if (tipo, n.id) not in citadas]
+        if fora:
+            coletor.somar("NOTA", len(fora))
+            cat.itens[tipo] = [n for n in cat.itens[tipo] if (tipo, n.id) in citadas]
+    return cat
+
+
 def _comentarios_ancorados(cat, paras: list, coletor: Coletor):
     """So' ficam os comentarios com referencia no corpo; as ancoras dos outros saem. O que sai
     conta COMENTARIO (perda: o Word nao mostraria, mas o arquivo tinha)."""
@@ -1978,6 +2236,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         fontes_tema: dict = {}
         tema: bytes | None = None
         pares_impares = False
+        notas_config: dict = {}
         relacoes = relacoes_de(alvo_doc)
         for tipo, alvo, externo in relacoes.values():
             if externo or alvo not in nomes:
@@ -2004,6 +2263,12 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                 tab_padrao = _tab_padrao(config)
                 pares = config.find(q("evenAndOddHeaders"))
                 pares_impares = pares is not None and _onoff(pares)
+                # Notas (0.1.10): as propriedades do documento inteiro.
+                for tipo_nota in mod_notas.TIPOS:
+                    pr, _descartado = fx_notas.ler_propriedades(
+                        config.find(q(mod_notas.LOCAL[tipo_nota] + "Pr")), tipo_nota)
+                    if pr is not None:
+                        notas_config[tipo_nota] = pr
 
         ctx = _Contexto(coletor, None, lim)
         ctx.relacoes = relacoes
@@ -2036,6 +2301,8 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         # Comentarios (0.1.6): o comments.xml antes do corpo (as ancoras citam os w:id).
         comentarios = _ler_comentarios(relacoes, ctx, ler_parte, relacoes_de, tamanho_de,
                                        profundidade)
+        # Notas (0.1.10): as partes antes do corpo (as referencias citam os w:id).
+        notas = _ler_notas(relacoes, ctx, ler_parte, relacoes_de, tamanho_de, profundidade)
         paras: list[Bloco] = []
         _blocos(corpo, paras, ctx)
         _fechar_historia(paras, ctx)
@@ -2051,6 +2318,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         pagina = ctx.pagina_final if ctx.pagina_final is not None else Pagina()
         if sect_final is not None:
             pagina = _numeracao_da_secao(sect_final, pagina, ctx)
+        notas = _propriedades_das_notas(notas, sect_final, notas_config, coletor)
         pagina = replace(pagina, pares_impares=pares_impares)
         cabecalhos: dict[str, list[Bloco]] = {}
         rodapes: dict[str, list[Bloco]] = {}
@@ -2079,12 +2347,16 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             coletor=coletor, lim=lim, nomes=nomes, ler_parte=ler_parte, relacoes_de=relacoes_de,
             tipo_de=tipo_de, parse=lambda dados, nome: _parse(dados, nome, profundidade),
             alvo_doc=alvo_doc, rels_pacote=relacoes_de(""), rels_doc=relacoes, raiz_doc=raiz,
-            tema_tratado=tema is not None, proibidos=reescritas)
+            tema_tratado=tema is not None, proibidos=reescritas,
+            notas_lidas={t for t in mod_notas.TIPOS
+                         if notas is not None and t in notas.tipos_rel})
 
     comentarios = _comentarios_ancorados(comentarios, paras, coletor)
+    notas = _notas_ancoradas(notas, paras, coletor)
     doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
                                rodapes=rodapes, estilos=ctx.estilos, pacote=pacote,
                                numeracao=ctx.numeracao, comentarios=comentarios, **meta))
+    doc.notas = notas
     mod_numeracao.tipos_dos_paragrafos(doc)
     return doc, coletor.avisos()
 

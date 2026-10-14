@@ -12,7 +12,7 @@ acao por sinal.
 
 Abas (M6): Pagina Inicial (Area de transferencia, Fonte, Paragrafo, Estilos e Edicao),
 Inserir (Paginas, Tabelas, Ilustracoes, Links, Cabecalho e Rodape), Layout (Configurar Pagina e
-Paragrafo: recuos e espacamento), Revisao (0.1.6: Comentarios) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
+Paragrafo: recuos e espacamento), Referencias (0.1.10: Notas de Rodape), Revisao (0.1.6: Comentarios) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
 (M5) so' aparece durante a edicao do cabecalho, como a aba contextual do Word. Cada aba
 tem o seu recolhimento; a largura minima da faixa e' a da aba mais larga toda recolhida.
 
@@ -75,12 +75,17 @@ ROTULOS = {
     "novo_comentario": "Novo comentário", "excluir_comentario": "Excluir",
     "comentario_anterior": "Anterior", "comentario_proximo": "Próximo",
     "mostrar_comentarios": "Mostrar comentários",
+    "inserir_nota_rodape": "Nota de Rodapé", "inserir_nota_fim": "Nota de Fim",
+    "proxima_nota": "Próxima", "nota_anterior": "Anterior", "opcoes_notas": "Opções",
 }
 
 #: Nome da aba contextual do cabecalho e do rodape.
 ABA_CABECALHO = "Cabeçalho e Rodapé"
 ABA_REVISAO = "Revisão"
-ABAS = ("Página Inicial", "Inserir", "Layout", ABA_REVISAO, "Exibir", ABA_CABECALHO)
+#: Notas de rodape e de fim (0.1.10), na ordem do Word (entre Layout e Revisao).
+ABA_REFERENCIAS = "Referências"
+ABAS = ("Página Inicial", "Inserir", "Layout", ABA_REFERENCIAS, ABA_REVISAO, "Exibir",
+        ABA_CABECALHO)
 
 
 class BotaoAcao(QToolButton):
@@ -364,6 +369,7 @@ class Faixa(QFrame):
         self._pagina_inicial = self._montar_pagina_inicial(c)
         self._inserir = self._montar_inserir(c)
         self._layout = self._montar_layout(c)
+        self._referencias = self._montar_referencias(c)
         self._revisao = self._montar_revisao(c)
         self._exibir = self._montar_exibir(c)
         cabecalho_linha = _linha([
@@ -400,8 +406,8 @@ class Faixa(QFrame):
         topo.addWidget(self._abas, 1)
 
         # Na ordem de ABAS: o indice da aba e' o da pagina do QStackedWidget.
-        for widget in (self._pagina_inicial, self._inserir, self._layout, self._revisao,
-                       self._exibir, self._cabecalho):
+        for widget in (self._pagina_inicial, self._inserir, self._layout, self._referencias,
+                       self._revisao, self._exibir, self._cabecalho):
             self._conteudo.addWidget(widget)
         self._abas.currentChanged.connect(self._conteudo.setCurrentIndex)
         if hasattr(editor, "modoFaixaAlterado"):
@@ -547,6 +553,21 @@ class Faixa(QFrame):
                                       [_botao(c, "posicao_tamanho")]),
             _menu("Organizar", [*quebras, c.acao("posicao_tamanho")]))
         linha = LinhaDeGrupos([pagina, paragrafo, organizar], [organizar, pagina])
+        linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
+        self._linhas.append(linha)
+        return linha
+
+    def _montar_referencias(self, c: Comandos) -> LinhaDeGrupos:
+        """Referencias (0.1.10): o grupo Notas de Rodape, como no Word."""
+        notas = GrupoFaixa(
+            "Notas de Rodapé", _duas_linhas(
+                [_botao(c, "inserir_nota_rodape"), _botao(c, "inserir_nota_fim")],
+                [_botao(c, "proxima_nota"), _botao(c, "nota_anterior"),
+                 _botao(c, "opcoes_notas")]),
+            _menu("Notas de Rodapé", [c.acao(i) for i in (
+                "inserir_nota_rodape", "inserir_nota_fim", "proxima_nota", "nota_anterior",
+                "opcoes_notas")]))
+        linha = LinhaDeGrupos([notas], [notas])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha

@@ -31,6 +31,10 @@ Objetos flutuantes (0.1.7): `flutuantes` (ponte_qt/flutuantes.py) sabe onde o co
 folha (pagina do arquivo, efetiva e altura do corpo); `atualizar_flutuantes` confere a reserva
 de espaco depois de cada mudanca.
 
+Notas (0.1.10): `notas` (interface/notas.py) guarda os documentos das notas, o plano da area
+de notas de cada pagina e os espacadores; `atualizar_notas` confere depois de cada mudanca. As
+paginas a mais (so' notas, depois do texto) entram em `numero_paginas`.
+
 Campos no corpo: o contexto (`contexto_campos`) diz o total de paginas e a altura do
 corpo; quando o total muda, os campos sao medidos de novo (`atualizar_campos`).
 """
@@ -113,6 +117,8 @@ class LayoutPaginado:
         self.contexto_campos = campos.ContextoDeCampos()
         self._manipulador_campos = campos.registrar(self.doc, self.contexto_campos)
         self._chave_campos: tuple | None = None
+        from editdoc.interface.notas import ConjuntoDeNotas
+        self.notas = ConjuntoDeNotas(self)
         self._aplicar()
         # Ajustar fonte e margem marca o documento como alterado. Um documento novo nasce limpo.
         self.doc.setModified(False)
@@ -125,6 +131,7 @@ class LayoutPaginado:
         self.doc.setDefaultFont(fonte)
         self.doc.setModified(modificado)
         self.faixas.definir_fonte(fonte)
+        self.notas.definir_fonte(fonte)
 
     def _aplicar(self) -> None:
         self.doc.setPageSize(QSizeF(self.pagina.corpo_largura_tw(),
@@ -140,6 +147,7 @@ class LayoutPaginado:
         """Troca papel ou margens: o documento e' refeito para o novo corpo."""
         self.pagina_arquivo = pagina
         self.faixas.definir_largura(pagina.corpo_largura_tw())
+        self.notas.definir_largura(pagina.corpo_largura_tw())
         self.pagina = self._efetiva()
         self._topos = self._calcular_topos()
         self._efetivas = {}
@@ -225,6 +233,14 @@ class LayoutPaginado:
         campos.refazer_campos(self.doc, posicoes)
         return True
 
+    def atualizar_notas(self) -> bool:
+        """Espacadores, numeros e area das notas em dia (0.1.10). True se a tela muda."""
+        return self.notas.atualizar()
+
+    def paginas_do_texto(self) -> int:
+        """As paginas do corpo (sem as paginas a mais, so' de notas)."""
+        return max(1, self.doc.pageCount())
+
     def atualizar_flutuantes(self) -> bool:
         """Reserva dos objetos flutuantes e linhas ao lado deles em dia (0.1.7). True se o
         layout mudou (quem pinta limpa o cache)."""
@@ -236,7 +252,8 @@ class LayoutPaginado:
         return float(self.pagina.corpo_altura_tw())
 
     def numero_paginas(self) -> int:
-        return max(1, self.doc.pageCount())
+        # Paginas a mais (0.1.10): notas de fim e continuacao de notas de rodape depois do texto.
+        return max(1, self.doc.pageCount()) + getattr(getattr(self, "notas", None), "extras", 0)
 
     def pagina_de_y(self, y: float) -> int:
         n = math.floor(y / self.hb)
@@ -330,6 +347,7 @@ class LayoutPaginado:
         """Solta o dispositivo antes de o documento morrer."""
         if self._dispositivo is not None:
             self.faixas.limpar()
+            self.notas.limpar()
             self.doc.documentLayout().setPaintDevice(None)
             self._dispositivo = None
 

@@ -15,8 +15,10 @@ relacao do pacote (_rels/.rels) e' classificada:
 - o que tem aviso proprio e nao volta: macros e personalizacoes de teclado e barras
   (MACROS), assinatura digital (ASSINATURA: deixaria de valer), a miniatura (MINIATURA:
   mostraria o conteudo antigo);
-- notas de rodape e de fim: voltam so' as separadoras (o Word exige as que o settings.xml
-  cita); as notas de verdade nao voltam e tem o aviso NOTA;
+- notas de rodape e de fim: desde a 0.1.10 o leitor e o escritor as tratam
+  (`formato_docx/notas.py`). Aqui so' fica a parte que o leitor nao conseguiu ler (acima dos
+  limites, XML que nao abre): voltam as separadoras (o Word exige as que o settings.xml cita),
+  e as notas de verdade tem o aviso NOTA, como ate' a 0.1.9;
 - o resto volta byte a byte, com o fecho das relacoes (fontTable com as fontes embutidas,
   customXml com o itemProps, glossario, people.xml...). Parte que nao pode ir inteira
   (relacao quebrada, tipo proibido, XML invalido, limite) tem o aviso PARTE_PERDIDA.
@@ -63,6 +65,8 @@ _CONTEUDO = {"image", "header", "footer", "hyperlink", "chart", "diagramData", "
              "diagramQuickStyle", "diagramColors", "diagramDrawing", "oleObject", "package",
              "control", "aFChunk", "subDocument", "video", "audio", "media"}
 _NOTAS = {"footnotes": "footnote", "endnotes": "endnote"}
+#: Sufixo da relacao -> tipo do modelo (0.1.10).
+_TIPO_DA_NOTA = {"footnotes": "rodape", "endnotes": "fim"}
 #: Notas que o Word sempre tem e que o settings.xml cita (footnotePr/footnote).
 _NOTAS_ESPECIAIS = {"separator", "continuationSeparator", "continuationNotice"}
 #: Relacoes do pacote que o escritor grava.
@@ -246,7 +250,7 @@ def _configuracoes(dados: bytes, relacoes: dict, fecho: _Fecho, coletor, parse,
 
 def capturar(*, coletor, lim: dict, nomes: set[str], ler_parte, relacoes_de, tipo_de, parse,
              alvo_doc: str, rels_pacote: dict, rels_doc: dict, raiz_doc,
-             tema_tratado: bool, proibidos: set[str]) -> PacoteOriginal:
+             tema_tratado: bool, proibidos: set[str], notas_lidas=frozenset()) -> PacoteOriginal:
     """O que o pacote tem fora do texto e volta ao arquivo. Ver o topo do modulo."""
     proibidos = set(proibidos) | {alvo_doc} | {
         alvo for tipo, alvo, externo in rels_pacote.values() if tipo.endswith(_PACOTE_ESCRITAS)}
@@ -282,6 +286,8 @@ def capturar(*, coletor, lim: dict, nomes: set[str], ler_parte, relacoes_de, tip
             do_documento.append((tipo, alvo, True))
             continue
         if sufixo in _NOTAS:
+            if _TIPO_DA_NOTA[sufixo] in notas_lidas:
+                continue  # 0.1.10: o leitor leu a parte; o escritor a grava
             if _notas(tipo, alvo, sufixo, fecho, coletor, ler_parte, relacoes_de, tipo_de, parse):
                 do_documento.append((tipo, alvo, False))
             continue
@@ -429,8 +435,12 @@ class GravadorPacote:
 
     # -- partes reescritas -------------------------------------------------------------
 
-    def configuracoes(self, pares_impares: bool) -> bytes | None:
-        """O settings.xml original com o que o EditDoc controla. None = gerar um novo."""
+    def configuracoes(self, pares_impares: bool, notas: dict | None = None) -> bytes | None:
+        """O settings.xml original com o que o EditDoc controla. None = gerar um novo.
+
+        `notas` (0.1.10): sufixo ("footnotes", "endnotes") -> ids das especiais que a parte
+        gravada pelo escritor tem. O footnotePr cita as especiais que existem; a parte que nao
+        volta (nem pelo escritor nem preservada) nao e' citada."""
         if self.pacote is None or self.pacote.configuracoes is None:
             return None
         dados = self.pacote.configuracoes
@@ -444,10 +454,17 @@ class GravadorPacote:
                 raiz.remove(atual)
             if pares_impares:
                 _inserir_em_ordem(raiz, etree.Element(q("evenAndOddHeaders")))
-        # Notas que nao voltam: o settings.xml nao pode citar a separadora delas.
+        notas = notas or {}
         for sufixo, local in _NOTAS.items():
+            if sufixo in notas:
+                # Parte gravada pelo escritor (0.1.10): cita as especiais dela (separator e
+                # continuationSeparator), na ordem do esquema.
+                if _citar_especiais(raiz, local, notas[sufixo]):
+                    mudou = True
+                continue
             if self.tem_relacao(sufixo):
                 continue
+            # Notas que nao voltam: o settings.xml nao pode citar a separadora delas.
             pr = raiz.find(q(local + "Pr"))
             if pr is not None:
                 for nota in pr.findall(q(local)):
@@ -491,6 +508,28 @@ class GravadorPacote:
         if versao is not None:
             raiz.remove(versao)  # a versao era a do programa de origem
         return _xml(raiz)
+
+
+def _citar_especiais(raiz, local: str, ids) -> bool:
+    """O w:footnotePr do settings.xml cita exatamente as especiais `ids` (as que existem), na
+    ordem: as citadas que existem ficam como estao; a que falta citar entra no fim. True se
+    mudou."""
+    ids = [str(int(i)) for i in ids]
+    pr = raiz.find(q(local + "Pr"))
+    citadas = [el.get(q("id")) for el in pr.findall(q(local))] if pr is not None else []
+    if citadas == ids or (not ids and not citadas):
+        return False
+    if pr is None:
+        pr = etree.Element(q(local + "Pr"))
+        _inserir_em_ordem(raiz, pr)
+    for el in pr.findall(q(local)):
+        if el.get(q("id")) not in ids:
+            pr.remove(el)
+    presentes = [el.get(q("id")) for el in pr.findall(q(local))]
+    for ident in ids:
+        if ident not in presentes:
+            etree.SubElement(pr, q(local)).set(q("id"), ident)
+    return True
 
 
 def _inserir_em_ordem(raiz, novo) -> None:

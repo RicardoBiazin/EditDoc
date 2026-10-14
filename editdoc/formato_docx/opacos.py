@@ -533,6 +533,10 @@ class GravadorOpacos:
             if prefixo not in self.ignoraveis:
                 self.ignoraveis.append(prefixo)
 
+    def reservar_docpr(self, ids) -> None:
+        """wp:docPr id que outra parte de origem ja' usa (0.1.10: a nota que volta igual)."""
+        self._reservados["docPr"].update(str(i) for i in ids if i)
+
     def id_de_desenho(self) -> int:
         """wp:docPr id para uma imagem do EditDoc, sem colidir com os dos objetos."""
         while (str(self._proximo_docpr) in self._reservados["docPr"]

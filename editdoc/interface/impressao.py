@@ -101,8 +101,9 @@ def pagina_da_folha(layout: LayoutPaginado, n: int) -> Pagina:
 def preparar(layout: LayoutPaginado) -> bool:
     """Campos do corpo com o total de paginas atual e objetos flutuantes em dia (0.1.7).
     True se o layout mudou (limpar cache)."""
+    notas = layout.atualizar_notas()
     flutuantes = layout.atualizar_flutuantes()
-    return layout.atualizar_campos() or flutuantes
+    return layout.atualizar_campos() or flutuantes or notas
 
 
 def pintar_pagina(painter: QPainter, layout: LayoutPaginado, n: int, total: int,
@@ -114,6 +115,9 @@ def pintar_pagina(painter: QPainter, layout: LayoutPaginado, n: int, total: int,
         # texto do corpo, como no Word.
         desenhar_faixas(painter, layout, n, transf, total, 1.0, parte="objetos")
         desenhar_folha(painter, layout, n, transf)
+        # Notas de rodape e de fim (0.1.10): a area de baixo da folha (e as paginas a mais).
+        from editdoc.interface.notas import desenhar_notas
+        desenhar_notas(painter, layout, n, transf)
         desenhar_faixas(painter, layout, n, transf, total, 1.0, parte="texto")
 
 

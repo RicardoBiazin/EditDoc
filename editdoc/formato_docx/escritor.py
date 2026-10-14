@@ -59,6 +59,15 @@ comeco e o w14:paraId no ultimo paragrafo), com as relacoes proprias (links). As
 estendidas e o people.xml saem de `formato_docx/comentarios.py`. Sem mudanca nenhuma, o
 comments.xml volta byte a byte. A referencia a estilo que o styles.xml de origem nao definia
 (o "CommentReference" latente) volta como veio, e o validador a aceita.
+
+Notas (0.1.10): a referencia sai como o run com w:footnoteReference (ou w:endnoteReference),
+com o w:customMarkFollows e o run do simbolo quando a marca e' personalizada; o numero da
+propria nota, como w:footnoteRef. As partes word/footnotes.xml e word/endnotes.xml: sem mudanca,
+os bytes de origem (as relacoes mantem o Id); com mudanca, a raiz de origem com as notas
+especiais, o XML de origem das notas que nao mudaram e o conteudo gerado das outras. O
+footnotePr/endnotePr do sectPr volta (o de origem, se as propriedades nao mudaram), e o
+settings.xml cita as especiais que a parte tem. `notas.preparar` roda antes (so' as notas com
+referencia, ids unicos).
 """
 
 from __future__ import annotations
@@ -73,6 +82,7 @@ import zipfile
 from lxml import etree
 
 from editdoc.formato_docx import comentarios as fx_comentarios
+from editdoc.formato_docx import notas as fx_notas
 from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos, ordem
@@ -88,10 +98,11 @@ from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFI
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import FORMATOS_NUMERO, NUMERO_INICIAL_MAXIMO, tipo_do_campo
 from editdoc.modelo import marcas
+from editdoc.modelo import notas as mod_notas
 from editdoc.formato_docx.nomes import W14_NS
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celula, Documento,
                                       Imagem, Link, MarcaCampo, MarcaComentario, MarcaConteudo,
-                                      Marcador, Paragrafo, Run, Tabela, bordas_padrao, objetos_de,
+                                      Marcador, MarcaNota, Paragrafo, Run, Tabela, bordas_padrao, objetos_de,
                                       paragrafos_de)
 from editdoc.modelo.estilos import catalogo_padrao
 from editdoc.modelo.numeracao import lista_efetiva, materializado, recuos_do_nivel
@@ -182,6 +193,15 @@ class _Relacoes:
             self.itens.append((rid, tipo, alvo, "External") if externo else (rid, tipo, alvo))
         return self._por_alvo[chave]
 
+    def reservar(self, rid: str, tipo: str, alvo: str, externo: bool) -> None:
+        """Relacao de origem que volta com o mesmo Id (0.1.10: a nota que nao mudou). As novas
+        pulam os Ids reservados."""
+        chave = (tipo, alvo, externo)
+        self._por_alvo.setdefault(chave, rid)
+        self.itens.append((rid, tipo, alvo, "External") if externo else (rid, tipo, alvo))
+        if rid.startswith("rId") and rid[3:].isdigit():
+            self._proximo = max(self._proximo, int(rid[3:]) + 1)
+
     def adicionar_com_id(self, preferido: str, tipo: str, alvo: str, externo: bool = False) -> str:
         """Como `adicionar`, mas com o Id de origem se ele ainda esta' livre (0.1.6: o link do
         comentario que volta com o XML de origem)."""
@@ -229,6 +249,15 @@ class _Midias:
         """wp:docPr id: sequencial, pulando os que os objetos opacos ja' usam."""
         return self._opacos.id_de_desenho()
 
+    def registrar_bytes(self, dados: bytes) -> str:
+        """A imagem de uma nota que volta com o XML de origem (0.1.10): mesma parte por conteudo."""
+        formato = mod_imagem.formato_de(dados)
+        if formato not in mod_imagem.FORMATOS:
+            raise ValueError("imagem de nota em formato que o escritor nao grava")
+        largura, altura = mod_imagem.dimensoes(dados, formato) or (1, 1)
+        return self.registrar(Imagem(dados=dados, formato=formato, largura_emu=max(1, largura),
+                                     altura_emu=max(1, altura)))
+
 
 #: Partes que o escritor sempre grava: um objeto opaco nunca toma estes nomes.
 _PARTES_FIXAS = {"[Content_Types].xml", "_rels/.rels", "word/document.xml",
@@ -238,9 +267,9 @@ _PARTES_FIXAS = {"[Content_Types].xml", "_rels/.rels", "word/document.xml",
 
 class _Ctx:
     def __init__(self, coletor: Coletor, estilos=None, pacote=None,
-                 comentarios: bool = False) -> None:
+                 comentarios: bool = False, partes_notas=()) -> None:
         self.coletor = coletor
-        usados = set(_PARTES_FIXAS)
+        usados = set(_PARTES_FIXAS) | set(partes_notas)  # 0.1.10: o nome das partes de notas
         if comentarios:
             usados |= set(fx_comentarios.PARTES)  # 0.1.6: o pacote preservado nao toma o nome
         if estilos is not None and estilos.tema_original:
@@ -250,6 +279,8 @@ class _Ctx:
         #: marcadores (0.1.3): id sequencial no documento; nome -> id do inicio aberto
         self.proximo_marcador = 0
         self.ids_marcadores: dict[str, int] = {}
+        #: ids de marcador que as notas de origem (0.1.10) ja' usam: os novos pulam
+        self.marcadores_reservados: set[int] = set()
         self.opacos = opacos.GravadorOpacos(usados, _rels_xml, ordem.caminho_dos_rels)
         self.midias = _Midias(usados, self.opacos)
         #: relacoes da parte que esta' sendo escrita (troca no cabecalho e no rodape)
@@ -436,8 +467,13 @@ def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
             nome = "commentRangeStart" if m.tipo == "inicio" else "commentRangeEnd"
             etree.SubElement(destino, q(nome)).set(q("id"), str(int(m.id)))
         return
+    if isinstance(m, MarcaNota):
+        _referencia_de_nota(destino, run, m, ctx)
+        return
     if isinstance(m, Marcador):
         if m.tipo == "inicio":
+            while ctx.proximo_marcador in ctx.marcadores_reservados:
+                ctx.proximo_marcador += 1
             ident = ctx.proximo_marcador
             ctx.proximo_marcador += 1
             ctx.ids_marcadores[m.nome] = ident
@@ -460,6 +496,29 @@ def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
                   and proximo.marca.tipo == "fim")
     _codigo_de_campo(destino, campo, rpr, sem_separador=campo.sem_resultado and fecha_logo,
                      ctx=ctx)
+
+
+def _referencia_de_nota(destino, run: Run, m: MarcaNota, ctx: "_Ctx") -> None:
+    """A referencia da nota (0.1.10), ou o numero da propria nota dentro dela."""
+    local = mod_notas.LOCAL[m.tipo]
+    r = etree.SubElement(destino, q("r"))
+    rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
+    if rpr is not None:
+        r.append(rpr)
+    if m.propria:
+        etree.SubElement(r, q(local + "Ref"))
+        return
+    el = etree.SubElement(r, q(local + "Reference"))
+    if m.personalizada:
+        el.set(q("customMarkFollows"), "1")
+    el.set(q("id"), str(int(m.id)))
+    if m.personalizada and m.simbolo:
+        simbolo = etree.SubElement(destino, q("r"))
+        for f in fx_props.filhos_de(m.simbolo):
+            simbolo.append(f)
+        for x in list(simbolo.iter(q("rStyle"))):
+            if not ctx.estilo_existe(x.get(q("val")), "caractere"):
+                x.getparent().remove(x)
 
 
 def _run_de_campo(destino, rpr, tipo: str, campo: Campo | None = None):
@@ -768,6 +827,23 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
         ref = etree.SubElement(sect, q(elemento))
         ref.set(q("type"), tipo)
         ref.set("{%s}id" % R_NS, rid)
+    # Notas (0.1.10): footnotePr e endnotePr, depois das referencias de cabecalho e rodape.
+    cat = doc.notas
+    if cat is not None:
+        for tipo in mod_notas.TIPOS:
+            pr = cat.secao.get(tipo)
+            if pr is None:
+                continue
+            el = None
+            original = cat.secao_xml.get(tipo)
+            if original:
+                candidato = etree.fromstring(original, opacos.parser_seguro())
+                if fx_notas.ler_propriedades(candidato, tipo)[0] == pr:
+                    el = candidato
+            if el is None:
+                el = fx_notas.elemento_de_propriedades(tipo, pr)
+            if el is not None:
+                sect.append(el)
     pg = etree.SubElement(sect, q("pgSz"))
     pg.set(q("w"), str(pagina.largura_tw))
     pg.set(q("h"), str(pagina.altura_tw))
@@ -891,7 +967,80 @@ def _partes_de_comentarios(doc: Documento, ctx: _Ctx) -> tuple[list, list]:
     return partes, tipos
 
 
-def _settings_xml(pares_impares: bool = False) -> bytes:
+def _partes_de_notas(doc: Documento, ctx: _Ctx, tipos: list) -> tuple[list, list, dict]:
+    """(partes, tipos de conteudo, sufixo -> ids das especiais) das notas (0.1.10); as
+    relacoes vao para o documento."""
+    cat = doc.notas
+    partes: list = []
+    conteudo: list = []
+    especiais_ids: dict = {}
+    relacoes_doc = ctx.relacoes
+    for tipo in tipos:
+        local = mod_notas.LOCAL[tipo]
+        nome = fx_notas.PARTES[tipo]
+        especiais = cat.especiais.get(tipo) or []
+        if not especiais and cat.xml.get(tipo) is None and cat.raizes.get(tipo) is None:
+            especiais = [mod_notas.Especial(t, i, x) for t, i, x in fx_notas.especiais_padrao(tipo)]
+        especiais_ids[fx_notas.RAIZES[tipo]] = [e.id for e in especiais
+                                                 if e.tipo_nota != "continuationNotice"]
+        rels = _Relacoes(1)
+        if not mod_notas.mudou(cat, tipo):
+            # Nada mudou: os bytes de origem, e as relacoes com o mesmo Id (a imagem vai para a
+            # parte de midia do escritor; so' o alvo muda).
+            dados = cat.xml[tipo]
+            for rid, t, alvo, externo, bruto in cat.relacoes_parte.get(tipo, ()):
+                rels.reservar(rid, t, alvo if externo else ctx.midias.registrar_bytes(bruto),
+                              externo)
+        else:
+            gravador = ctx.opacos
+            raiz = fx_notas.raiz_nova(tipo, cat.raizes.get(tipo), _NSMAP_PARTE, gravador.espacos,
+                                      list(gravador.ignoraveis))
+            for nota in cat.itens.get(tipo, []):
+                for rid, t, alvo, externo, bruto in (nota.relacoes if nota.original else ()):
+                    if not any(item[0] == rid for item in rels.itens):
+                        rels.reservar(rid, t, alvo if externo else ctx.midias.registrar_bytes(bruto),
+                                      externo)
+            for e in especiais:
+                raiz.append(etree.fromstring(e.xml, opacos.parser_seguro()))
+            ctx.relacoes = rels
+            ctx.ids_marcadores = {}
+            try:
+                for nota in cat.itens.get(tipo, []):
+                    if nota.original is not None:
+                        raiz.append(etree.fromstring(nota.original, opacos.parser_seguro()))
+                        continue
+                    el = etree.SubElement(raiz, q(local))
+                    el.set(q("id"), str(int(nota.id)))
+                    _blocos(el, list(nota.paragrafos) or [Paragrafo()], ctx, em_celula=True)
+            finally:
+                ctx.relacoes = relacoes_doc
+            dados = _xml(raiz)
+        partes.append((nome, dados))
+        if rels.itens:
+            partes.append((ordem.caminho_dos_rels(nome), _rels_xml(rels.itens)))
+        conteudo.append(("/" + nome, fx_notas.CT_NOTAS[tipo]))
+        relacoes_doc.adicionar(cat.tipos_rel.get(tipo) or fx_notas.RT_NOTAS[tipo],
+                               nome.split("/", 1)[1])
+    return partes, conteudo, especiais_ids
+
+
+def _reservar_das_notas(cat, ctx: _Ctx) -> None:
+    """Ids que o XML de origem das notas ja' usa (marcador, wp:docPr): o que o escritor gera
+    no corpo pula esses (0.1.10)."""
+    xmls = [n.original for n in cat.todas() if n.original is not None]
+    xmls += [cat.xml[t] for t in mod_notas.TIPOS if cat.xml.get(t) is not None]
+    wp = "{%s}docPr" % WP_NS
+    for xml in xmls:
+        el = etree.fromstring(xml, opacos.parser_seguro())
+        for b in el.iter(q("bookmarkStart")):
+            try:
+                ctx.marcadores_reservados.add(int(b.get(q("id"))))
+            except (TypeError, ValueError):
+                pass
+        ctx.opacos.reservar_docpr(d.get("id") for d in el.iter(wp))
+
+
+def _settings_xml(pares_impares: bool = False, notas: dict | None = None) -> bytes:
     raiz = etree.Element(q("settings"), nsmap={"w": W})
     etree.SubElement(raiz, q("zoom")).set(q("percent"), "100")
     etree.SubElement(raiz, q("defaultTabStop")).set(q("val"), "708")
@@ -899,6 +1048,13 @@ def _settings_xml(pares_impares: bool = False) -> bytes:
         # Na ordem do CT_Settings: depois de defaultTabStop, antes de characterSpacingControl.
         etree.SubElement(raiz, q("evenAndOddHeaders"))
     etree.SubElement(raiz, q("characterSpacingControl")).set(q("val"), "doNotCompress")
+    for sufixo, local in (("footnotes", "footnote"), ("endnotes", "endnote")):
+        # Notas (0.1.10): as especiais da parte, como o Word grava (antes do compat).
+        ids = (notas or {}).get(sufixo)
+        if ids:
+            pr = etree.SubElement(raiz, q(local + "Pr"))
+            for ident in ids:
+                etree.SubElement(pr, q(local)).set(q("id"), str(int(ident)))
     compat = etree.SubElement(raiz, q("compat"))
     cs = etree.SubElement(compat, q("compatSetting"))
     cs.set(q("name"), "compatibilityMode")
@@ -982,6 +1138,8 @@ def _extensoes_usadas(doc: Documento) -> dict[str, str]:
     if doc.comentarios is not None:
         # O conteudo gerado dos comentarios (0.1.6) tambem pode ter extensoes nos extras.
         listas += [list(c.paragrafos) for c in doc.comentarios.itens if c.original is None]
+    if doc.notas is not None:
+        listas += [list(n.paragrafos) for n in doc.notas.todas() if n.original is None]
     for blocos in listas:
         for p in paragrafos_de(blocos):
             textos = [p.extras] + [r.extras for r in p.runs]
@@ -1012,17 +1170,27 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         coletor.somar("COMENTARIO_INCOMPLETO", desfeitos["comentarios"])
     # Comentarios (0.1.6): paraId e durableId de quem nao tem; o autor novo no people.xml.
     doc = fx_comentarios.preparar(doc)
+    # Notas (0.1.10): so' as com referencia no corpo, ids unicos.
+    doc = mod_notas.preparar(doc)
     # Listas montadas em codigo so' com o tipo: numId e definicao (0.1.4).
     doc = materializado(doc)
     tem_comentarios = doc.comentarios is not None and bool(doc.comentarios.itens)
-    ctx = _Ctx(coletor, doc.estilos, doc.pacote, tem_comentarios)
+    tipos_notas = tipos_de_notas(doc)
+    ctx = _Ctx(coletor, doc.estilos, doc.pacote, tem_comentarios,
+               [fx_notas.PARTES[t] for t in tipos_notas])
     ctx.numeracao = doc.numeracao
     objetos = list(objetos_de(doc))
     if tem_comentarios:
         objetos += [r.objeto for c in doc.comentarios.itens if c.original is None
                     for p in paragrafos_de(list(c.paragrafos)) for r in p.runs
                     if r.objeto is not None]
+    if doc.notas is not None:
+        objetos += [r.objeto for n in doc.notas.todas() if n.original is None
+                    for p in paragrafos_de(list(n.paragrafos)) for r in p.runs
+                    if r.objeto is not None]
     ctx.opacos.preparar(objetos, _NSMAP_PARTE)
+    if doc.notas is not None:
+        _reservar_das_notas(doc.notas, ctx)
     # Extensoes do Word nos extras e nos controles de conteudo (w14, w15...): a raiz declara
     # e as poe no mc:Ignorable (0.1.5).
     ctx.opacos.declarar_extensoes(_extensoes_usadas(doc), _NSMAP_PARTE)
@@ -1031,10 +1199,11 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     modificado = doc.modificado_em or agora
     documento_xml, faixas = _document_xml(doc, ctx)
     partes_comentarios, tipos_comentarios = _partes_de_comentarios(doc, ctx)
+    partes_notas, tipos_conteudo_notas, especiais_notas = _partes_de_notas(doc, ctx, tipos_notas)
     tema = ctx.estilos.tema_original
     gravador = ctx.pacote
     extras_tipos = list(faixas.tipos) + list(ctx.opacos.tipos) + gravador.tipos() \
-        + tipos_comentarios
+        + tipos_comentarios + tipos_conteudo_notas
     partes_tema: list[tuple[str, bytes]] = []
     if tema:
         # O tema volta para as fontes de tema (asciiTheme) dos estilos continuarem as mesmas.
@@ -1061,8 +1230,8 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         if rels_numeracao else []
     extras_tipos += [t for t in ctx.opacos.tipos if t not in extras_tipos]
     listas = set(numeracao.instancias) if numeracao is not None else set()
-    configuracoes = gravador.configuracoes(doc.pagina.pares_impares) or \
-        _settings_xml(doc.pagina.pares_impares)
+    configuracoes = gravador.configuracoes(doc.pagina.pares_impares, especiais_notas) or \
+        _settings_xml(doc.pagina.pares_impares, especiais_notas)
     rels_configuracoes = gravador.relacoes_das_configuracoes()
     partes_configuracoes = [("word/_rels/settings.xml.rels", _rels_xml(rels_configuracoes))] \
         if rels_configuracoes else []
@@ -1078,6 +1247,7 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         ])),
         *faixas.partes,
         *partes_comentarios,
+        *partes_notas,
         ("word/styles.xml", fx_estilos.escrever_estilos(ctx.estilos, listas)),
         *partes_tema,
         ("word/numbering.xml", numbering_xml),
@@ -1096,6 +1266,26 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     if problemas:
         raise ErroDocx("ESCRITA_INVALIDA", "; ".join(problemas[:3]))
     return _zip(partes), coletor.avisos()
+
+
+def tipos_de_notas(doc: Documento) -> list:
+    """Os tipos de nota cuja parte o escritor grava (0.1.10): a que o arquivo tinha e o leitor
+    leu, e a que ganhou nota no EditDoc. A parte que o leitor nao leu continua preservada pelo
+    pacote (so' as separadoras), e o EditDoc nao cria nota desse tipo."""
+    cat = doc.notas
+    if cat is None:
+        return []
+    pacote = doc.pacote
+    saida = []
+    for tipo in mod_notas.TIPOS:
+        sufixo = fx_notas.RAIZES[tipo]
+        preservada = pacote is not None and any(
+            t.rstrip("/").rsplit("/", 1)[-1] == sufixo for t, _a, _e in pacote.do_documento)
+        if preservada:
+            continue
+        if tipo in cat.tipos_rel or cat.itens.get(tipo):
+            saida.append(tipo)
+    return saida
 
 
 def escrever(doc: Documento) -> bytes:

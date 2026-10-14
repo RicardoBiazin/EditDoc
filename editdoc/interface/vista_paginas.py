@@ -43,6 +43,7 @@ from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import comentarios as pq_comentarios
+from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import propriedades as pq_props
@@ -738,6 +739,9 @@ class VistaPaginas(QAbstractScrollArea):
         tela ficaria com o numero velho depois que a impressao refez o layout.
         """
         listas_mudaram = pq_listas.numerador_de(self.layout_pag.doc).atualizar()
+        if self.layout_pag.atualizar_notas():
+            listas_mudaram = True
+            self._atualizar_geometria()
         if self.layout_pag.atualizar_flutuantes():
             listas_mudaram = True
         if self.layout_pag.atualizar_campos() or listas_mudaram:
@@ -754,6 +758,13 @@ class VistaPaginas(QAbstractScrollArea):
             # Um numero de lista mudou longe da edicao (Tab num item renumera os de baixo).
             self._limpar_cache()
             self._altura_doc_anterior = None
+        paginas_antes = self._paginas()
+        if self.layout_pag.atualizar_notas():
+            # Notas (0.1.10): numero de marca refeito (sem contentsChange) ou area diferente.
+            self._limpar_cache()
+            self._altura_doc_anterior = None
+            if self._paginas() != paginas_antes:
+                self._atualizar_geometria()
         self._conferir_flutuantes()
         self._aplicar_pendencias()
         vp = self.viewport()
@@ -796,6 +807,7 @@ class VistaPaginas(QAbstractScrollArea):
                         if alvo.intersects(visivel):
                             p.drawPixmap(QPointF(alvo.x(), alvo.y()),
                                          self._tile(n, i, j, dpr, m))
+            self._pintar_notas(p, m, n, x0, y0)
             self._pintar_faixas(p, m, n, x0, y0, n_total)
             p.restore()
         self._desenhar_quebras(p, m, i0, i1, n_total)
@@ -804,6 +816,20 @@ class VistaPaginas(QAbstractScrollArea):
         self._desenhar_flutuante_selecionado(p, m)
         self._desenhar_fantasma(p)
         p.end()
+
+    def _nota_editada(self):
+        """(NotaQt em edicao, cursor dela), ou None. O painel informa."""
+        return None
+
+    def _pintar_notas(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float) -> None:
+        """Area de notas da folha n (0.1.10), por cima dos tiles (o corpo nunca entra nela)."""
+        if not self.layout_pag.notas.paginas.get(n):
+            return
+        from editdoc.interface.notas import desenhar_notas
+        editada = self._nota_editada()
+        t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
+        desenhar_notas(p, self.layout_pag, n, t, editada[0] if editada else None,
+                       editada[1] if editada else None, tela=True)
 
     def _faixa_da_tela(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float, n_total: int,
                        onde: str, parte: str) -> None:
@@ -1044,7 +1070,8 @@ class VistaPaginas(QAbstractScrollArea):
         p.setFont(fonte)
         while bloco.isValid() and dl.blockBoundingRect(bloco).top() < limite:
             anterior = bloco.previous()
-            tem_quebra = bool(bloco.blockFormat().pageBreakPolicy() & _QUEBRA_ANTES)
+            # O espacador da area das notas (0.1.10) nao e' quebra do usuario: sem rotulo.
+            tem_quebra = bool(bloco.blockFormat().pageBreakPolicy() & _QUEBRA_ANTES) and                 not pq_notas.eh_espacador(bloco.blockFormat())
             if tem_quebra and anterior.isValid():
                 y = dl.blockBoundingRect(anterior).bottom()
                 xa, ya = m.doc_para_tela(0.0, y, n_total)

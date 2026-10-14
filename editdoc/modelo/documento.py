@@ -44,6 +44,9 @@ Listas (0.1.4): `Paragrafo.lista` (numId) e `lista_nivel` (ilvl) sao o w:numPr d
 catalogo do numbering.xml fica em `Documento.numeracao` (modelo/numeracao.py), fora da
 comparacao, como os estilos. `Paragrafo.numeracao` virou so' o tipo, informativo.
 
+Notas (0.1.10): a referencia a uma nota de rodape ou de fim e' uma marca no fluxo
+(`MarcaNota`); o conteudo das notas fica no catalogo `Documento.notas` (modelo/notas.py).
+
 Formatacao preservada (0.1.5): `Run.extras`, `Paragrafo.extras` e os de `Tabela`, `Linha` e
 `Celula` guardam o XML das propriedades que o modelo nao representa (formato_docx/
 propriedades.py); entram na comparacao, entao runs com extras diferentes nao fundem.
@@ -247,6 +250,24 @@ class MarcaComentario:
     id: int
 
 
+@dataclass(frozen=True)
+class MarcaNota:
+    """Nota de rodape ou de fim no fluxo do texto (0.1.10).
+
+    No corpo e' a referencia (o run com w:footnoteReference ou w:endnoteReference): `id` e' o
+    w:id, a chave no catalogo (`Documento.notas`, modelo/notas.py). Dentro do conteudo da nota,
+    `propria` marca o w:footnoteRef/w:endnoteRef (o numero da propria nota, que o Word mostra
+    no comeco dela; `id` fica 0). `personalizada` e' o w:customMarkFollows: a nota nao entra
+    na numeracao e o simbolo e' o run seguinte do arquivo, guardado inteiro em `simbolo` (os
+    filhos do w:r em forma canonica, `formato_docx/propriedades.py`), que volta igual.
+    """
+    tipo: Literal["rodape", "fim"]
+    id: int = 0
+    propria: bool = False
+    personalizada: bool = False
+    simbolo: str | None = None
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -273,7 +294,7 @@ class Run:
     link: Link | None = None
     # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador; desde a 0.1.5 tambem de
     # controle de conteudo (MarcaConteudo). texto == "".
-    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | None = None
+    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | MarcaNota | None = None
     # Propriedades de run que o modelo nao representa (0.1.5): o XML original delas (um w:rPr
     # em forma canonica, `formato_docx/propriedades.py`). None = nenhuma.
     extras: str | None = None
@@ -432,6 +453,10 @@ class Documento:
     # Comentarios (0.1.6): o catalogo (modelo/comentarios.py) ou None. Fora da comparacao: as
     # ancoras estao no fluxo (MarcaComentario) e a conferencia compara o conteudo a parte.
     comentarios: object = field(default=None, compare=False, repr=False)
+    # Notas de rodape e de fim (0.1.10): o catalogo (modelo/notas.py) ou None. Fora da
+    # comparacao, como os comentarios: as referencias estao no fluxo (MarcaNota) e a
+    # conferencia compara o conteudo das notas a parte.
+    notas: object = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

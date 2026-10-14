@@ -523,9 +523,79 @@ alturas diferentes, rodapés diferentes; topo por página no layout, no mapa da 
 tiles contra o oráculo em twips; número de páginas igual ao do layout com o cabeçalho alto em
 todas; objeto relativo ao parágrafo na página 1; clique e zona; contraprova com a altura única).
 
+## 0.1.10: notas de rodapé e de fim no layout paginado
+
+Feito em 14/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6 6.11.2,
+offscreen, Segoe UI e Calibri carregadas). Pergunta: o `QTextDocument` do corpo pagina com um
+tamanho só (`pageSize`, o limite da 0.1.8); a área de notas tem de encolher o corpo só na
+página onde está a referência. Os scripts do spike e da medição ficaram no rascunho, fora do
+repositório.
+
+### Caminhos considerados
+
+| Caminho | Resultado |
+|---|---|
+| Altura do corpo por página | Não existe no Qt (0.1.8). |
+| Margem do quadro raiz | Vale em todas as páginas (0.1.8). |
+| Float do Qt na referência (o mecanismo da 0.1.7) | O retângulo do float começa na linha da âncora, não no pé da página: bloquearia o texto entre a referência e a área de notas. A margem do quadro do float entra no retângulo. Descartado. |
+| `intrinsicSize` de um objeto do EditDoc | Muda só a altura da linha do objeto; não empurra a linha de outro parágrafo. Descartado. |
+| Formato fora do desfazer | `setUndoRedoEnabled(False)` zera as pilhas (medido); `QTextBlock.setVisible` esconde, não empurra. Não há propriedade de layout que não seja conteúdo. |
+| Paginação própria sobre um layout contínuo | Mudaria toda a geometria (tiles, clique, objetos flutuantes, campos, tabela entre páginas, impressão). Risco alto para 0.1.7 a 0.1.9. Descartado. |
+| **Espaçador no fluxo** | **Escolhido.** `PageBreak_AlwaysBefore` com uma marca (`PROP_QUEBRA_NOTA`) no primeiro bloco que não cabe acima da área de notas. Medido: o Qt respeita também no formato da tabela; o bloco vai ao topo da página seguinte com a mesma margem de antes (a distância entre blocos é a maior das duas margens, colapsada, mesmo depois da quebra), então a volta do bloco é simulada sem tirar a quebra. |
+
+Medido no spike (A4, Calibri 11, 600 parágrafos de 6 linhas, 77 páginas): trocar o formato de
+um bloco refaz o layout dali para baixo dentro do `setBlockFormat` (6 ms no 10º bloco; 28 trocas
+em sequência, com o layout refeito entre elas, 80 ms); trocar o formato do quadro raiz refaz o
+documento inteiro (30 ms). Desfazer: `joinPreviousEditBlock` só junta a um comando de bloco de
+edição; depois do `insertText` sem bloco (digitação) o ajuste vira um passo próprio
+(`availableUndoSteps` conta comandos). Por isso o ajuste do espaçador é um passo anotado que o
+desfazer do painel atravessa junto com o passo do usuário (ver docs/ARQUITETURA.md).
+
+Limite registrado: o espaçador move o bloco inteiro. O Word parte o parágrafo e leva só as
+linhas que não cabem; aqui, um parágrafo longo que encontra a área de notas deixa o resto do
+pé da página em branco. Tabela que começou na página anterior não é empurrada (a nota que não
+cabe continua na página seguinte). Nada se sobrepõe: a distribuição só usa o espaço abaixo da
+última linha do corpo da página (teste com contraprova em `tests/teste_notas.py`).
+
+### Desempenho
+
+O plano das notas roda na pintura. Primeira versão: 24 ms por tecla num documento de 300
+parágrafos e 100 notas (perfil: varrer as marcas a cada tecla, 3 ms; conferir as 30 páginas
+com notas, 9 ms; achar o fim do corpo de cada página na distribuição, 5 ms). Depois: as marcas
+seguidas pelo `contentsChange`, a conferência começando na página antes da edição e parando
+quando uma página fica igual à do plano anterior, e o fim do corpo pela última unidade da página
+(busca binária). Documento sem nota nenhuma (inclusive o do Word com só as separadoras) não
+roda o plano.
+
+### Tabela do gate (p95 em ms, 80 teclas com `viewport().grab()`, janela 1400 × 950, um processo por ponto, mediana de 3 rodadas)
+
+| Documento | Onde digita | 0.1.9 | 0.1.10 |
+|---|---|---|---|
+| manual real | parágrafo das âncoras (capa) | 10,3 | 10,1 |
+| idem | sumário (ver a nota abaixo) | 95,7 | 95,4 |
+| idem | corpo, 1/3 do documento | 5,3 | 5,1 |
+| idem | corpo, 2/3 do documento | 5,2 | 5,1 |
+| capítulo real de 4 páginas | capa | 3,7 | 3,5 |
+| idem | corpo | 4,6 | 4,4 |
+| 600 parágrafos, sem objetos | 1º parágrafo | 3,6 | 3,8 |
+| 600 parágrafos, DPR 1 a 300% | 1º parágrafo | 4,6 | 4,6 |
+| 600 parágrafos, DPR 2 a 150% | 1º parágrafo | 12,6 | 12,5 |
+| 300 parágrafos com 100 notas de rodapé | corpo, 1/3 do documento | — | 8,0 |
+| idem | digitando dentro de uma nota | — | 10,5 |
+
+O roteiro desta tabela não é o da 0.1.8 (outro script, outros pontos): as duas colunas são o
+mesmo roteiro nas duas versões. O ponto "sumário" deste script (o primeiro parágrafo com
+tabulação e número no fim) mede 95 ms nas duas versões: é um ponto diferente do sumário da
+tabela da 0.1.8 e não muda com as notas; fica como pendência de medição. O gate com notas
+(8,0 e 10,5 ms) passa. Teste de regressão: `teste_notas.py` mede o p95 com 100 notas contra um
+documento sem notas na mesma hora (gate de 16 ms ou até 2,5 vezes o sem notas).
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
+- 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,
+  editada, convertida, com marca personalizada). Medir o ponto "sumário" do manual real (95 ms
+  na 0.1.9 e na 0.1.10 no script desta versão).
 - Abrir uma amostra `.docx` gerada pelo spike no Word, sem reparo. As amostras estão
   em `%TEMP%\claude\...\scratchpad\spike-docx`, fora do repositório.
 - Cache de página: medido no Gate do M3 (acima). Adotado com teto de zoom.

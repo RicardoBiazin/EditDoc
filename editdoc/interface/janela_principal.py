@@ -167,6 +167,7 @@ class JanelaPrincipal(QMainWindow):
                                      "remover_link": self._remover_link,
                                      "abrir_link": self._abrir_link,
                                      "valor_numeracao": self._definir_valor_numeracao,
+                                     "opcoes_notas": self.opcoes_notas,
                                  }, ao_exibir={
                                      "criar_estilo": self.criar_estilo,
                                      "modificar_estilo": self.modificar_estilo,
@@ -438,6 +439,35 @@ class JanelaPrincipal(QMainWindow):
         self._regua_visivel = not self._regua_visivel
         self.regua.setVisible(self._regua_visivel)
         self._sintonizar()
+
+    # -- notas (0.1.10) -------------------------------------------------------
+
+    def _pedir_opcoes_notas(self, propriedades: dict, contagens: dict, tipo: str) -> dict | None:
+        """O dialogo das opcoes de notas. Os testes trocam este metodo."""
+        from editdoc.interface import dialogo_notas
+        return dialogo_notas.pedir(self, propriedades, contagens, tipo)
+
+    def opcoes_notas(self) -> bool:
+        """Referencias > Opcoes de notas: formato, inicio, reinicio, posicao, ou converter."""
+        from editdoc.edicao import notas as ed_notas
+        from editdoc.modelo.notas import TIPOS
+        from editdoc.ponte_qt import notas as pq_notas
+        nota = self.painel.editando_nota()
+        tipo = nota.tipo if nota is not None else "rodape"
+        corpo = self.painel.documento_corpo()
+        cat = pq_notas.catalogo(corpo)
+        contagens = {t: sum(1 for _p, m in pq_notas.referencias(corpo) if m.tipo == t)
+                     for t in TIPOS}
+        escolha = self._pedir_opcoes_notas({t: cat.propriedades(t) for t in TIPOS}, contagens,
+                                           tipo)
+        if escolha is None:
+            return False
+        if escolha.get("converter"):
+            n = ed_notas.converter(self.painel, escolha["converter"])
+            if n:
+                self.statusBar().showMessage(f"{n} nota(s) convertida(s).", 4000)
+            return bool(n)
+        return ed_notas.aplicar_propriedades(self.painel, escolha["tipo"], escolha["pr"])
 
     # -- comentarios (0.1.6) ------------------------------------------------
 
@@ -786,7 +816,15 @@ class JanelaPrincipal(QMainWindow):
                  caminho: pathlib.Path | None) -> None:
         """Poe o documento lido na janela. Nao deixa o documento sujo."""
         self.painel.sair_da_faixa()
+        self.painel.layout_pag.notas.limpar()
         para_qt.preencher(self.painel.documento_corpo(), modelo)
+        # Notas (0.1.10): o tipo cuja parte o EditDoc nao leu (preservada so' com as
+        # separadoras) nao recebe nota nova.
+        sufixos = {"footnotes": "rodape", "endnotes": "fim"}
+        self.painel.documento_corpo()._notas_preservadas = {
+            sufixos[t.rstrip("/").rsplit("/", 1)[-1]]
+            for t, _a, _e in (modelo.pacote.do_documento if modelo.pacote is not None else ())
+            if t.rstrip("/").rsplit("/", 1)[-1] in sufixos}
         # Fonte do texto sem formatacao: a do docDefaults do arquivo (M6), ou a configurada.
         estilos = pq_estilos.catalogo(self.painel.documento_corpo())
         familia = estilos.padrao_caractere.get("fonte") or self._fonte_cfg[0]
@@ -797,6 +835,9 @@ class JanelaPrincipal(QMainWindow):
         self.painel.definir_configuracao_pagina(modelo.pagina)
         # Listas (0.1.4): o texto depois do numero, medido com a fonte padrao ja' trocada.
         para_qt.concluir_listas(self.painel.documento_corpo())
+        # Notas (0.1.10): a area de notas de cada pagina (os espacadores entram antes de zerar o
+        # desfazer: o documento aberto nasce sem alteracao).
+        self.painel.preparar_notas_ao_abrir()
         self._titulo, self._autor, self._criado_em = modelo.titulo, modelo.autor, modelo.criado_em
         self._pacote = modelo.pacote
         self.caminho = caminho
@@ -828,6 +869,8 @@ class JanelaPrincipal(QMainWindow):
     # -- salvar ------------------------------------------------------------
 
     def _modelo_atual(self) -> Documento:
+        # Nota em edicao (0.1.10): o texto dela vai para o catalogo antes de gravar.
+        self.painel.layout_pag.notas.concluir_sessao(sair=False)
         modelo = de_qt.extrair(self.painel.documento_corpo())
         modelo.pagina = replace(self.painel.configuracao_pagina())
         modelo.cabecalhos, modelo.rodapes = self.painel.faixas_do_modelo()
@@ -1005,7 +1048,9 @@ class JanelaPrincipal(QMainWindow):
         if not destino:
             return False
         alvo = pathlib.Path(destino)
-        texto = texto_do_documento(de_qt.extrair(self.painel.documento_corpo()))
+        self.painel.layout_pag.notas.concluir_sessao(sair=False)
+        texto = texto_do_documento(de_qt.extrair(self.painel.documento_corpo()),
+                                   getattr(self.painel.documento_corpo(), "_numeros_notas", None))
         try:
             gravacao.gravar_bytes(alvo, texto.encode("utf-8"))
         except (gravacao.SemEspaco, gravacao.FalhaNaTroca) as erro:

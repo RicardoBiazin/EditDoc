@@ -1,3 +1,68 @@
+## 0.1.10 - 2026-10-14
+
+Notas de rodapé e de fim: lidas, editadas, numeradas, no pé da página e de volta ao arquivo.
+
+Defeito: até a 0.1.9 a referência de nota saía do texto ao abrir e a nota saía do arquivo ao
+salvar (aviso NOTA, com perda); só as notas separadoras voltavam.
+
+- Arquivo: `word/footnotes.xml` e `word/endnotes.xml` lidos e gravados (`formato_docx/notas.py`,
+  `leitor._ler_notas`, `modelo/notas.py`). O conteúdo da nota passa pelo leitor e pelo escritor
+  de parágrafos (formatação, links, campos, imagens); as notas separadoras (separator,
+  continuationSeparator, continuationNotice) voltam com o XML de origem; a referência
+  (`w:footnoteReference`/`w:endnoteReference`, com `w:customMarkFollows` e o run do símbolo) é
+  uma marca no fluxo (`MarcaNota`), e o número da própria nota (`w:footnoteRef`) também. As
+  propriedades (`w:footnotePr`/`w:endnotePr`: numFmt, numStart, numRestart, pos) do sectPr e do
+  settings.xml são lidas; a do sectPr volta como veio enquanto não muda. Sem mudança, a parte
+  volta com os bytes de origem e as relações (link e imagem) com o mesmo Id; com mudança, as
+  notas que não mudaram voltam com o XML de origem (iguais em c14n) e as outras são geradas.
+  Ids coerentes (`notas.preparar`: só as notas com referência, id novo para a referência
+  repetida), relações, Override e o settings.xml citando as separadoras; o documento que ganha a
+  primeira nota ganha as separadoras do Word e os estilos FootnoteText, FootnoteReference,
+  EndnoteText e EndnoteReference.
+- Numeração: contínua ou reiniciada a cada página, em 1, a, A, i, I ou * † ‡ §, a partir do
+  número inicial; a marca personalizada não conta. A marca sobrescrita no texto e na nota é
+  pintada com o número calculado na hora (sem mexer no desfazer).
+- Tela, PDF e impressão: as notas de rodapé ficam no pé da página da referência, acima do
+  rodapé, com o separador curto; a área de notas encolhe o corpo daquela página (o bloco que
+  não cabe vai para a página seguinte: espaçador no fluxo, decidido por spike, docs/SPIKES.md
+  "0.1.10"); a nota que não cabe continua na página seguinte, com o separador de continuação
+  (largura toda); as notas de fim vêm depois do texto, em páginas a mais se preciso. Posição
+  "abaixo do texto" também. Nada se sobrepõe ao texto.
+- Edição: aba **Referências** (grupo Notas de Rodapé): Inserir nota de rodapé
+  (**Alt+Ctrl+F**), Inserir nota de fim (**Alt+Ctrl+D**), Próxima, Anterior e Opções (formato,
+  início, reinício, posição; converter todas as notas de rodapé em notas de fim e o
+  contrário). Clicar na área da nota edita o texto dela no lugar (Esc ou clique no texto
+  voltam); duplo clique na marca leva à nota, e no número da nota volta à marca. A edição de uma
+  nota é um passo de desfazer do corpo (dentro dela, Ctrl+Z desfaz as teclas). Apagar a marca
+  apaga a nota (Ctrl+Z a devolve). Copiar e colar dentro do EditDoc leva a nota (com id novo).
+- Avisos: NOTA passa a ser só a nota que não pode ser lida (sem referência no corpo, referência
+  no cabeçalho, no rodapé ou numa caixa de texto, danificada, acima dos limites).
+- Validador e conferência pós-gravação: referências e notas coerentes (cada referência cita
+  uma nota normal que existe, uma vez; cada nota tem referência; ids únicos; o settings.xml só
+  cita separadoras que existem; `w:footnoteRef` só na nota). Limites contra arquivo hostil: 5000
+  notas por tipo, 1 MB por nota, 32 MB por parte, 2000 parágrafos por nota e a profundidade do
+  XML; acima deles a parte volta só com as separadoras, como até a 0.1.9, com aviso.
+- Exportar `.txt`: a referência vira "[1]" e as notas vêm no fim, numeradas.
+
+Limites: quando a área de notas empurra o texto, o parágrafo inteiro desce (o Word parte o
+parágrafo); tabela que começou na página anterior não é empurrada (a nota continua na página
+seguinte); as notas depois de uma que continua esperam a continuação; formatos fora de
+decimal, letras, romanos e chicago aparecem em decimal (o arquivo guarda o do Word); "fim da
+seção" é o fim do documento; o aviso de continuação do Word não aparece.
+
+Desempenho (gate de 16 ms, docs/SPIKES.md "0.1.10"): p95 de 8,0 ms digitando no corpo e de 10,5 ms dentro de uma nota, num documento de 300 parágrafos com 100 notas; os pontos da tabela do gate sem notas ficam iguais aos da 0.1.9 (o plano das notas não roda em documento sem nota).
+
+Testes: `teste_notas.py` (123 verificações: leitura, ida e volta c14n com link e
+imagem, nota editada e nova, documento sem footnotes.xml, propriedades do sectPr, numeração
+contínua, por página, romano, chicago e personalizada, validador com contraprovas, avisos e
+limites com arquivo hostil, nota na página da referência e corpo encolhido com contraprova,
+nota longa que continua, notas de fim depois do texto, pixels da área de notas, número por
+página na tela, Alt+Ctrl+F e Alt+Ctrl+D com teclas reais, digitar na nota, desfazer e refazer,
+apagar a marca, duplo clique, próxima nota, opções e converter, copiar e colar, PDF com a nota
+no pé da página, `.txt` com as notas, p95 com 100 notas). Checagens reescritas, com o motivo
+no teste: `teste_galeria.py` (as abas da faixa final incluem Referências) e
+`teste_acessibilidade.py` (a dica S da aba Referências aparece com as outras).
+
 ## 0.1.9 - 2026-10-14
 
 Mover e redimensionar objetos com o mouse e o teclado, e a quebra de texto, como no Word.

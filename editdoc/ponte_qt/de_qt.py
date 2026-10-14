@@ -36,6 +36,7 @@ from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
 from editdoc.modelo.numeracao import tipos_dos_paragrafos
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import comentarios as pq_comentarios
+from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
@@ -159,7 +160,8 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
     nivel = efetivo.get("nivel")
     if nivel != base.get("nivel"):
         p.nivel = NIVEL_CORPO if nivel is None else nivel
-    p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+    # O espacador da area das notas (0.1.10) nao e' quebra do usuario: nao volta ao arquivo.
+    p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)         and not pq_notas.eh_espacador(bf)
     p.extras = pq_props.extras_de_ppr(bf)
     lista = bloco.textList()
     if lista is not None and p.lista is None:
@@ -184,6 +186,16 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                         run.campo = instrucao if tipo_do_campo(instrucao) else None
                         run.link = link
                         p.runs.append(run)
+            elif pq_notas.eh_nota(cf):
+                # Nota de rodape ou de fim (0.1.10): uma marca por caractere.
+                marca = pq_notas.marca_de(cf)
+                for caractere in frag.text():
+                    if caractere != CARACTERE_OBJETO or marca is None:
+                        continue
+                    run = _run_direto("", cf, p.estilo, res)
+                    run.marca = marca
+                    run.link = link
+                    p.runs.append(run)
             elif marcas.eh_marca(cf):
                 # Campo ou marcador (0.1.3): uma marca por caractere, sem texto.
                 marca = marcas.marca_de(cf)
@@ -365,5 +377,8 @@ def extrair(documento_qt: QTextDocument) -> Documento:
     # Comentarios (0.1.6): o catalogo vigente (as ancoras ja' vieram como marcas).
     cat = pq_comentarios.catalogo(documento_qt)
     doc.comentarios = cat if cat.itens or cat.xml_comentarios is not None else None
+    # Notas (0.1.10): o catalogo vigente (as referencias ja' vieram como marcas).
+    notas = pq_notas.catalogo(documento_qt)
+    doc.notas = None if getattr(documento_qt, "_notas_base", None) is None and notas.vazia()         and not notas.secao else notas
     tipos_dos_paragrafos(doc)
     return doc

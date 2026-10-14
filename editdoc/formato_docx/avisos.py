@@ -23,6 +23,11 @@ corpo), COMENTARIO_INCOMPLETO e' aviso de gravacao (o usuario apagou a referenci
 comentario de um jeito que nao o levou junto), e ESTILO so' para id de estilo invalido ou
 citado com outro tipo.
 
+Desde a 0.1.10 as notas de rodape e de fim (footnotes.xml, endnotes.xml, propriedades) voltam
+ao arquivo e se editam: NOTA so' aparece para a nota que nao pode ser lida (sem referencia no
+corpo, referencia no cabecalho, no rodape ou numa caixa de texto, danificada, acima dos
+limites).
+
 Desde a 0.1.3, hiperlinks, campos (DATE, REF, TOC...), marcadores e as partes do pacote
 que o EditDoc nao edita (custom.xml, customXml, fontTable, webSettings, settings.xml) voltam
 ao arquivo: HIPERLINK, CAMPO e PARTE_PERDIDA so' aparecem para o que nao pode voltar
@@ -182,8 +187,10 @@ CATALOGO: dict[str, tuple] = {
                   "as exclusões somem ao salvar.",
         True),
     "NOTA": (
-        lambda n: f"{n} {_plural(n, 'nota de rodapé ou de fim não é editada', 'notas de rodapé ou de fim não são editadas')} "
-                  "nesta versão e sai do arquivo ao salvar.",
+        lambda n: f"{n} {_plural(n, 'nota de rodapé ou de fim não pôde ser lida', 'notas de rodapé ou de fim não puderam ser lidas')} "
+                  "(sem referência no texto do corpo, no cabeçalho, no rodapé ou numa caixa de "
+                  "texto, danificada ou acima dos limites do EditDoc) e "
+                  f"{_plural(n, 'sai', 'saem')} do arquivo ao salvar.",
         True),
     "CONTEUDO_CONTROLADO": (
         lambda n: f"{n} {_plural(n, 'controle de conteúdo não pôde ser preservado e foi achatado', 'controles de conteúdo não puderam ser preservados e foram achatados')} "

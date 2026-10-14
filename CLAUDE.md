@@ -41,6 +41,12 @@ causou defeito.
   sem Qt), `modelo/flutuantes.deslocamento_para` (a volta de `retangulo`), `edicao/objetos.py`
   (troca do objeto no caractere, reancorar), `interface/dialogo_posicao.py`; o mouse e as setas
   no `PainelDocumento` (`_arraste`, `_geometria_do_arraste`, `flutuante_das_faixas_em`).
+- Notas de rodapé e de fim (0.1.10): `modelo/notas.py` (catálogo, numeração, `preparar`),
+  `formato_docx/notas.py` (propriedades, separadoras, validador; a leitura em
+  `leitor._ler_notas`), `ponte_qt/notas.py` (marca TIPO_NOTA, catálogo no quadro raiz,
+  espaçador), `interface/notas.py` (documento de cada nota, plano da área de notas por página,
+  desfazer dos ajustes, `desenhar_notas`), `edicao/notas.py` (comandos, copiar e colar),
+  `interface/dialogo_notas.py`; a edição no lugar em `PainelDocumento.entrar_na_nota`.
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -213,4 +219,11 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | VML em pt (0.1.9) | `style` do VML com duas casas em pt: o valor relido difere ate' 127 EMU do pedido. Teste de VML compara com essa folga. |
 | `_selecionar_objeto` e rolagem (0.1.9) | Selecionar move o caret e `garantir_visivel` rola a tela: retangulo de tela calculado antes de selecionar fica velho. Teste pega o retangulo depois. |
 | oito alcas (0.1.9) | O meio de cada lado do objeto selecionado e' uma alca branca: conferir a cor do contorno no meio da borda acha o branco da alca. `teste_flutuantes` confere a 1/4 da altura. |
+| propriedade de usuario (0.1.10) | Caractere: `PROP_NOTA` = UserProperty + 31; quadro raiz: `PROP_NOTAS` + 32; bloco e tabela: `PROP_QUEBRA_NOTA` + 33. Objeto: `TIPO_NOTA` = UserObject + 5. Os proximos livres sao UserProperty + 34 e UserObject + 6. |
+| `setUndoRedoEnabled(False)` (0.1.10) | Medido no Qt 6.11.2: zera as pilhas de desfazer e refazer. Nao serve para fazer um ajuste "fora do desfazer". |
+| `joinPreviousEditBlock` depois de digitar (0.1.10) | So' junta a um comando de bloco de edicao. Depois do `insertText` sem bloco (a digitacao), o ajuste juntado vira um passo proprio: o Ctrl+Z desfaria so' o ajuste. O espacador das notas e' um passo anotado (`ConjuntoDeNotas.passos`) e o `PainelDocumento.undo/redo` passa por ele. `availableUndoSteps()` conta comandos e `undoCommandAdded` vem tambem no join. |
+| formato do quadro raiz (0.1.10) | Trocar (`rootFrame().setFrameFormat`) refaz o layout do documento inteiro: medido, 30 ms em 600 paragrafos. A sessao de edicao da nota troca o catalogo duas vezes (comeco e fim), nunca por tecla. |
+| espacador das notas (0.1.10) | E' `PageBreak_AlwaysBefore` com `PROP_QUEBRA_NOTA` no bloco (ou no formato da tabela, que o Qt tambem respeita). Tudo que le a quebra do bloco tem de ignorar a marca: `de_qt` (nao vira `quebra_antes`), o rotulo "Quebra de pagina", o Enter (`_quebrar` tira a marca do bloco novo) e o copiar (`_html_sem_espacador`: o HTML levaria a quebra como do usuario). |
+| leitor de PDF e ligadura (0.1.10) | `tests/leitor_pdf.py` devolve a ligadura "fi" como U+FB01 e separa palavras com tabulacao. Teste que procura texto no PDF normaliza os dois. |
+| dialogo modal em script (0.1.10) | `JanelaPrincipal._gravar` abre `dialogos_modais.avisar` quando a conferencia falha: num script offscreen sem trocar a funcao, o processo fica parado para sempre. |
 | pontilhado da tabulacao (0.1.8) | Um `drawText` com os pontos e o espaco no `letterSpacing` absoluto; um `drawText` por ponto custava ate' 2 ms por tile num sumario. |

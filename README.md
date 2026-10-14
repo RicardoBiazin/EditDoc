@@ -17,7 +17,7 @@ O EditDoc não é afiliado à Microsoft. Word é marca registrada da Microsoft.
 ## O que ele faz
 
 Ao abrir, aparece uma janela com a faixa de opções no alto (Arquivo, Desfazer e Refazer,
-e as abas Página Inicial, Inserir, Layout, Revisão e Exibir), a régua, e o documento como folhas
+e as abas Página Inicial, Inserir, Layout, Referências, Revisão e Exibir), a régua, e o documento como folhas
 brancas sobre um fundo cinza, com as margens, o cabeçalho e o rodapé de cada página. Na
 barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
@@ -63,6 +63,23 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   arquivo só muda a posição e o tamanho do objeto (o resto do XML volta igual); um objeto
   alinhado (centro, direita) passa a ter a posição em centímetros quando é arrastado, como
   no Word.
+- **Notas de rodapé e de fim** (0.1.10), como no Word: a nota aparece no **pé da página**
+  onde está a referência, abaixo de um separador curto, com o número sobrescrito no texto e
+  na nota; o texto do corpo daquela página encolhe para dar lugar a ela. A nota que não cabe
+  continua na página seguinte, abaixo de um separador da largura da página; as **notas de
+  fim** vêm depois do texto, no fim do documento. **Referências > Inserir nota de rodapé**
+  (**Alt+Ctrl+F**) e **Inserir nota de fim** (**Alt+Ctrl+D**) põem a marca no cursor e levam
+  o cursor para a nota; **clique na nota** para editá-la no lugar (Esc, ou um clique no texto,
+  volta); **duplo clique na marca** leva à nota e **duplo clique no número da nota** volta à
+  marca; **Próxima** e **Anterior** andam entre as notas; **Opções** escolhe o formato do
+  número (1, 2, 3; a, b, c; i, ii, iii; *, †, ‡), o número inicial, a numeração contínua ou
+  reiniciada a cada página, a posição (pé da página ou logo abaixo do texto) e converte todas
+  as notas de rodapé em notas de fim (ou o contrário). Apagar a marca apaga a nota; Ctrl+Z a
+  traz de volta. A edição de uma nota é um passo de desfazer no texto. Copiar e colar dentro do
+  EditDoc leva a nota junto (com outro número). A marca personalizada do Word ("*") é
+  preservada. As notas que você não mexe voltam ao arquivo exatamente como vieram, com os
+  links e as imagens; o PDF e a impressão têm as notas no pé da página, e o `.txt` as lista
+  no fim, numeradas.
 - **Digitação rápida em documento pesado** (0.1.8): num manual real de 51 páginas (capa com
   imagem de página inteira e caixas de texto, sumário com links e números de página,
   49 desenhos), digitar na capa, no sumário e no corpo fica abaixo de 16 ms por tecla
@@ -179,7 +196,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.9-win64.zip` da página
+1. Baixe `EditDoc-0.1.10-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -220,6 +237,8 @@ Requer Windows 10 ou 11, 64 bits.
 | Quebra de página | Ctrl+Enter |
 | Inserir ou editar link | Ctrl+K |
 | Novo comentário | Ctrl+Alt+M |
+| Inserir nota de rodapé, nota de fim | Alt+Ctrl+F, Alt+Ctrl+D |
+| Sair da edição da nota | Esc |
 | Abrir o link | Ctrl+clique no link |
 | Estilos Normal, Título 1, 2 e 3 | Ctrl+Shift+N, Ctrl+Alt+1, 2 e 3 |
 | Painel de estilos | Ctrl+Alt+Shift+S |
@@ -233,7 +252,8 @@ Requer Windows 10 ou 11, 64 bits.
 | Arrastar a alça do objeto mantendo a proporção | Shift + arrastar |
 
 **Faixa pelo teclado**, como no Word: **Alt** (apertar e soltar) ou **F10** mostra uma letra
-em cada aba (P Página Inicial, N Inserir, L Layout, R Revisão, E Exibir, H Cabeçalho e Rodapé,
+em cada aba (P Página Inicial, N Inserir, L Layout, S Referências, R Revisão, E Exibir,
+H Cabeçalho e Rodapé,
 A Arquivo, 1 Desfazer, 2 Refazer). A letra da aba mostra as letras dos botões dela, e a
 letra do botão executa o comando. Com o foco na faixa, as setas andam entre abas e
 botões, Enter ou Espaço apertam o botão e Esc volta ao documento. **F6** e **Shift+F6**
@@ -245,7 +265,7 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 
 - **Política de perda ao abrir `.docx`**: tudo o que o arquivo tem e o EditDoc não edita
   gera um aviso na barra amarela, com o botão Detalhes. Se salvar apagaria alguma coisa
-  (revisão, nota de rodapé, controle de conteúdo de linha de tabela, seções com cabeçalhos
+  (revisão, controle de conteúdo de linha de tabela, seções com cabeçalhos
   diferentes, formatação que o EditDoc não conhece...), o primeiro Salvar pede
   confirmação e oferece "Salvar cópia". **Não** se perdem: caixas de texto, formas,
   gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em formato que a tela
@@ -255,7 +275,8 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   ao estilo (desde a 0.1.4); a formatação de texto, parágrafo e tabela que o EditDoc não
   edita e os controles de conteúdo de parágrafo e de bloco (desde a 0.1.5); os
   comentários, com respostas, resolvido e pessoas, e as referências a estilos que o arquivo
-  cita sem definir, além do estilo de tabela com formatação condicional (desde a 0.1.6).
+  cita sem definir, além do estilo de tabela com formatação condicional (desde a 0.1.6); as
+  notas de rodapé e de fim, com as propriedades e as notas separadoras (desde a 0.1.10).
   Comentário ainda avisa só quando não pode ser lido (danificado, acima de 5000, ancorado
   só no cabeçalho, no rodapé ou numa caixa de texto) ou quando a edição apagou a marca de
   referência dele sem levá-lo junto. A impressão e o PDF saem sem os comentários.
@@ -268,8 +289,17 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   deixaria de valer) e o campo que perdeu o começo ou o fim na edição. A miniatura de
   pré-visualização do arquivo não é mantida (mostraria o conteúdo antigo), com aviso sem
   confirmação.
-- Notas de rodapé e de fim: as notas separadoras do Word voltam ao arquivo; as notas de
-  verdade ainda não (com aviso e confirmação).
+- Notas de rodapé e de fim (0.1.10): a nota que não pode ser lida (sem marca no texto, marca
+  no cabeçalho, no rodapé ou numa caixa de texto, danificada, acima de 5000 notas ou de
+  1 MB) sai do arquivo ao salvar, com aviso e confirmação. Na tela, quando a área de notas
+  empurra o texto, o parágrafo inteiro vai para a página seguinte (o Word parte o parágrafo e
+  leva só as linhas que não cabem): sobra um espaço em branco no pé da página. Uma tabela que
+  começou na página anterior não é empurrada: a nota que não cabe abaixo dela continua na
+  página seguinte. As notas que vêm depois de uma nota que continua esperam a continuação
+  dela. Formatos de número fora de 1, a, A, i, I e * aparecem em algarismos (o arquivo guarda o
+  do Word); a posição "fim da seção" é o fim do documento (uma seção só); o aviso de
+  continuação ("continua na próxima página") do Word não aparece. Copiar e colar entre dois
+  processos do EditDoc, ou de/para outro programa, leva o texto sem a nota.
 - O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
   atualize (F9) se o texto mudou. O controle de conteúdo que envolve uma linha ou uma
   célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
@@ -298,9 +328,8 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   acompanha a posição e o tamanho em pontos, com duas casas.
 - Objetos preservados: copiar e colar dentro do EditDoc leva o texto em volta, mas não o
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
-  caixa de texto perdem a referência ao salvar (com aviso), porque essas partes não voltam
-  ao arquivo. A lista numerada dentro da caixa volta (desde a 0.1.4).
-- Fora desta versão: revisão com controle de alterações, comentários, notas de rodapé,
+  caixa de texto perdem a referência ao salvar (com aviso), porque o EditDoc não os lê dali. A lista numerada dentro da caixa volta (desde a 0.1.4).
+- Fora desta versão: revisão com controle de alterações,
   gerar ou atualizar sumário e índices, mala direta, editar equações e formas (elas são
   preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), colunas, várias seções editáveis, ortografia, `.doc`, RTF,
   ODT e macros (nunca).
@@ -350,7 +379,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.9-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.10-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em
