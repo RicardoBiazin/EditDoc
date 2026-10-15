@@ -362,6 +362,11 @@ vinculada) e equação.
   de cada objeto: o XML com os rIds trocados pelo conteúdo que apontam (recursivo nas
   partes) e os ids únicos mascarados. Uma parte trocada ou que falta muda a assinatura ou
   faz o objeto não ser lido.
+- Conferência da formatação (0.1.16): além da estrutura, a formatação efetiva que muda o
+  layout, resolvida dos dois lados com o catálogo de cada um (`_Efetivas`): parágrafo
+  (docDefaults fora da tabela, estilo, recuo da lista, direta), trecho de texto caractere a
+  caractere e tabela, linha e célula. O arquivo sem `styles.xml` lê o docDefaults do Word
+  (`catalogo_sem_estilos`) e o escritor grava o docDefaults do catálogo ao pé da letra.
 - Qt (`ponte_qt/opacos.py`): caractere de objeto com `TIPO_OPACO` (UserObject + 2) e a
   chave do registro em `PROP_OPACO`; o objeto fica no registro, como os bytes da imagem,
   para o desfazer achar de novo. O manipulador (`QPyTextObject`, registrado em todo
@@ -1108,7 +1113,9 @@ edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas na t
 ## Riscos abertos
 
 1. Espaçamento entre parágrafos: o Qt colapsa margens verticais para o maior
-   valor, e o Word, ao que tudo indica, soma. Mede-se no M3.
+   valor, e o Word, ao que tudo indica, soma. Conferido no código do Qt 6.11 na 0.1.16
+   (`layoutBlock`: `qMax(topMargin, bottomMargin do anterior)`); continua aberto, junto com
+   viúvas e órfãs, manter com o próximo e `contextualSpacing` (docs/SPIKES.md, 0.1.16).
 2. O Word pode reclamar de um `.docx` gerado sem ser visto. Mitigação: vocabulário
    conservador, validação de ordem dos elementos, releitura antes da troca, e um
    protocolo de aceite manual com amostras.

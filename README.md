@@ -224,7 +224,9 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   cópias para abrir, salvar como ou descartar. Salvar ou fechar normalmente apaga a cópia.
   Também em Arquivo > Recuperar documentos.
 - **Salvar conferido**: o EditDoc grava um arquivo novo ao lado do original, lê de volta e
-  só então troca. Se a releitura não bater com o que está na tela, o original fica como
+  só então troca. Desde a 0.1.16 a conferência compara também a formatação que muda o
+  layout (espaços, entrelinha, recuos, fonte e tamanho de cada trecho, larguras de tabela),
+  já resolvida pelo padrão do documento e pelos estilos. Se a releitura não bater com o que está na tela, o original fica como
   estava, o documento continua aberto com as alterações (e a cópia de recuperação é
   gravada), e a mensagem oferece salvar essa cópia, sem a conferência, em outro arquivo
   (nunca por cima do original) para abrir no Word. O detalhe técnico vai para o log
@@ -243,7 +245,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.15-win64.zip` da página
+1. Baixe `EditDoc-0.1.16-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -375,6 +377,11 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   As alterações dentro de um comentário ou de uma caixa de texto são preservadas, mas não se
   aceitam nem rejeitam no EditDoc; as das notas, na edição da nota. O comentário impresso na
   margem é texto pequeno ao lado do trecho, não um balão.
+- Paginação (0.1.16): o número de páginas pode diferir um pouco do Word. O EditDoc usa o maior
+  entre o espaço depois de um parágrafo e o espaço antes do seguinte (o Word soma os dois), e
+  ainda não aplica o controle de linhas viúvas e órfãs, "manter com o próximo", "manter linhas
+  juntas" nem "não adicionar espaço entre parágrafos do mesmo estilo". O arquivo salvo pelo
+  EditDoc reabre com a mesma paginação de quando foi aberto.
 - O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
   atualize (F9) se o texto mudou. O controle de conteúdo que envolve uma linha ou uma
   célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
@@ -455,7 +462,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.15-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.16-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

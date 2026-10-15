@@ -118,7 +118,7 @@ from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celul
                                       Marcador, MarcaMovimento, MarcaNota, MarcaQuebra, Paragrafo,
                                       Run, Tabela, bordas_padrao, objetos_de, paragrafos_de)
 from editdoc.modelo import revisoes as mod_revisoes
-from editdoc.modelo.estilos import catalogo_padrao
+from editdoc.modelo.estilos import catalogo_sem_catalogo
 from editdoc.modelo.numeracao import lista_efetiva, materializado, recuos_do_nivel
 
 _JC = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
@@ -320,7 +320,7 @@ class _Ctx:
         #: relacoes da parte que esta' sendo escrita (troca no cabecalho e no rodape)
         self.relacoes = _Relacoes(_Midias.PRIMEIRO_RID)
         #: catalogo de estilos (M6): id -> tipo, e o id do estilo de paragrafo padrao
-        self.estilos = estilos if estilos is not None else catalogo_padrao()
+        self.estilos = estilos if estilos is not None else catalogo_sem_catalogo()
         self.tipos = {sid: e.tipo for sid, e in self.estilos.itens.items()}
         self.padrao = self.estilos.id_padrao()
         #: numeracao (0.1.4), para o recuo da lista na base do paragrafo (0.1.5)
@@ -1252,13 +1252,15 @@ def _reservar_das_notas(cat, ctx: _Ctx) -> None:
 
 
 def _settings_xml(pares_impares: bool = False, notas: dict | None = None,
-                  controlar: bool = False) -> bytes:
+                  controlar: bool = False, tab_padrao_tw: int = 708) -> bytes:
+    """settings.xml do arquivo que nao tinha um. `tab_padrao_tw` (0.1.16): a tabulacao padrao
+    que o leitor supos (720 sem settings.xml, como o esquema); 708 so' no documento novo."""
     raiz = etree.Element(q("settings"), nsmap={"w": W})
     etree.SubElement(raiz, q("zoom")).set(q("percent"), "100")
     if controlar:
         # Controlar alteracoes (0.1.13): na ordem do CT_Settings, antes do defaultTabStop.
         etree.SubElement(raiz, q("trackRevisions"))
-    etree.SubElement(raiz, q("defaultTabStop")).set(q("val"), "708")
+    etree.SubElement(raiz, q("defaultTabStop")).set(q("val"), str(int(tab_padrao_tw)))
     if pares_impares:
         # Na ordem do CT_Settings: depois de defaultTabStop, antes de characterSpacingControl.
         etree.SubElement(raiz, q("evenAndOddHeaders"))
@@ -1464,7 +1466,8 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     controlar = bool(getattr(doc, "controlar_alteracoes", False))
     configuracoes = gravador.configuracoes(doc.pagina.pares_impares, especiais_notas,
                                            controlar) or \
-        _settings_xml(doc.pagina.pares_impares, especiais_notas, controlar)
+        _settings_xml(doc.pagina.pares_impares, especiais_notas, controlar,
+                      numeracao.tab_padrao_tw if numeracao is not None else 708)
     rels_configuracoes = gravador.relacoes_das_configuracoes()
     partes_configuracoes = [("word/_rels/settings.xml.rels", _rels_xml(rels_configuracoes))] \
         if rels_configuracoes else []

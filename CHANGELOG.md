@@ -1,3 +1,57 @@
+## 0.1.16 - 2026-10-15
+
+O arquivo sem `styles.xml` (gerado por conversores de PDF e outros programas) volta do EditDoc
+com a mesma paginação; a conferência pós-gravação passa a comparar a formatação que muda o
+layout.
+
+Defeito: um `.docx` real só com o `document.xml` (sem `styles.xml` e sem `settings.xml`) abria
+com 4 páginas e, salvo pelo EditDoc, reabria com 6 (já na 0.1.14), com a conferência e o
+validador passando. Causa: sem `styles.xml` o leitor deixava o docDefaults vazio (sem espaço
+entre parágrafos, entrelinha simples, fonte da preferência), mas o escritor gravava para esse
+catálogo o docDefaults do documento novo (8 pt depois, entrelinha 1,08, Calibri 11). Relido, todo
+parágrafo fora de tabela ganhava os 8 pt e o 1,08, e a imagem da altura da página deixava de
+caber. O diff c14n entre a 1ª e a 2ª gravação era vazio (o erro estava na 1ª), e a conferência
+só comparava estrutura, texto, estilos e objetos, nunca a formatação efetiva.
+
+Correção, na origem:
+
+- sem `styles.xml`, o leitor usa o docDefaults que o Word usa nesse caso (Times New Roman 10,
+  sem espaço entre parágrafos, entrelinha simples; `catalogo_sem_estilos`), e o escritor grava
+  o docDefaults do catálogo ao pé da letra (`xml_base(..., paragrafo)`). O arquivo salvo traz
+  `w:after="0" w:line="240"` e a fonte, e reabre igual;
+- o catálogo explícito sem espaçamento vai ao arquivo sem `w:spacing` (antes: 8 pt e 1,08); o
+  `Documento` sem catálogo (montado em código) continua com 8 pt e 1,08 (`catalogo_sem_catalogo`),
+  e a conferência usa o mesmo catálogo;
+- sem `settings.xml`, a tabulação padrão gravada é a que o leitor supôs (720, a da lista), não
+  708.
+
+Conferência fortalecida: de cada parágrafo do corpo, do cabeçalho e do rodapé, a formatação
+efetiva resolvida como a tela e o escritor resolvem (docDefaults fora da tabela, cadeia do
+estilo, recuo do nível da lista e formatação direta): alinhamento, recuos, espaços, entrelinha e
+extras do `pPr`; de cada trecho de texto, caractere a caractere (os runs podem vir partidos de
+outro jeito), negrito, itálico, sublinhado, tachado, índices, tamanho, fonte, cor e extras do
+`rPr`; de cada tabela, linha e célula, larguras da grade, largura, layout fixo, margens, recuo,
+alinhamento, altura e extras. Fonte e tamanho que o documento em memória não define (a tela usa
+a preferência) não contam. Custo: +40 ms em 3000 parágrafos (573 → 609 ms, com a releitura);
+nos 11 `.docx` reais, dentro do ruído (o manual, ~250 ms; o de 13 páginas, ~490 ms, nas duas versões). No arquivo
+real do defeito, o arquivo do escritor antigo é recusado ("espaco_depois_tw 0 -> 160,
+espacamento_linha_pct 100 -> 108").
+
+Regressão nos 11 `.docx` reais (cópias temporárias; abrir → salvar como → reabrir → salvar →
+reabrir, com as fontes do Windows carregadas no offscreen): todos gravam, sem falha na
+conferência nem no validador, sem diferença c14n entre a 1ª e a 2ª gravação, e cada arquivo
+reabre com o mesmo número de páginas (o do defeito: 4/4/4; na 0.1.15, 4/5/5 com as fontes e
+4/6/6 sem). Paginação × Word (docProps/app.xml): 3×3, 4×3, 14×13, 2×2; o Manual tem 48 no
+app.xml e 52 no EditDoc. As diferenças que sobram não vêm da gravação (docs/SPIKES.md, "0.1.16").
+
+Testes: suíte nova `teste_fidelidade` (fixture gerada em código sem `styles.xml` nem
+`settings.xml`, com imagem da altura da página: mesmas páginas e mesmos formatos de bloco depois
+de salvar, docDefaults gravado, segunda gravação igual; contraprova com o escritor antigo, que
+reabre com mais páginas e é recusado pela conferência; tabulação sem `settings.xml` com
+contraprova; quatro sabotagens do XML gravado acusadas, uma por tipo de formatação, e o arquivo
+sem sabotagem passa; custo da conferência em 3000 parágrafos). Nenhuma verificação existente foi
+retirada nem reescrita.
+
 ## 0.1.15 - 2026-10-15
 
 Digitar repinta só a linha nos tiles da tela, não os tiles inteiros; spike das saídas para a

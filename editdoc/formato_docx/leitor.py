@@ -86,7 +86,7 @@ from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, 
                                       MarcaComentario, MarcaConteudo, Marcador, MarcaMovimento,
                                       MarcaNota, MarcaQuebra, Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
-from editdoc.modelo.estilos import Estilos, catalogo_padrao
+from editdoc.modelo.estilos import Estilos, catalogo_padrao, catalogo_sem_estilos
 from editdoc.modelo import numeracao as mod_numeracao
 from editdoc.modelo import revisoes as mod_revisoes
 from editdoc.modelo import secoes as mod_secoes
@@ -2357,6 +2357,10 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                     ctx.estilos_tabela[_atr(estilo, "styleId")] = estilo
                     if _onoff_atr(estilo, "default"):
                         ctx.estilo_tabela_padrao = _atr(estilo, "styleId")
+        else:
+            # Sem styles.xml (0.1.16): o docDefaults do Word para esse caso (Times New Roman 10,
+            # sem espaco entre paragrafos), que o escritor grava; senao o salvo reabre diferente.
+            ctx.estilos = catalogo_sem_estilos()
 
         # Comentarios (0.1.6): o comments.xml antes do corpo (as ancoras citam os w:id).
         comentarios = _ler_comentarios(relacoes, ctx, ler_parte, relacoes_de, tamanho_de,

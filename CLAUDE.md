@@ -61,6 +61,8 @@ causou defeito.
   (`tabela_da_mudanca`, `linha_da_mudanca`, `celula_da_mudanca`, `secao_da_mudanca`, `com_marca`);
   excluir linha/coluna rastreado em `edicao/tabelas.py`; mover (recortar e colar) em
   `edicao/revisoes.lembrar_recorte`/`colar_como_movimento`.
+- Conferencia pos-gravacao: `formato_docx/conferencia.py` (desde a 0.1.16 tambem a formatacao
+  efetiva, `_Efetivas`); fidelidade da gravacao em `tests/teste_fidelidade.py`.
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -279,3 +281,8 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | `Numerador.atualizar` fora da pintura (0.1.15) | A janela pede o rotulo do cursor depois da tecla (`rotulos()` -> `atualizar()`), e o "mudou" ficava com ela: a pintura via "nada mudou". O Backspace que tira o item vazio da lista renumera os de baixo sem mudar altura; o tile inteiro escondia os da mesma fileira. A vista compara `Numerador.desenho` com o da pintura anterior (`_conferir_rotulos`) e tira do primeiro item diferente para baixo. |
 | `python.exe -` com heredoc E `< /dev/null` (0.1.15) | O `< /dev/null` depois do heredoc troca a entrada: o Python abre o REPL e entra em loop de erro (856 MB de saida em 6 minutos). Patch e' arquivo .py escrito com a ferramenta Write. |
 | propriedade de usuario (0.1.15) | Nenhuma nova. Os proximos livres continuam UserProperty + 45 e UserObject + 7. |
+| arquivo sem styles.xml (0.1.16) | O leitor partia do catalogo com docDefaults vazio (tela: sem espaco, entrelinha simples, fonte da preferencia) e o escritor gravava para ele o docDefaults do documento novo (8 pt, 1,08): o salvo reabria com 6 paginas em vez de 4, com conferencia e c14n da 2a gravacao limpos. Agora o leitor usa `catalogo_sem_estilos` (o do Word: Times New Roman 10, 0, simples) e o `xml_base` grava o docDefaults do catalogo ao pe' da letra. So' o `Documento(estilos=None)` grava 8 pt e 1,08 (`catalogo_sem_catalogo`, o mesmo na conferencia): as fixtures de `bytes_de` dependem disso. |
+| conferencia da formatacao (0.1.16) | Compara a formatacao EFETIVA (docDefaults, estilo, recuo da lista, direta) de paragrafo, trecho (caractere a caractere: os runs vem partidos de outro jeito) e tabela, cada lado com o proprio catalogo. Fonte e tamanho que a memoria nao define (None: a tela usa a preferencia) nao contam. Mudar o que o escritor omite por ser igual ao estilo pede mudar `_Efetivas` junto, senao a conferencia recusa o arquivo (o documento nao salva). |
+| espaco entre paragrafos no Qt (0.1.16) | O `QTextDocumentLayout` usa `qMax(topMargin, bottomMargin do anterior)`; o Word soma espaco depois e espaco antes. Viuvas/orfas, keepNext, keepLines e contextualSpacing tambem nao entram no layout: a paginacao difere da do Word (docs/SPIKES.md, 0.1.16), mas e' a mesma ao reabrir o salvo. |
+| altura do bloco (0.1.16) | `blockBoundingRect` da' so' a altura natural das linhas: com entrelinha proporcional, o quanto o bloco ocupa e' o passo ate' o topo do bloco seguinte. No offscreen a linha nao tem o `lineGap` da fonte (Arial 12: 268 twips; Word 276) e, sem as fontes carregadas, usa o fallback: contar paginas para comparar com o Word so' no Windows real. |
+| propriedade de usuario (0.1.16) | Nenhuma nova. Os proximos livres continuam UserProperty + 45 e UserObject + 7. |

@@ -1043,11 +1043,101 @@ conferência nem no validador, sem diferença c14n entre a 1ª e a 2ª gravaçã
 páginas da 0.1.14 em cada arquivo (um deles abre com 4 páginas e o salvo reabre com 6 nas duas
 versões: diferença que já existia, registrada como pendência).
 
+## 0.1.16: o arquivo que abria com 4 páginas e reabria com 6
+
+O arquivo da pendência da 0.1.15 é um `.docx` gerado por um conversor de PDF: só
+`[Content_Types].xml`, `_rels`, `core.xml`, `document.xml` e as imagens. Sem `styles.xml`, sem
+`settings.xml`, sem `app.xml`. O corpo é uma imagem da altura da página (95 % do corpo), ~70
+parágrafos curtos com `w:spacing w:after="120"` e Arial de 6 a 9 pt, uma quebra de página e outra
+imagem.
+
+Diff entre a 1ª abertura (original) e a 2ª (gravado), bloco a bloco no `QTextDocument`: os 79
+blocos diferiam; no gravado, todos tinham entrelinha proporcional de 108 % e o da imagem ganhava
+10,67 px depois. O docDefaults do modelo era `{}` na 1ª e `{8 pt depois, 108 %, Calibri 11}` na
+2ª. O diff c14n entre a 1ª e a 2ª gravação era vazio, porque o erro já estava na 1ª: o leitor
+partia do `catalogo_padrao()` (docDefaults vazio, que a tela interpreta como sem espaço,
+entrelinha simples e fonte da preferência) e o `xml_base` do escritor gravava, para qualquer
+catálogo sem `styles.xml` de origem, o docDefaults do documento novo. Com 1,08, a linha da imagem
+(95 % do corpo) passa do corpo e empurra o resto.
+
+O que o Word usa sem `styles.xml`: espaçamento e entrelinha do esquema (ausente = 0 e simples) e,
+para a fonte, Times New Roman de 10 pt (`w:sz` ausente = 20 meios-pontos). Não há Word nesta
+máquina para conferir a fonte; o espaçamento é o do esquema. O arquivo não tem `app.xml`, então
+não há contagem do Word gravada: pela regra acima, o Word mostraria o que o EditDoc mostra agora
+na 1ª abertura (4 páginas). Correção: o leitor usa esse docDefaults (`catalogo_sem_estilos`) e o
+escritor grava o docDefaults do catálogo ao pé da letra. Resultado: 4/4/4 (abrir, reabrir o
+salvo, reabrir o salvo duas vezes).
+
+A conferência não pegava porque só comparava estrutura, texto, estilos, objetos, campos, marcas,
+listas e revisões. Desde a 0.1.16 compara também a formatação efetiva que muda o layout (ver
+CHANGELOG). Duas decisões: fonte e tamanho que a memória não define não contam (a tela usa a
+preferência, que o modelo não vê); comentários e notas continuam sem a formatação (o layout do
+corpo é o que importa aqui, e o conteúdo deles continua conferido). Custo medido:
+
+| Medida | 0.1.15 | 0.1.16 |
+|---|---|---|
+| `conferir` de 3000 parágrafos e 9000 runs (com a releitura), mediana de 7 | 573 ms | 609 ms |
+| manual real (2 MB, 52 páginas), na gravação | 232 a 284 ms | 232 a 283 ms |
+| arquivo de 13 páginas com sumário, na gravação | 470 a 483 ms | 487 a 497 ms |
+
+Contraprova no arquivo real: o arquivo do escritor antigo é recusado ("formatacao do paragrafo
+diferente no paragrafo 1 (espaco_depois_tw 0 -> 160, espacamento_linha_pct 100 -> 108)").
+
+### Páginas: Word × EditDoc ao abrir × EditDoc depois de salvar e reabrir
+
+Offscreen com as fontes do Windows carregadas (Calibri, Arial, Times, Verdana, Cambria...; Aptos
+não existe na máquina). Sem elas, o offscreen usa o fallback e as contagens mudam (o arquivo do
+defeito dava 4/6 sem as fontes e 4/5 com elas na 0.1.15). Word = `<Pages>` do `docProps/app.xml`
+(o que o Word gravou na última vez; "-" = sem `app.xml` ou sem `Pages`).
+
+| Arquivo | Word | 0.1.15 abrir/salvo | 0.1.16 abrir/salvo/salvo 2x |
+|---|---|---|---|
+| 1: o do defeito (conversor de PDF) | - | 4 / 5 | 4 / 4 / 4 |
+| 2 a 4: três variantes de um documento | - | 5 / 5 | 5 / 5 / 5 |
+| 5 e 6: o manual, duas cópias (`app.xml` de uma gravação do Word) | 48 | 52 / 52 | 52 / 52 / 52 |
+| 7 | 3 | 3 / 3 | 3 / 3 / 3 |
+| 8 | 4 | 3 / 3 | 3 / 3 / 3 |
+| 9 (com sumário) | 14 | 13 / 13 | 13 / 13 / 13 |
+| 10 | - | 27 / 27 | 27 / 27 / 27 |
+| 11 | 2 | 2 / 2 | 2 / 2 / 2 |
+
+Sem as fontes (o fallback do offscreen), a 0.1.16 dá 4/4/4, 6, 54/54, 3, 4, 14, 31 e 2 páginas,
+sempre iguais nas três aberturas (o 8 e o 9 batem com o Word por acaso: o fallback é mais largo).
+Todos gravam nas três vezes, sem falha na conferência nem no validador, sem diferença c14n entre
+a 1ª e a 2ª gravação. A diferença que sobra em relação ao Word não vem da gravação (o salvo reabre
+igual). Investigado pelas `w:lastRenderedPageBreak` (onde o Word começou cada página na última
+gravação) contra a página do mesmo texto no EditDoc:
+
+- **espaço entre parágrafos**: o `QTextDocumentLayout` do Qt 6.11 usa o MAIOR entre o
+  `bottomMargin` do bloco de cima e o `topMargin` do de baixo (`layoutBlock`:
+  `qMax(blockFormat.topMargin(), previousBlockFormat->bottomMargin())`); o Word soma o espaço
+  depois e o espaço antes. O manual usa um estilo de corpo com 12 pt antes e 12 pt depois em 165
+  parágrafos: no Word são 24 pt entre eles, no EditDoc 12. Corrigir pede margem derivada dos
+  vizinhos, mantida a cada edição (como o recuo escondido da seção): não é de baixo risco;
+- **controle de linhas viúvas e órfãs, manter com o próximo, manter linhas juntas** e
+  **`contextualSpacing`** não entram no layout (ficam nos extras do `pPr` e voltam ao arquivo). No
+  arquivo 8 o Word passa para a página seguinte um parágrafo de três linhas que no EditDoc
+  ainda cabe (12 584 twips de 14 004); o EditDoc fica mais denso (3 páginas × 4);
+- **entrelinha "múltipla"**: conferida no código do Qt (`getLineHeightParams`: cada linha avança
+  `altura × percentual`, a 1ª também) e medida (150 % com Calibri 12: 439,5 twips por linha mais o
+  espaço depois), igual ao Word. O `blockBoundingRect` mostra só a altura natural das linhas:
+  medir o passo de um bloco ao seguinte, não a altura do retângulo;
+- **altura natural da linha no offscreen**: o Arial de 12 pt dá 268 twips (ascendente +
+  descendente, sem o `lineGap` da fonte); o Word usa 276 (13,8 pt, com o `lineGap`). Contagem de
+  páginas comparável à do Word só no Windows real, não no offscreen.
+
+Fica como pendência (abaixo). Nenhuma dessas diferenças muda entre abrir e reabrir o salvo.
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com
-  uma reescrita (layout próprio para tabelas ou documento por trecho; ver "0.1.15"). E um `.docx`
-  real abre com 4 páginas e, salvo pelo EditDoc, reabre com 6 (igual na 0.1.14): investigar.
+  uma reescrita (layout próprio para tabelas ou documento por trecho; ver "0.1.15"). O `.docx`
+  real que abria com 4 páginas e reabria com 6 foi resolvido na 0.1.16.
+- 0.1.16: paginação mais perto da do Word: somar o espaço depois e o espaço antes (o Qt usa o
+  maior), controle de viúvas e órfãs, manter com o próximo, manter linhas juntas e
+  `contextualSpacing` (ver "0.1.16"). Conferir no Word: a fonte do texto sem formatação num
+  arquivo sem `styles.xml` (Times New Roman 10) e as páginas dos 11 arquivos reais no Windows real
+  (o offscreen mede a linha sem o `lineGap` da fonte).
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,

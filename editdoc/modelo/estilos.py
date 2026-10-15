@@ -515,6 +515,34 @@ def catalogo_padrao() -> Estilos:
 PARAGRAFO_PADRAO_NOVO = {"espaco_depois_tw": 160, "espacamento_linha_pct": 108}
 
 
+#: docDefaults de um pacote SEM styles.xml (0.1.16), os que o Word usa nesse caso: Times New
+#: Roman de 10 pt (w:sz ausente = 20 meios-pontos), nenhum espaco entre paragrafos e entrelinha
+#: simples (w:spacing ausente). Ate' a 0.1.15 o leitor deixava o docDefaults vazio (sem espaco,
+#: fonte da preferencia) e o escritor gravava o do documento novo (8 pt depois, 1,08, Calibri 11):
+#: o arquivo salvo reabria com outro layout (4 paginas viravam 6).
+CARACTERE_SEM_ESTILOS = {"fonte": "Times New Roman", "tamanho_meio_pt": 20}
+PARAGRAFO_SEM_ESTILOS = {"espaco_depois_tw": 0, "espacamento_linha_pct": 100}
+
+
+def catalogo_sem_estilos() -> Estilos:
+    """Catalogo de um arquivo que nao tem styles.xml: o padrao, com o docDefaults do Word para
+    esse caso. O escritor grava esse docDefaults, entao o arquivo salvo reabre igual."""
+    est = catalogo_padrao()
+    est.padrao_caractere = dict(CARACTERE_SEM_ESTILOS)
+    est.padrao_paragrafo = dict(PARAGRAFO_SEM_ESTILOS)
+    return est
+
+
+def catalogo_sem_catalogo() -> Estilos:
+    """O catalogo com que se grava (e se confere, 0.1.16) um `Documento` sem catalogo
+    (`estilos=None`, montado em codigo): o padrao com o espacamento do documento novo (8 pt
+    depois, 1,08), que e' o que o escritor sempre gravou nesse caso. Um catalogo explicito,
+    mesmo sem docDefaults, vai ao arquivo ao pe' da letra."""
+    est = catalogo_padrao()
+    est.padrao_paragrafo = dict(PARAGRAFO_PADRAO_NOVO)
+    return est
+
+
 def catalogo_de_documento_novo(fonte: str, tamanho_pt: float) -> Estilos:
     """Catalogo do documento novo da janela (M8): a fonte e o tamanho da preferencia e o
     espacamento do Word. O escritor grava o docDefaults daqui."""

@@ -28,7 +28,7 @@ from editdoc.formato_docx.padroes import (ESPACO_DEPOIS_PADRAO_TW, FONTE_PADRAO,
                                          TAMANHO_PADRAO_MEIO_PT)
 from editdoc.modelo.documento import Borda
 from editdoc.modelo.estilos import (CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, Estilo, Estilos,
-                                    catalogo_padrao, nivel_de_titulo)
+                                    catalogo_sem_catalogo, nivel_de_titulo)
 
 #: Estilo de tabela que toda tabela usa (o "Table Grid" do Word).
 ESTILO_TABELA = "TableGrid"
@@ -535,9 +535,22 @@ def _estilo_grade(raiz):
         _borda_xml(gb, nome, Borda())
 
 
+#: Campos de paragrafo que o docDefaults gravado pelo `xml_base` carrega.
+_ESPACAMENTO = ("espaco_antes_tw", "espaco_depois_tw", "espacamento_linha_pct")
+
+
 def xml_base(fonte: str = FONTE_PADRAO,
-             tamanho_meio_pt: int = TAMANHO_PADRAO_MEIO_PT) -> etree._Element:
-    """styles.xml de documento novo, sem os estilos do catalogo: docDefaults e os fixos."""
+             tamanho_meio_pt: int = TAMANHO_PADRAO_MEIO_PT,
+             paragrafo: dict | None = None) -> etree._Element:
+    """styles.xml de documento novo, sem os estilos do catalogo: docDefaults e os fixos.
+
+    `paragrafo` (0.1.16): o docDefaults de paragrafo do catalogo, que e' o que a tela usa, ao
+    pe' da letra: o documento novo grava 8 pt depois e 1,08; o arquivo que nao tinha styles.xml,
+    0 e entrelinha simples; o catalogo sem espacamento (documento montado em codigo), nenhum
+    w:spacing (0 e simples no Word, como na tela). Ate' a 0.1.15 o catalogo sem espacamento
+    gravava 8 pt e 1,08, e o arquivo salvo reabria com outro layout. Sem `paragrafo`, 8 pt e
+    1,08.
+    """
     raiz = etree.Element(q("styles"), nsmap={"w": W})
     dd = etree.SubElement(raiz, q("docDefaults"))
     rpd = etree.SubElement(dd, q("rPrDefault"))
@@ -552,10 +565,16 @@ def xml_base(fonte: str = FONTE_PADRAO,
     lang.set(q("eastAsia"), "pt-BR")
     lang.set(q("bidi"), "ar-SA")
     ppd = etree.SubElement(dd, q("pPrDefault"))
-    sp = etree.SubElement(etree.SubElement(ppd, q("pPr")), q("spacing"))
-    sp.set(q("after"), str(ESPACO_DEPOIS_PADRAO_TW))
-    sp.set(q("line"), str(LINHA_PADRAO))
-    sp.set(q("lineRule"), "auto")
+    ppr = etree.SubElement(ppd, q("pPr"))
+    if paragrafo is not None:
+        campos = {k for k in _ESPACAMENTO if paragrafo.get(k) is not None}
+        if campos:
+            aplicar_ppr(ppr, paragrafo, campos)
+    else:
+        sp = etree.SubElement(ppr, q("spacing"))
+        sp.set(q("after"), str(ESPACO_DEPOIS_PADRAO_TW))
+        sp.set(q("line"), str(LINHA_PADRAO))
+        sp.set(q("lineRule"), "auto")
     _estilo_fixo(raiz, "character", "DefaultParagraphFont", "Default Paragraph Font",
                  extra=[("uiPriority", "1"), ("semiHidden", None), ("unhideWhenUsed", None)])
     tbl = _estilo_fixo(raiz, "table", "TableNormal", "Normal Table",
@@ -585,13 +604,14 @@ def escrever_estilos(est: Estilos | None, listas: set | None = None) -> bytes:
     """O styles.xml do catalogo: o original com os estilos alterados e novos reescritos.
 
     `listas`: os numIds do numbering.xml gravado (o numPr de estilo que cita outro sai)."""
-    est = est if est is not None else catalogo_padrao()
+    est = est if est is not None else catalogo_sem_catalogo()
     if est.xml_original:
         raiz = _parse_seguro(est.xml_original)
     else:
         # Documento novo: o docDefaults e' o do catalogo (a fonte da preferencia, M8).
         raiz = xml_base(est.padrao_caractere.get("fonte") or FONTE_PADRAO,
-                        est.padrao_caractere.get("tamanho_meio_pt") or TAMANHO_PADRAO_MEIO_PT)
+                        est.padrao_caractere.get("tamanho_meio_pt") or TAMANHO_PADRAO_MEIO_PT,
+                        est.padrao_paragrafo)
     sanear(raiz, listas)
     por_id = {_atr(el, "styleId"): el for el in raiz.findall(q("style"))}
     for e in est.itens.values():
