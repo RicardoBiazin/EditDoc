@@ -447,8 +447,12 @@ class GravadorPacote:
 
     # -- partes reescritas -------------------------------------------------------------
 
-    def configuracoes(self, pares_impares: bool, notas: dict | None = None) -> bytes | None:
+    def configuracoes(self, pares_impares: bool, notas: dict | None = None,
+                      controlar: bool | None = None) -> bytes | None:
         """O settings.xml original com o que o EditDoc controla. None = gerar um novo.
+
+        `controlar` (0.1.13): o w:trackRevisions (Revisao > Controlar alteracoes); None = como
+        veio.
 
         `notas` (0.1.10): sufixo ("footnotes", "endnotes") -> ids das especiais que a parte
         gravada pelo escritor tem. O footnotePr cita as especiais que existem; a parte que nao
@@ -466,6 +470,16 @@ class GravadorPacote:
                 raiz.remove(atual)
             if pares_impares:
                 _inserir_em_ordem(raiz, etree.Element(q("evenAndOddHeaders")))
+        if controlar is not None:
+            atual = raiz.find(q("trackRevisions"))
+            ligado = atual is not None and (atual.get(q("val")) or "1").lower() not in (
+                "0", "false", "off")
+            if ligado != bool(controlar):
+                mudou = True
+                if atual is not None:
+                    raiz.remove(atual)
+                if controlar:
+                    _inserir_em_ordem(raiz, etree.Element(q("trackRevisions")))
         notas = notas or {}
         for sufixo, local in _NOTAS.items():
             if sufixo in notas:

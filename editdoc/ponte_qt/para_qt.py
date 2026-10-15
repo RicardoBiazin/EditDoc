@@ -43,6 +43,10 @@ Comentarios (0.1.6): as ancoras sao marcas (`marcas.py`); o catalogo vai para o 
 Secoes (0.1.12): o paragrafo que termina uma secao ganha, no fim, o caractere da quebra de secao
 (`ponte_qt/secoes.py`), e a secao vai para o registro do documento; a ultima secao tambem. A
 quebra de coluna vira o mesmo objeto, sem largura.
+
+Alteracoes controladas (0.1.13): as revisoes do run vao no formato de caractere e as da marca de
+paragrafo no do bloco (`ponte_qt/revisoes.py`); o documento com revisao ganha o realce dos modos
+de exibicao, e o w:trackRevisions vira `_controlar_alteracoes` no documento.
 """
 
 from __future__ import annotations
@@ -67,6 +71,7 @@ from editdoc.modelo.documento import MarcaNota, MarcaQuebra
 from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
+from editdoc.ponte_qt import revisoes as pq_revisoes
 
 LINHA_SEPARADORA = chr(0x2028)
 
@@ -139,7 +144,7 @@ def formato_estrutural() -> QTextBlockFormat:
 
 # -- imagens --------------------------------------------------------------------
 
-def inserir_imagem(cursor: QTextCursor, imagem, link=None, extras=None) -> None:
+def inserir_imagem(cursor: QTextCursor, imagem, link=None, extras=None, run=None) -> None:
     """Insere o run de imagem do modelo no cursor, com o recurso no documento."""
     nome = imagens.nome_recortado(imagens.registrar(imagem.dados, imagem.formato),
                                   getattr(imagem, "recorte", None))
@@ -154,6 +159,9 @@ def inserir_imagem(cursor: QTextCursor, imagem, link=None, extras=None) -> None:
     if extras:
         # rPr preservado do run da imagem (0.1.5): a borda em volta, por exemplo.
         fmt.setProperty(pq_props.PROP_RPR_EXTRA, extras)
+    if run is not None and pq_revisoes.run_revisado(run):
+        # Imagem inserida ou excluida (0.1.13).
+        pq_revisoes.aplicar_run(fmt, run)
     cursor.insertImage(fmt)
 
 
@@ -180,6 +188,7 @@ def json_da_tabela(tabela: Tabela) -> str:
         if tabela.margens_celula_tw is not None else None,
         "extras": tabela.extras,
         "estilo": tabela.estilo,
+        "mudanca_grade": getattr(tabela, "mudanca_grade", None),
     }, sort_keys=True)
 
 
@@ -340,16 +349,21 @@ def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
     listas.marcar_lista(bf, p.lista, p.lista_nivel)
     # Extras (0.1.5): depois do recuo, de que as tabulacoes contam.
     pq_props.aplicar_ppr(bf, p.extras, p.espacamento_linha_pct is not None)
+    if pq_revisoes.paragrafo_revisado(p):
+        pq_revisoes.aplicar_paragrafo(bf, p)  # 0.1.13
     return bf
 
 
 def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QTextCharFormat:
     base = res.caractere(sid_par, r.estilo)
     if not base and not r.estilo:
-        return _formato_de_run(r)
-    proprio = {k: getattr(r, k) for k in CAMPOS_CARACTERE if getattr(r, k) is not None}
-    cf = pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
-    pq_props.aplicar_rpr(cf, r.extras)
+        cf = _formato_de_run(r)
+    else:
+        proprio = {k: getattr(r, k) for k in CAMPOS_CARACTERE if getattr(r, k) is not None}
+        cf = pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
+        pq_props.aplicar_rpr(cf, r.extras)
+    if pq_revisoes.run_revisado(r):
+        pq_revisoes.aplicar_run(cf, r)  # alteracoes controladas (0.1.13)
     return cf
 
 
@@ -359,9 +373,11 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
     if base:
         # Bloco vazio: a altura da linha e o texto digitado nele seguem o estilo.
         cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
+    if pq_revisoes.paragrafo_revisado(p) or any(pq_revisoes.run_revisado(r) for r in p.runs):
+        cursor.document()._tem_revisoes = True  # 0.1.13: o realce vale depois de preencher
     for r in p.runs:
         if r.imagem is not None:
-            inserir_imagem(cursor, r.imagem, r.link, r.extras)
+            inserir_imagem(cursor, r.imagem, r.link, r.extras, r)
         elif isinstance(r.marca, MarcaNota):
             # Nota de rodape ou de fim (0.1.10): a referencia, ou o numero da propria nota.
             pq_notas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res),
@@ -478,6 +494,8 @@ def preencher_blocos(documento_qt: QTextDocument, blocos: list, estilos=None) ->
     cursor = QTextCursor(documento_qt)
     _inserir_blocos(cursor, blocos, pq_estilos.Resolvedor(estilos))
     concluir_listas(documento_qt)
+    if pq_revisoes.tem_revisoes(documento_qt):
+        pq_revisoes.marcar_revisado(documento_qt)
 
 
 def _reiniciar_flutuantes(documento_qt: QTextDocument, pagina) -> None:
@@ -507,6 +525,8 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     final.pagina = modelo.pagina
     documento_qt._secao_final = final
     documento_qt._corpo_com_secoes = True
+    # Alteracoes controladas (0.1.13): o w:trackRevisions do settings.xml.
+    documento_qt._controlar_alteracoes = bool(getattr(modelo, "controlar_alteracoes", False))
     # Lista dada so' pelo tipo (documento montado em codigo): os numIds do escritor (0.1.4).
     modelo = materializado(modelo)
     listas.definir_catalogo_base(documento_qt, modelo.numeracao)
@@ -519,6 +539,8 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     # Notas (0.1.10): o numero de cada referencia antes do primeiro plano da pagina.
     documento_qt._numeros_notas = pq_notas.numeros_continuos(documento_qt)
     concluir_listas(documento_qt)
+    if pq_revisoes.tem_revisoes(documento_qt):
+        pq_revisoes.marcar_revisado(documento_qt)  # 0.1.13: o realce do modo de exibicao
 
 
 def concluir_listas(documento_qt: QTextDocument) -> None:

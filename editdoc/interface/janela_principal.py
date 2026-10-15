@@ -58,7 +58,8 @@ from editdoc.interface.atualizador import AtualizadorDeEstado
 from editdoc.interface.barra_aviso import BarraAviso
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
-from editdoc.interface.comandos import (COMENTARIO, LINK, LISTA_NUMERADA, QUEBRA_DAS_ACOES, TABELA,
+from editdoc.interface.comandos import (COMENTARIO, LINK, LISTA_NUMERADA, QUEBRA_DAS_ACOES, REVISAO,
+                                        TABELA,
                                         Comandos)
 from editdoc.interface.controle_zoom import ControleZoom
 from editdoc.interface.faixa import BotaoAcao, Faixa
@@ -68,6 +69,7 @@ from editdoc.interface.painel_comentarios import PainelComentarios
 from editdoc.interface.painel_documento import PainelDocumento
 from editdoc.interface.painel_estilos import PainelEstilos
 from editdoc.interface.regua import Regua
+from editdoc.interface.revisoes_janela import ControleDeRevisoes
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.documento import Documento, Paragrafo
 from editdoc.modelo.estilos import catalogo_de_documento_novo
@@ -185,6 +187,14 @@ class JanelaPrincipal(QMainWindow):
                                      "anterior": lambda: self._comentario_vizinho(False),
                                      "proximo": lambda: self._comentario_vizinho(True),
                                      "mostrar": self._alternar_comentarios,
+                                     # Controle de alteracoes (0.1.13): o ControleDeRevisoes,
+                                     # criado depois do painel lateral.
+                                     **{g: (lambda *a, g=g: self.revisoes.ganchos()[g](*a))
+                                        for g in ("controlar", "modo", "imprimir_marcas",
+                                                  "aceitar", "rejeitar", "aceitar_todas",
+                                                  "rejeitar_todas", "aceitar_autor",
+                                                  "rejeitar_autor", "revisao_anterior",
+                                                  "revisao_proxima", "painel_revisoes")},
                                  })
         self.botao_arquivo = BotaoArquivo(self.comandos, self._recentes, self._abrir_recente)
         self.faixa = Faixa(self.comandos, self.painel, self.botao_arquivo)
@@ -233,6 +243,8 @@ class JanelaPrincipal(QMainWindow):
         self.dock_estilos.visibilityChanged.connect(lambda _v: self._sintonizar())
         self.dock_navegacao.visibilityChanged.connect(lambda _v: self._sintonizar())
         self.dock_comentarios.visibilityChanged.connect(self._comentarios_visiveis)
+        # Controle de alteracoes (0.1.13): a aba Revisoes no mesmo painel lateral.
+        self.revisoes = ControleDeRevisoes(self)
         self._regua_visivel = True
         self.comandos.acao("mostrar_regua").setChecked(True)
 
@@ -242,7 +254,7 @@ class JanelaPrincipal(QMainWindow):
         self.painel.registrar_atalhos(self.comandos.todas())
         self.painel.registrar_menu_contexto([self.comandos.acao(i) for i in (
             *TABELA, "tamanho_imagem", "inserir_link", *LINK, *LISTA_NUMERADA,
-            "novo_comentario", *COMENTARIO)])
+            "novo_comentario", *COMENTARIO, *REVISAO)])
         self.painel.registrar_menu_objeto([self.comandos.acao(i) for i in QUEBRA_DAS_ACOES],
                                           self.comandos.acao("posicao_tamanho"))
         self.painel.mensagem.connect(lambda texto: self.statusBar().showMessage(texto, 6000))
@@ -318,6 +330,9 @@ class JanelaPrincipal(QMainWindow):
         self._abrir_pdf = bool(cfg.get("abrir_pdf_depois", False))
         self._fonte_cfg = (cfg.get("fonte_padrao", self._fonte_cfg[0]),
                            float(cfg.get("tamanho_padrao", self._fonte_cfg[1])))
+        # O autor das alteracoes controladas (0.1.13) e' o dos comentarios.
+        from editdoc.edicao.comentarios import autor_das_preferencias
+        self.revisoes.definir_autor(autor_das_preferencias(cfg)[0])
 
     def opcoes(self) -> bool:
         """Arquivo > Opções: mostra, grava e aplica as preferencias. True se mudou."""
@@ -394,6 +409,8 @@ class JanelaPrincipal(QMainWindow):
         c.acao("painel_estilos").setChecked(not self.dock_estilos.isHidden())
         c.acao("painel_navegacao").setChecked(not self.dock_navegacao.isHidden())
         c.acao("mostrar_comentarios").setChecked(not self.dock_comentarios.isHidden())
+        if hasattr(self, "revisoes"):
+            self.revisoes.sintonizar()  # 0.1.13
 
     def _estilo_escolhido(self, sid: str) -> None:
         ed_estilos.aplicar_estilo(self.painel, sid)
@@ -566,6 +583,11 @@ class JanelaPrincipal(QMainWindow):
                 f"{n} comentário{'s' if n != 1 else ''} excluído{'s' if n != 1 else ''}. "
                 "Desfazer (Ctrl+Z) os traz de volta.", 6000)
         return n
+
+    def _escolher_autor(self, autores: list[str], verbo: str) -> str | None:
+        """Aceitar/Rejeitar todas de um autor (0.1.13). Os testes trocam este metodo."""
+        from editdoc.interface.revisoes_janela import escolher_autor
+        return escolher_autor(self, autores, verbo)
 
     def _comentario_vizinho(self, proximo: bool) -> None:
         if ed_comentarios.ir(self.painel, proximo) is None:
@@ -793,7 +815,10 @@ class JanelaPrincipal(QMainWindow):
     # -- estatisticas e busca ----------------------------------------------
 
     def atualizar_estatisticas(self) -> None:
-        contagem = contar(self.painel.toPlainText())
+        # 0.1.13: com alteracoes controladas, o texto do modo (em Toda a marcacao, o final).
+        texto = self.revisoes.texto_para_contar() if hasattr(self, "revisoes") \
+            else self.painel.toPlainText()
+        contagem = contar(texto)
         self._rotulo_palavras.setText(f"Palavras: {contagem.palavras}")
 
     def _abrir_localizar(self) -> None:
@@ -886,6 +911,8 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_comentarios()
         if pq_comentarios.catalogo(self.painel.documento_corpo()).itens:
             self.dock_comentarios.show()
+        # Alteracoes controladas (0.1.13): o modo da janela e o painel de revisoes.
+        self.revisoes.ao_carregar()
         self._sintonizar()
         self.recuperacao.alteracoes = 0
 

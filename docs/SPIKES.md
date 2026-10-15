@@ -732,6 +732,55 @@ como pendência. Teste de regressão: `teste_secoes.testar_desempenho` mede o p9
 contra um documento de uma seção na mesma hora (16 ms ou até 2,5 vezes) e conta os ajustes do
 espaçador (no máximo 20 em 80 teclas).
 
+## 0.1.13: controle de alterações (os modos de exibição)
+
+Feito em 15/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6 6.11.2,
+offscreen, dispositivo de 1440 dpi). Scripts no rascunho da sessão, fora do repositório.
+
+### Como mostrar e esconder texto sem mexer no documento
+
+Os modos "Sem marcação" e "Original" escondem texto (o excluído, o inserido) e "Toda a marcação"
+pinta sublinhado e tachado na cor do autor. Mudar o formato de caractere entraria no desfazer e no
+"alterado"; um segundo documento para cada modo exigiria refazer seções, notas e flutuantes.
+
+| Caminho | Medido | Situação |
+|---|---|---|
+| `QSyntaxHighlighter` (formatos adicionais do layout) | não muda `isModified`, nem o desfazer, nem `revision()`; só o bloco que muda é refeito; refazer tudo (`rehighlight`) com 9 parágrafos: 0,4 a 0,9 ms | **escolhido** |
+| texto escondido com fonte de 0,05 pt | ainda 1 twip por caractere (93 escondidos: +93 twips na linha) | não serve |
+| espaçamento absoluto negativo | depende do glifo: -1 dá largura negativa (a linha anda para trás) | não serve |
+| espaçamento percentual 0 | o Qt trata como "sem espaçamento" (a largura fica) | não serve |
+| fonte de 0,01 pt, cor transparente | largura exatamente zero (93 e 200 caracteres escondidos: 1540 twips com e sem eles) | **escolhido** |
+| parágrafo inteiro escondido: `QTextBlock.setVisible(False)` + `markContentsDirty` | o `QTextDocumentLayout` respeita: altura 0, o de baixo sobe | **escolhido** |
+
+Achados:
+
+- O tachado e o sublinhado da marcação vêm do mesmo realce; a segunda linha dos movimentos
+  (verde, dupla: o Qt não tem sublinhado nem tachado duplo) é pintada à parte, na função da folha.
+- Tabulação e quebra de linha manual (U+2028) dentro do texto escondido continuam ocupando
+  espaço (a tabulação vai até a próxima parada; a quebra quebra a linha): limite registrado.
+- O parágrafo cuja marca foi excluída mas que ainda tem texto continua separado do de baixo no
+  modo final (o Word junta os dois): o Qt não esconde o separador de bloco.
+
+### Gate (p95 em ms, 80 teclas com `viewport().grab()`, mediana de 3 rodadas, `teste_desempenho`)
+
+Fixture nova: 400 parágrafos com 5 revisões cada (2000: inserções e exclusões de dois autores e
+formatação alterada), Controlar alterações ligado no arquivo: cada tecla é inserção da autora.
+
+| Documento | Onde digita | 0.1.13 |
+|---|---|---|
+| documento simples (referência) | corpo | 5,0 |
+| manual sintético | capa | 9,8 |
+| idem | sumário | 9,4 |
+| idem | corpo | 6,8 |
+| capa cheia | antes das âncoras | 15,7 |
+| **2000 revisões, controle ligado** | corpo (parágrafo 120) | **10,8** |
+
+Trocar o modo de exibição no documento de 2000 revisões, com o realce refeito, o layout e a
+pintura da tela: 268 a 277 ms em cada um dos quatro modos (critério: menos de 1 s). A lista do
+painel de revisões (2000 itens): 51 ms, em cache pela revisão do documento. Teste de regressão:
+`teste_desempenho` (o ponto "2000 revisoes, controle ligado" no p95 e
+`testar_modos_com_2000_revisoes`).
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
@@ -743,6 +792,9 @@ espaçador (no máximo 20 em 80 teclas).
   herdados, página ímpar) gravado pelo EditDoc, e um com quebra de seção inserida e apagada.
 - 0.1.12: digitação no arquivo real de duas seções a 1/3 (48,6 ms já na 0.1.11): o `insertText`
   do Qt (27 ms) e os números das listas (11 ms).
+- 0.1.13: abrir no Word, sem reparo, um arquivo com alterações controladas gravado pelo EditDoc
+  (digitar, apagar, formatar e Enter com o controle ligado, dois autores; aceitar e rejeitar
+  parte delas) e conferir que o Word mostra as mesmas revisões, autores e datas.
 - Abrir uma amostra `.docx` gerada pelo spike no Word, sem reparo. As amostras estão
   em `%TEMP%\claude\...\scratchpad\spike-docx`, fora do repositório.
 - Cache de página: medido no Gate do M3 (acima). Adotado com teto de zoom.

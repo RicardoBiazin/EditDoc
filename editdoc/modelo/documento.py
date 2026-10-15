@@ -276,6 +276,40 @@ class MarcaQuebra:
     tipo: Literal["coluna"] = "coluna"
 
 
+@dataclass(frozen=True)
+class Revisao:
+    """Uma alteracao controlada (0.1.13): quem, quando e o tipo.
+
+    No run: `Run.insercao` e' um w:ins (ou w:moveTo, o destino de um movimento) e
+    `Run.exclusao` um w:del (ou w:moveFrom, a origem). O mesmo trecho pode ter os dois: o texto
+    inserido por um autor e apagado por outro (o Word grava w:ins por fora e w:del por dentro).
+    Na marca de paragrafo, `Paragrafo.marca_insercao` e `marca_exclusao` (o w:ins/w:del do
+    w:rPr do w:pPr). `data` e' o w:date como veio; `data_utc`, o w16du:dateUtc. O `id` e' o
+    w:id lido (so' informativo, fora da comparacao): o escritor numera de novo.
+    """
+    tipo: Literal["ins", "del", "moveFrom", "moveTo"]
+    autor: str = ""
+    data: str | None = None
+    data_utc: str | None = None
+    id: int = field(default=0, compare=False)
+
+
+@dataclass(frozen=True)
+class MarcaMovimento:
+    """Inicio ou fim do trecho de um movimento (0.1.13): w:moveFromRangeStart/End ("de") e
+    w:moveToRangeStart/End ("para"). O inicio leva o nome (w:name, que liga a origem ao
+    destino), o autor, a data e os outros atributos (colFirst, colLast...) como pares
+    (nome qualificado, valor). `par` liga o inicio ao fim (fora da comparacao)."""
+    tipo: Literal["de", "para"]
+    fim: bool = False
+    nome: str = ""
+    autor: str = ""
+    data: str | None = None
+    data_utc: str | None = None
+    outros: tuple = ()
+    par: int = field(default=0, compare=False)
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -302,10 +336,16 @@ class Run:
     link: Link | None = None
     # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador; desde a 0.1.5 tambem de
     # controle de conteudo (MarcaConteudo). texto == "".
-    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | MarcaNota | MarcaQuebra | None = None
+    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | MarcaNota | MarcaQuebra \
+        | MarcaMovimento | None = None
     # Propriedades de run que o modelo nao representa (0.1.5): o XML original delas (um w:rPr
     # em forma canonica, `formato_docx/propriedades.py`). None = nenhuma.
     extras: str | None = None
+    # Alteracoes controladas (0.1.13): w:ins/w:moveTo e w:del/w:moveFrom em volta do run, e o
+    # w:rPrChange (a formatacao de antes, em forma canonica sem o w:id). Ver `Revisao`.
+    insercao: Revisao | None = None
+    exclusao: Revisao | None = None
+    mudanca_formato: str | None = None
 
     def eh_objeto(self) -> bool:
         """Run que ocupa o caractere de objeto: imagem ou objeto opaco."""
@@ -358,6 +398,13 @@ class Paragrafo:
     # Secao que termina neste paragrafo (0.1.12, o w:sectPr do w:pPr; modelo/secoes.py). So'
     # no corpo, fora de tabela. None = o paragrafo nao termina secao.
     secao: Secao | None = None
+    # Alteracoes controladas (0.1.13): a marca de paragrafo inserida ou excluida (w:ins/w:del
+    # no w:rPr do w:pPr), o w:pPrChange (as propriedades de antes, forma canonica sem w:id) e
+    # as revisoes da numeracao (w:numberingChange e w:ins do w:numPr, num w:numPr canonico).
+    marca_insercao: Revisao | None = None
+    marca_exclusao: Revisao | None = None
+    mudanca_formato: str | None = None
+    mudanca_numeracao: str | None = None
 
 
 @dataclass
@@ -435,6 +482,8 @@ class Tabela:
     # formatacao condicional do estilo continua valendo no Word). None = "Table Grid", o da
     # tabela criada no EditDoc.
     estilo: str | None = None
+    # Revisao da grade (0.1.13, w:tblGridChange dentro do w:tblGrid), forma canonica sem w:id.
+    mudanca_grade: str | None = None
 
 
 Bloco = Union[Paragrafo, Tabela]
@@ -471,6 +520,8 @@ class Documento:
     # A ultima secao (0.1.12): tipo, extras e XML de origem do w:sectPr do fim do corpo. O papel,
     # os cabecalhos e os rodapes dela sao `pagina`, `cabecalhos` e `rodapes` (modelo/secoes.py).
     secao: Secao = field(default_factory=Secao)
+    # Controlar alteracoes (0.1.13): o w:trackRevisions do settings.xml. Fora da comparacao.
+    controlar_alteracoes: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)

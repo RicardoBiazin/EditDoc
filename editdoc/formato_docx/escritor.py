@@ -68,6 +68,17 @@ especiais, o XML de origem das notas que nao mudaram e o conteudo gerado das out
 footnotePr/endnotePr do sectPr volta (o de origem, se as propriedades nao mudaram), e o
 settings.xml cita as especiais que a parte tem. `notas.preparar` roda antes (so' as notas com
 referencia, ids unicos).
+
+Alteracoes controladas (0.1.13): os runs com `insercao`/`exclusao` saem dentro de w:ins (ou
+w:moveTo) por fora e w:del (ou w:moveFrom) por dentro, como o Word grava; dentro de w:del o
+texto e' w:delText e o codigo de campo w:delInstrText. Os vizinhos com a mesma revisao ficam no
+mesmo elemento; o que nao pode ficar dentro (marcador, ancora de comentario, controle de
+conteudo, trecho de movimento) fecha o elemento e sai por fora. O w:rPrChange e' o ultimo filho
+do w:rPr; a marca de paragrafo inserida ou excluida e' o w:ins/w:del no comeco do w:rPr do
+w:pPr; o w:pPrChange e' o ultimo filho do w:pPr (depois do w:sectPr). Cada revisao sai sem
+w:id e o `revisoes.Numerador` numera a parte inteira no fim, sem repetir nenhum numero que ja'
+exista (comentarios, marcadores, revisoes de comentarios e notas de origem, objetos). O
+w:trackRevisions do settings.xml segue `Documento.controlar_alteracoes`.
 """
 
 from __future__ import annotations
@@ -89,6 +100,7 @@ from editdoc.formato_docx import opacos, ordem
 from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx import secoes as fx_secoes
 from editdoc.formato_docx import propriedades as fx_props
+from editdoc.formato_docx import revisoes as fx_revisoes
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_APP, CT_CABECALHO, CT_CONFIG, CT_CORE,
@@ -103,8 +115,9 @@ from editdoc.modelo import notas as mod_notas
 from editdoc.formato_docx.nomes import W14_NS
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celula, Documento,
                                       Imagem, Link, MarcaCampo, MarcaComentario, MarcaConteudo,
-                                      Marcador, MarcaNota, MarcaQuebra, Paragrafo, Run, Tabela, bordas_padrao, objetos_de,
-                                      paragrafos_de)
+                                      Marcador, MarcaMovimento, MarcaNota, MarcaQuebra, Paragrafo,
+                                      Run, Tabela, bordas_padrao, objetos_de, paragrafos_de)
+from editdoc.modelo import revisoes as mod_revisoes
 from editdoc.modelo.estilos import catalogo_padrao
 from editdoc.modelo.numeracao import lista_efetiva, materializado, recuos_do_nivel
 
@@ -151,7 +164,8 @@ def texto_gravavel(texto: str) -> tuple[str, int]:
     return _CONTROLE.subn("", limpo)
 
 
-def _conteudo_run(r, texto: str, coletor: Coletor) -> None:
+def _conteudo_run(r, texto: str, coletor: Coletor, apagado: bool = False) -> None:
+    """O texto no w:r: w:t (w:delText dentro de w:del, 0.1.13), w:tab e w:br."""
     limpo, n = texto_gravavel(texto)
     if n:
         coletor.somar("CONTROLE_REMOVIDO", n)
@@ -163,18 +177,37 @@ def _conteudo_run(r, texto: str, coletor: Coletor) -> None:
         elif parte in ("\n", " "):
             etree.SubElement(r, q("br"))
         else:
-            t = etree.SubElement(r, q("t"))
+            t = etree.SubElement(r, q("delText" if apagado else "t"))
             if parte != parte.strip():
                 t.set("{%s}space" % XML_NS, "preserve")
             t.text = parte
 
 
 def _rpr(run: Run, estilo: str | None = None, ctx: "_Ctx | None" = None) -> etree._Element | None:
-    """O w:rPr do run: o que o modelo diz, mais os extras do arquivo de origem (0.1.5)."""
+    """O w:rPr do run: o que o modelo diz, mais os extras do arquivo de origem (0.1.5), e o
+    w:rPrChange no fim (0.1.13)."""
     if ctx is None:
-        return fx_props.montar_rpr(run, estilo)
-    return fx_props.montar_rpr(run, estilo, ctx.bases_de_caractere(run.estilo),
-                               ctx.estilos.fontes_tema, ctx.estilo_existe)
+        rpr = fx_props.montar_rpr(run, estilo)
+    else:
+        rpr = fx_props.montar_rpr(run, estilo, ctx.bases_de_caractere(run.estilo),
+                                  ctx.estilos.fontes_tema, ctx.estilo_existe)
+    return _com_mudanca(rpr, run.mudanca_formato, ctx)
+
+
+def _com_mudanca(rpr, mudanca: str | None, ctx=None):
+    """Acrescenta o w:rPrChange (a formatacao de antes) ao rPr. O estilo citado que o catalogo
+    nao tem mais sai de dentro dele (o validador recusaria)."""
+    el = fx_revisoes.elemento_canonico(mudanca)
+    if el is None or el.tag != q("rPrChange"):
+        return rpr
+    if ctx is not None:
+        for x in list(el.iter(q("rStyle"))):
+            if not ctx.estilo_existe(x.get(q("val")), "caractere"):
+                x.getparent().remove(x)
+    if rpr is None:
+        rpr = etree.Element(q("rPr"))
+    rpr.append(el)
+    return rpr
 
 
 class _Relacoes:
@@ -300,6 +333,10 @@ class _Ctx:
         #: os w:sectPr dos paragrafos do corpo, que recebem as referencias depois das partes
         self.em_faixa = False
         self.secoes_gravadas: list = []
+        #: alteracoes controladas (0.1.13): quem numera os w:id e se o run que se escreve esta'
+        #: dentro de w:del (texto em w:delText, codigo em w:delInstrText)
+        self.numerador = fx_revisoes.Numerador()
+        self.apagando = False
 
     def estilo_existe(self, sid: str | None, tipo: str) -> bool:
         return bool(sid) and self.tipos.get(sid) == tipo
@@ -392,6 +429,7 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
         sect = fx_secoes.escrever(p.secao, p.secao.pagina)
         ppr.append(sect)
         ctx.secoes_gravadas.append((sect, p.secao))
+    ppr = _revisoes_do_paragrafo(ppr, p, ctx)
     if ppr is not None:
         pe.append(ppr)
     if p.quebra_antes:
@@ -404,6 +442,7 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
     pilha = [pe]
     destino = pe
     link_atual = None
+    revisoes = _Envoltorio()
     for i, run in enumerate(p.runs):
         if isinstance(run.marca, MarcaConteudo):
             if run.marca.bloco:
@@ -417,36 +456,126 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
                 pilha.pop()
             destino = pilha[-1]
             link_atual = None
+            revisoes.fechar()
             continue
         if run.link != link_atual:
             link_atual = run.link
             destino = pilha[-1] if run.link is None else _hiperlink(pilha[-1], run.link, ctx)
-        if run.marca is not None:
+            revisoes.fechar()
+        if isinstance(run.marca, MarcaMovimento):
+            # Trecho de movimento (0.1.13): por fora de qualquer w:ins/w:del.
+            revisoes.fechar()
+            destino.append(fx_revisoes.elemento_de_movimento(run.marca, run.marca.par))
+            continue
+        if run.marca is not None and not _marca_em_run(run.marca):
+            # Marcador e ancora de comentario: nao ficam dentro da revisao (0.1.13).
+            revisoes.fechar()
             proximo = p.runs[i + 1] if i + 1 < len(p.runs) else None
             _marca(destino, run, proximo, ctx)
             continue
-        if run.imagem is not None:
-            r = etree.SubElement(destino, q("r"))
-            if run.extras:
-                rpr = fx_props.montar_rpr(Run(extras=run.extras), None)
+        alvo = revisoes.alvo(destino, run)
+        ctx.apagando = run.exclusao is not None and run.exclusao.tipo == "del"
+        try:
+            if run.marca is not None:
+                proximo = p.runs[i + 1] if i + 1 < len(p.runs) else None
+                _marca(alvo, run, proximo, ctx)
+                continue
+            if run.imagem is not None:
+                r = etree.SubElement(alvo, q("r"))
+                rpr = _com_mudanca(fx_props.montar_rpr(Run(extras=run.extras), None)
+                                   if run.extras else None, run.mudanca_formato, ctx)
                 if rpr is not None:
                     r.append(rpr)
-            _desenho(r, run.imagem, ctx)
-            continue
-        if run.objeto is not None:
-            # Objeto opaco (0.1.2): o XML original, com os rIds desta parte.
-            destino.append(ctx.opacos.escrever(run.objeto, ctx.relacoes.adicionar))
-            continue
-        if run.campo is not None:
-            _campo(destino, run, coletor, ctx.estilo_de_caractere(run.estilo), ctx)
-            continue
-        if run.texto == "":
-            continue
-        r = etree.SubElement(destino, q("r"))
-        rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
-        if rpr is not None:
-            r.append(rpr)
-        _conteudo_run(r, run.texto, coletor)
+                _desenho(r, run.imagem, ctx)
+                continue
+            if run.objeto is not None:
+                # Objeto opaco (0.1.2): o XML original, com os rIds desta parte.
+                alvo.append(ctx.opacos.escrever(run.objeto, ctx.relacoes.adicionar))
+                continue
+            if run.campo is not None:
+                _campo(alvo, run, coletor, ctx.estilo_de_caractere(run.estilo), ctx)
+                continue
+            if run.texto == "":
+                continue
+            r = etree.SubElement(alvo, q("r"))
+            rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
+            if rpr is not None:
+                r.append(rpr)
+            _conteudo_run(r, run.texto, coletor, ctx.apagando)
+        finally:
+            ctx.apagando = False
+
+
+def _marca_em_run(m) -> bool:
+    """A marca sai como um w:r (e pode ficar dentro de w:ins/w:del): campo, referencia de
+    comentario e de nota, quebra de coluna."""
+    if isinstance(m, MarcaComentario):
+        return m.tipo == "referencia"
+    return isinstance(m, (MarcaCampo, MarcaNota, MarcaQuebra))
+
+
+class _Envoltorio:
+    """Os w:ins (ou w:moveTo) e w:del (ou w:moveFrom) abertos no paragrafo (0.1.13): o run com a
+    mesma revisao do vizinho entra no mesmo elemento."""
+
+    def __init__(self) -> None:
+        self.fechar()
+
+    def fechar(self) -> None:
+        self.base = None
+        self.insercao = self.el_insercao = None
+        self.exclusao = self.el_exclusao = None
+
+    def alvo(self, base, run: Run):
+        if base is not self.base:
+            self.fechar()
+            self.base = base
+        if run.insercao != self.insercao:
+            self.insercao = run.insercao
+            self.el_insercao = None if run.insercao is None else \
+                fx_revisoes.elemento_de(run.insercao, base)
+            self.exclusao = self.el_exclusao = None
+        pai = self.el_insercao if self.el_insercao is not None else base
+        if run.exclusao != self.exclusao:
+            self.exclusao = run.exclusao
+            self.el_exclusao = None if run.exclusao is None else \
+                fx_revisoes.elemento_de(run.exclusao, pai)
+        return self.el_exclusao if self.el_exclusao is not None else pai
+
+
+def _revisoes_do_paragrafo(ppr, p: Paragrafo, ctx: "_Ctx"):
+    """A marca de paragrafo inserida ou excluida (w:ins/w:del no comeco do w:rPr do w:pPr), a
+    revisao da numeracao (dentro do w:numPr) e o w:pPrChange (o ultimo filho), 0.1.13."""
+    if p.marca_insercao is None and p.marca_exclusao is None and not p.mudanca_formato \
+            and not p.mudanca_numeracao:
+        return ppr
+    if ppr is None:
+        ppr = etree.Element(q("pPr"))
+    if p.marca_insercao is not None or p.marca_exclusao is not None:
+        rpr = ppr.find(q("rPr"))
+        if rpr is None:
+            rpr = etree.Element(q("rPr"))
+            sect = ppr.find(q("sectPr"))
+            if sect is not None:
+                sect.addprevious(rpr)
+            else:
+                ppr.append(rpr)
+        for i, rev in enumerate(r for r in (p.marca_insercao, p.marca_exclusao) if r is not None):
+            el = fx_revisoes.elemento_de(rev)
+            rpr.insert(i, el)
+    num = ppr.find(q("numPr"))
+    revisoes_num = fx_revisoes.elemento_canonico(p.mudanca_numeracao)
+    if num is not None and revisoes_num is not None:
+        for f in list(revisoes_num):
+            num.append(f)
+    mudanca = fx_revisoes.elemento_canonico(p.mudanca_formato)
+    if mudanca is not None and mudanca.tag == q("pPrChange"):
+        for x in list(mudanca.iter(q("pStyle"), q("rStyle"))):
+            tipo = "paragrafo" if x.tag == q("pStyle") else "caractere"
+            if not ctx.estilo_existe(x.get(q("val")), tipo):
+                x.getparent().remove(x)
+        ppr.append(mudanca)
+    return ppr
 
 
 def _hiperlink(pe, link: Link, ctx: "_Ctx"):
@@ -589,7 +718,7 @@ def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool, ctx=None) 
                 r = etree.SubElement(destino, q("r"))
                 if rpr is not None:
                     r.append(copy.deepcopy(rpr))
-                t = etree.SubElement(r, q("t"))
+                t = etree.SubElement(r, q("delText" if ctx is not None and ctx.apagando else "t"))
                 texto, _n = texto_gravavel(pedaco.resultado)
                 if texto != texto.strip():
                     t.set("{%s}space" % XML_NS, "preserve")
@@ -602,7 +731,8 @@ def _codigo_de_campo(destino, campo: Campo, rpr, sem_separador: bool, ctx=None) 
         r = etree.SubElement(destino, q("r"))
         if rpr_codigo is not None:
             r.append(copy.deepcopy(rpr_codigo))
-        instr = etree.SubElement(r, q("instrText"))
+        instr = etree.SubElement(r, q("delInstrText" if ctx is not None and ctx.apagando
+                                      else "instrText"))
         instr.set("{%s}space" % XML_NS, "preserve")
         instr.text = texto
     if not sem_separador:
@@ -626,13 +756,14 @@ def _campo(pe, run: Run, coletor: Coletor, estilo: str | None = None, ctx=None) 
             r.append(copy.deepcopy(rpr))
         return r
 
+    apagado = ctx is not None and ctx.apagando
     etree.SubElement(novo_run(), q("fldChar")).set(q("fldCharType"), "begin")
-    instr = etree.SubElement(novo_run(), q("instrText"))
+    instr = etree.SubElement(novo_run(), q("delInstrText" if apagado else "instrText"))
     instr.set("{%s}space" % XML_NS, "preserve")
     instr.text = f" {instrucao} "
     etree.SubElement(novo_run(), q("fldChar")).set(q("fldCharType"), "separate")
     if run.texto:
-        _conteudo_run(novo_run(), run.texto, coletor)
+        _conteudo_run(novo_run(), run.texto, coletor, apagado)
     etree.SubElement(novo_run(), q("fldChar")).set(q("fldCharType"), "end")
 
 
@@ -687,6 +818,9 @@ def _tabela(pai, tabela: Tabela, ctx: _Ctx) -> None:
     grade = etree.SubElement(tbl, q("tblGrid"))
     for w in tabela.colunas_tw:
         etree.SubElement(grade, q("gridCol")).set(q("w"), str(int(w)))
+    mudanca = fx_revisoes.elemento_canonico(tabela.mudanca_grade)
+    if mudanca is not None and mudanca.tag == q("tblGridChange"):
+        grade.append(mudanca)  # 0.1.13
     for linha in tabela.linhas:
         tr = etree.SubElement(tbl, q("tr"))
         tr_pr = etree.Element(q("trPr"))
@@ -835,6 +969,7 @@ def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
         ctx.ids_marcadores = {}
         raiz = _raiz_de_parte(raiz_nome, ctx)
         _blocos(raiz, blocos, ctx, em_celula=True)  # termina em paragrafo
+        ctx.numerador.numerar(raiz, ordem.dentro_de_opacos(raiz))  # 0.1.13
         faixas.partes.append((f"word/{nome}", _xml(raiz)))
         if ctx.relacoes.itens:
             faixas.partes.append((f"word/_rels/{nome}.rels", _rels_xml(ctx.relacoes.itens)))
@@ -902,6 +1037,7 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
                 notas_sect.append(el)
     # A ultima secao (0.1.12: o w:sectPr de origem com o que o modelo mudou).
     body.append(fx_secoes.escrever(doc.secao, pagina, faixas.referencias, notas_sect))
+    ctx.numerador.numerar(raiz, ordem.dentro_de_opacos(raiz))  # 0.1.13
     return _xml(raiz), faixas
 
 
@@ -972,6 +1108,7 @@ def _comentarios_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, list]:
         rels = list(ctx.relacoes.itens)
     finally:
         ctx.relacoes = relacoes_doc
+    ctx.numerador.numerar(raiz, ordem.dentro_de_opacos(raiz))  # 0.1.13
     return _xml(raiz), rels
 
 
@@ -1050,6 +1187,7 @@ def _partes_de_notas(doc: Documento, ctx: _Ctx, tipos: list) -> tuple[list, list
                     _blocos(el, list(nota.paragrafos) or [Paragrafo()], ctx, em_celula=True)
             finally:
                 ctx.relacoes = relacoes_doc
+            ctx.numerador.numerar(raiz, ordem.dentro_de_opacos(raiz))  # 0.1.13
             dados = _xml(raiz)
         partes.append((nome, dados))
         if rels.itens:
@@ -1058,6 +1196,43 @@ def _partes_de_notas(doc: Documento, ctx: _Ctx, tipos: list) -> tuple[list, list
         relacoes_doc.adicionar(cat.tipos_rel.get(tipo) or fx_notas.RT_NOTAS[tipo],
                                nome.split("/", 1)[1])
     return partes, conteudo, especiais_ids
+
+
+def _reservar_ids_de_revisao(doc: Documento, objetos: list, ctx: _Ctx) -> set:
+    """O numerador de revisoes (0.1.13) pula todo w:id que ja' existe: o dos comentarios, o
+    dos marcadores (o escritor os numera de 0 em diante), e os de dentro do XML que volta como
+    veio (comentarios e notas que nao mudaram, objetos preservados). Devolve os ids que vem do
+    XML de origem (o validador os aceita repetidos, como vieram)."""
+    xmls: list = [o.xml for o in objetos]
+    cat = doc.comentarios
+    if cat is not None:
+        xmls.append(cat.xml_comentarios)
+        xmls += [c.original for c in cat.itens if c.original is not None]
+    notas = doc.notas
+    if notas is not None:
+        xmls += [n.original for n in notas.todas() if n.original is not None]
+        xmls += [notas.xml[t] for t in mod_notas.TIPOS if notas.xml.get(t) is not None]
+    preservados = fx_revisoes.ids_em(xmls)
+    reservados = set(preservados)
+    if cat is not None:
+        reservados.update(int(c.id) for c in cat.itens)
+    marcadores = sum(1 for blocos in [doc.paragrafos] + list(_historias_de_texto(doc))
+                     for p in paragrafos_de(blocos) for r in p.runs
+                     if isinstance(r.marca, Marcador) and r.marca.tipo == "inicio")
+    marcadores += max(ctx.marcadores_reservados, default=0) + len(ctx.marcadores_reservados)
+    inicio = max([marcadores + 1, *(x + 1 for x in reservados if x < 2 ** 31 - 1)], default=1)
+    ctx.numerador = fx_revisoes.Numerador(reservados, inicio)
+    return preservados
+
+
+def _historias_de_texto(doc: Documento):
+    """Os blocos dos cabecalhos e rodapes, das notas e dos comentarios (para contar marcadores)."""
+    from editdoc.modelo.documento import historias_de_faixa
+    yield from historias_de_faixa(doc)
+    if doc.notas is not None:
+        yield from (list(n.paragrafos) for n in doc.notas.todas())
+    if doc.comentarios is not None:
+        yield from (list(c.paragrafos) for c in doc.comentarios.itens)
 
 
 def _reservar_das_notas(cat, ctx: _Ctx) -> None:
@@ -1076,9 +1251,13 @@ def _reservar_das_notas(cat, ctx: _Ctx) -> None:
         ctx.opacos.reservar_docpr(d.get("id") for d in el.iter(wp))
 
 
-def _settings_xml(pares_impares: bool = False, notas: dict | None = None) -> bytes:
+def _settings_xml(pares_impares: bool = False, notas: dict | None = None,
+                  controlar: bool = False) -> bytes:
     raiz = etree.Element(q("settings"), nsmap={"w": W})
     etree.SubElement(raiz, q("zoom")).set(q("percent"), "100")
+    if controlar:
+        # Controlar alteracoes (0.1.13): na ordem do CT_Settings, antes do defaultTabStop.
+        etree.SubElement(raiz, q("trackRevisions"))
     etree.SubElement(raiz, q("defaultTabStop")).set(q("val"), "708")
     if pares_impares:
         # Na ordem do CT_Settings: depois de defaultTabStop, antes de characterSpacingControl.
@@ -1181,7 +1360,15 @@ def _extensoes_usadas(doc: Documento) -> dict[str, str]:
         saida.update(fx_props.namespaces_usados(secao_final))
     for blocos in listas:
         for p in paragrafos_de(blocos):
+            if any(rev is not None and rev.data_utc for rev in
+                   (p.marca_insercao, p.marca_exclusao,
+                    *(x for r in p.runs for x in (r.insercao, r.exclusao)),
+                    *(r.marca for r in p.runs if isinstance(r.marca, MarcaMovimento)))):
+                # w16du:dateUtc das revisoes (0.1.13): a raiz declara o w16du.
+                saida["w16du"] = fx_revisoes.W16DU
             textos = [p.extras] + [r.extras for r in p.runs]
+            textos += [x for r in p.runs for x in (r.mudanca_formato,) if x]
+            textos += [x for x in (p.mudanca_formato, p.mudanca_numeracao) if x]
             textos += [r.marca.propriedades.decode("utf-8") for r in p.runs
                        if isinstance(r.marca, MarcaConteudo) and r.marca.propriedades]
             textos += [x for r in p.runs if isinstance(r.marca, MarcaCampo) and r.marca.campo
@@ -1209,6 +1396,8 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         coletor.somar("CONTEUDO_INCOMPLETO", desfeitos["conteudos"])
     if desfeitos.get("comentarios"):
         coletor.somar("COMENTARIO_INCOMPLETO", desfeitos["comentarios"])
+    # Trechos de movimento (0.1.13): so' os que tem as duas pontas.
+    doc = mod_revisoes.equilibrar_movimentos(doc)
     # Comentarios (0.1.6): paraId e durableId de quem nao tem; o autor novo no people.xml.
     doc = fx_comentarios.preparar(doc)
     # Notas (0.1.10): so' as com referencia no corpo, ids unicos.
@@ -1232,6 +1421,7 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
     ctx.opacos.preparar(objetos, _NSMAP_PARTE)
     if doc.notas is not None:
         _reservar_das_notas(doc.notas, ctx)
+    preservados = _reservar_ids_de_revisao(doc, objetos, ctx)
     # Extensoes do Word nos extras e nos controles de conteudo (w14, w15...): a raiz declara
     # e as poe no mc:Ignorable (0.1.5).
     ctx.opacos.declarar_extensoes(_extensoes_usadas(doc), _NSMAP_PARTE)
@@ -1271,8 +1461,10 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         if rels_numeracao else []
     extras_tipos += [t for t in ctx.opacos.tipos if t not in extras_tipos]
     listas = set(numeracao.instancias) if numeracao is not None else set()
-    configuracoes = gravador.configuracoes(doc.pagina.pares_impares, especiais_notas) or \
-        _settings_xml(doc.pagina.pares_impares, especiais_notas)
+    controlar = bool(getattr(doc, "controlar_alteracoes", False))
+    configuracoes = gravador.configuracoes(doc.pagina.pares_impares, especiais_notas,
+                                           controlar) or \
+        _settings_xml(doc.pagina.pares_impares, especiais_notas, controlar)
     rels_configuracoes = gravador.relacoes_das_configuracoes()
     partes_configuracoes = [("word/_rels/settings.xml.rels", _rels_xml(rels_configuracoes))] \
         if rels_configuracoes else []
@@ -1303,7 +1495,7 @@ def escrever_com_avisos(doc: Documento) -> tuple[bytes, list[Aviso]]:
         *gravador.partes(),
     ]
     mapa = dict(partes)
-    problemas = ordem.validar(mapa, ctx.estilos.virtuais())
+    problemas = ordem.validar(mapa, ctx.estilos.virtuais(), preservados)
     if problemas:
         raise ErroDocx("ESCRITA_INVALIDA", "; ".join(problemas[:3]))
     return _zip(partes), coletor.avisos()

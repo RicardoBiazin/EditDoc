@@ -15,6 +15,13 @@ O PDF e' montado na memoria (QBuffer) e gravado com a troca atomica de
 `armazenamento/gravacao.py`, com conferencia do arquivo relido. Cancelar no meio nao
 deixa arquivo pela metade: nada e' gravado.
 
+Imprimir marcacoes (0.1.13, `LayoutPaginado.imprimir_marcacoes`, ligado por padrao como no
+Word): ligado, a folha sai no modo de exibicao das revisoes da tela (Toda a marcacao, Marcacao
+simples, Sem marcacao ou Original), com o realce dos trechos comentados e o texto dos
+comentarios na margem direita (`desenhar_comentarios`); desligado, sai o texto final (o modo
+"Sem marcacao" so' durante a impressao) e sem comentario nenhum. Ate' a 0.1.12 a impressao
+nunca levava os comentarios.
+
 Ciclo de vida (Spike A, C13): o QPainter termina antes de o dispositivo morrer, e a
 pre-visualizacao guarda a referencia do QPrinter (o QPrintPreviewDialog guarda so' um
 ponteiro; o Python coletaria o objeto e o primeiro show() derrubaria o processo).
@@ -22,6 +29,7 @@ ponteiro; o Python coletaria o objeto e o primeiro show() derrubaria o processo)
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,6 +45,7 @@ from editdoc.interface.vista_paginas import desenhar_faixas, desenhar_folha
 from editdoc.modelo.intervalo import sequencia_de_copias
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import marcas
+from editdoc.ponte_qt import revisoes as pq_revisoes
 
 log = log_interno.obter(__name__)
 
@@ -106,19 +115,125 @@ def preparar(layout: LayoutPaginado) -> bool:
     return layout.atualizar_campos() or flutuantes or notas
 
 
+def imprime_marcacoes(layout: LayoutPaginado) -> bool:
+    return bool(getattr(layout, "imprimir_marcacoes", True))
+
+
+def _documentos_do_layout(layout: LayoutPaginado) -> list:
+    docs = [layout.doc]
+    faixas = getattr(layout, "faixas", None)
+    if faixas is not None:
+        docs += [f.doc for f in faixas.todas()]
+    notas = getattr(layout, "notas", None)
+    if notas is not None:
+        docs += [d.doc for d in notas.todos()]
+    return docs
+
+
+@contextlib.contextmanager
+def modo_de_impressao(layout: LayoutPaginado):
+    """Sem "Imprimir marcacoes" (0.1.13), o texto final enquanto imprime; depois, o modo de
+    antes. Sem revisao no documento, nada muda."""
+    trocados = []
+    docs = _documentos_do_layout(layout)
+    alterados = [d.isModified() for d in docs]
+    if not imprime_marcacoes(layout) and not getattr(layout, "_imprimindo", False):
+        for doc in _documentos_do_layout(layout):
+            if pq_revisoes.tem_revisoes(doc) and pq_revisoes.modo_de(doc) != "final":
+                trocados.append((doc, pq_revisoes.modo_de(doc)))
+                pq_revisoes.definir_modo(doc, "final")
+    antes = getattr(layout, "_imprimindo", False)
+    layout._imprimindo = True
+    try:
+        if trocados:
+            preparar(layout)
+        yield
+    finally:
+        layout._imprimindo = antes
+        for doc, modo in trocados:
+            pq_revisoes.definir_modo(doc, modo)
+        if trocados:
+            preparar(layout)
+            # Imprimir nao altera o documento: o "alterado" fica como estava.
+            for d, alterado in zip(docs, alterados):
+                if d.isModified() != alterado:
+                    d.setModified(alterado)
+
+
 def pintar_pagina(painter: QPainter, layout: LayoutPaginado, n: int, total: int,
                   transf: QTransform) -> None:
     """A folha n como sai no papel: corpo, cabecalho e rodape, sem nada da tela (nem os
-    colchetes que marcam os campos, 0.1.3)."""
+    colchetes que marcam os campos, 0.1.3). Com "Imprimir marcacoes" (0.1.13), o realce dos
+    comentarios e o texto deles na margem."""
+    comentarios = imprime_marcacoes(layout)
     with marcas.sem_pintar_marcas():
         # Cabecalho e rodape antes do corpo (0.1.7): o objeto flutuante deles fica atras do
         # texto do corpo, como no Word.
         desenhar_faixas(painter, layout, n, transf, total, 1.0, parte="objetos")
-        desenhar_folha(painter, layout, n, transf)
+        desenhar_folha(painter, layout, n, transf, comentarios=comentarios)
+        if comentarios:
+            desenhar_comentarios(painter, layout, n, transf)
         # Notas de rodape e de fim (0.1.10): a area de baixo da folha (e as paginas a mais).
         from editdoc.interface.notas import desenhar_notas
         desenhar_notas(painter, layout, n, transf)
         desenhar_faixas(painter, layout, n, transf, total, 1.0, parte="texto")
+
+
+def desenhar_comentarios(painter: QPainter, layout: LayoutPaginado, n: int,
+                         transf: QTransform) -> None:
+    """O texto dos comentarios ancorados na folha n, na margem direita, em letra pequena, cada
+    um na altura do trecho comentado (o de baixo desce se o de cima ainda ocupa a altura)."""
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPen
+    from editdoc.ponte_qt import comentarios as pq_comentarios
+    doc = layout.doc
+    cat = pq_comentarios.catalogo(doc)
+    if not cat.itens:
+        return
+    cfg = layout.efetiva_da(n)
+    hb = layout.hb
+    esquerda = cfg.largura_tw - cfg.margem_dir_tw + 120
+    largura = cfg.margem_dir_tw - 240
+    if largura < 600:
+        return  # margem estreita demais para o texto do comentario
+    posicoes = pq_comentarios.posicoes(doc, True)
+    itens = []
+    for c in cat.itens:
+        p = posicoes.get(c.id) or {}
+        pos = p.get("inicio", p.get("referencia"))
+        if pos is None:
+            continue
+        r = layout.retangulo_cursor(pos)
+        if not (n * hb <= r.top() < (n + 1) * hb):
+            continue
+        itens.append((r.top() - n * hb + cfg.margem_sup_tw, c))
+    if not itens:
+        return
+    fonte = QFont(doc.defaultFont())
+    fonte.setPointSizeF(7.0)
+    metrica = QFontMetricsF(fonte)
+    painter.save()
+    try:
+        painter.setWorldTransform(transf)
+        painter.setFont(fonte)
+        y_livre = 0.0
+        for y, c in sorted(itens, key=lambda x: x[0]):
+            y = max(y, y_livre)
+            texto = f"{c.autor or 'Comentário'}: {c.texto()}"[:600]
+            caixa = metrica.boundingRect(QRectF(0, 0, largura, 100000),
+                                         int(Qt.TextFlag.TextWordWrap), texto)
+            alto = min(caixa.height(), cfg.altura_tw - y - 60)
+            if alto <= 0:
+                break
+            retangulo = QRectF(esquerda, y, largura, alto)
+            painter.setPen(QPen(QColor(0xC9, 0xA2, 0x27), 6))
+            painter.drawLine(retangulo.topLeft(), retangulo.bottomLeft())
+            painter.setPen(QColor(0x40, 0x40, 0x40))
+            painter.drawText(retangulo.adjusted(40, 0, 0, 0),
+                             int(Qt.TextFlag.TextWordWrap), texto)
+            y_livre = y + alto + 60
+    finally:
+        painter.restore()
 
 
 def _pintar_sequencia(painter: QPainter, nova_pagina: Callable[[int], None],
@@ -145,7 +260,14 @@ def gerar_pdf(layout: LayoutPaginado, paginas: list[int], meta: Metadados,
     """O PDF das folhas `paginas` (indices a partir de 0), na memoria."""
     if not paginas:
         raise ValueError("nenhuma pagina para exportar")
+    with modo_de_impressao(layout):
+        return _gerar_pdf(layout, paginas, meta, progresso)
+
+
+def _gerar_pdf(layout: LayoutPaginado, paginas: list[int], meta: Metadados,
+               progresso: Progresso | None = None) -> bytes:
     preparar(layout)
+    paginas = [n for n in paginas if n < layout.numero_paginas()] or [0]
     dados = QByteArray()
     buffer = QBuffer(dados)
     buffer.open(QIODevice.OpenModeFlag.WriteOnly)
@@ -201,7 +323,10 @@ def exportar_pdf(caminho, layout: LayoutPaginado, paginas: list[int], meta: Meta
     Cancelado, FalhaNaImpressao e os erros de gravacao (OSError, SemEspaco,
     FalhaNaTroca, PdfInvalido) propagam; em todos o arquivo de destino fica como estava.
     """
-    dados = gerar_pdf(layout, paginas, meta, progresso)
+    with modo_de_impressao(layout):
+        # Sem "Imprimir marcacoes" (0.1.13) o texto final pode ter menos paginas.
+        paginas = [n for n in paginas if n < layout.numero_paginas()] or [0]
+        dados = gerar_pdf(layout, paginas, meta, progresso)
     gravacao.gravar_bytes(caminho, dados, conferir=lambda relido: conferir_pdf(relido, len(paginas)))
     log.info("PDF exportado: %d pagina(s), %d bytes", len(paginas), len(dados))
     return len(paginas)
@@ -280,7 +405,14 @@ def imprimir(impressora, layout: LayoutPaginado, paginas: list[int],
     """
     if not paginas:
         return 0
+    with modo_de_impressao(layout):
+        return _imprimir(impressora, layout, paginas, progresso)
+
+
+def _imprimir(impressora, layout: LayoutPaginado, paginas: list[int],
+              progresso: Progresso | None = None) -> int:
     preparar(layout)
+    paginas = [n for n in paginas if n < layout.numero_paginas()] or [0]
     copias = max(1, impressora.copyCount())
     if impressora.supportsMultipleCopies() or copias == 1:
         sequencia = list(paginas)

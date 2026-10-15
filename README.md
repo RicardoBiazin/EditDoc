@@ -63,6 +63,25 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   arquivo só muda a posição e o tamanho do objeto (o resto do XML volta igual); um objeto
   alinhado (centro, direita) passa a ter a posição em centímetros quando é arrastado, como
   no Word.
+- **Controle de alterações** (0.1.13), como no Word: **Revisão > Controlar alterações**
+  (**Ctrl+Shift+E**) liga e desliga, e o arquivo guarda a escolha. Ligado, o que você digita ou
+  cola fica marcado como inserção (com o nome das **Opções** e a data), o que você apaga de outro
+  autor fica tachado, o que você mesmo inseriu e ainda não foi aceito some de verdade, o **Enter**
+  marca o parágrafo novo, e negrito, fonte, alinhamento, recuo, espaçamento, listas e estilos
+  guardam a formatação de antes. **Exibir para revisão**: **Marcação simples** (o texto final com
+  uma barra vermelha na margem onde houve alteração), **Toda a marcação** (inserido sublinhado e
+  excluído tachado, na cor de cada autor; o texto movido em verde, duplo), **Sem marcação** (o
+  texto final) e **Original** (o texto antes das alterações). **Aceitar** e **Rejeitar** a
+  alteração do cursor (ou as da seleção) e ir para a próxima, **todas**, ou **todas de um
+  autor**; **Anterior** e **Próxima**; também no menu de contexto. O painel lateral
+  **Comentários e revisões** tem a lista das alterações (tipo, autor, data e o trecho): clique
+  para ir até ela; Aceitar e Rejeitar valem para a escolhida. Ctrl+Z desfaz cada comando.
+  Copiar leva o texto como se lê (em Toda a marcação, o final, como o Word), Localizar não acha
+  o que está escondido e a contagem de palavras conta o texto final. **Imprimir marcações**
+  (ligado por padrão) imprime e exporta o PDF como a tela mostra, com os **comentários na
+  margem**; desligado, sai o texto final, sem comentários. As alterações do Word (inserções,
+  exclusões, movimentos, formatação, parágrafos, linhas e células de tabela, seções), também no
+  cabeçalho, no rodapé, nas notas e nos comentários, voltam ao arquivo como vieram.
 - **Várias seções no mesmo documento** (0.1.12), como no Word: cada seção tem o seu
   **papel, orientação e margens** (uma página **paisagem** no meio de um documento em
   retrato), os seus **cabeçalhos e rodapés** (a seção que não tem usa os da anterior,
@@ -218,7 +237,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.12-win64.zip` da página
+1. Baixe `EditDoc-0.1.13-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -259,6 +278,7 @@ Requer Windows 10 ou 11, 64 bits.
 | Quebra de página | Ctrl+Enter |
 | Inserir ou editar link | Ctrl+K |
 | Novo comentário | Ctrl+Alt+M |
+| Controlar alterações (ligar e desligar) | Ctrl+Shift+E |
 | Inserir nota de rodapé, nota de fim | Alt+Ctrl+F, Alt+Ctrl+D |
 | Sair da edição da nota | Esc |
 | Abrir o link | Ctrl+clique no link |
@@ -287,8 +307,8 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 
 - **Política de perda ao abrir `.docx`**: tudo o que o arquivo tem e o EditDoc não edita
   gera um aviso na barra amarela, com o botão Detalhes. Se salvar apagaria alguma coisa
-  (revisão, controle de conteúdo de linha de tabela, formatação que o EditDoc não
-  conhece...), o primeiro Salvar pede
+  (revisão acima dos limites, controle de conteúdo de linha de tabela, formatação que o EditDoc
+  não conhece...), o primeiro Salvar pede
   confirmação e oferece "Salvar cópia". **Não** se perdem: caixas de texto, formas,
   gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em formato que a tela
   não mostra (desde a 0.1.2); hiperlinks, marcadores, campos de qualquer tipo (sumário,
@@ -299,10 +319,12 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   comentários, com respostas, resolvido e pessoas, e as referências a estilos que o arquivo
   cita sem definir, além do estilo de tabela com formatação condicional (desde a 0.1.6); as
   notas de rodapé e de fim, com as propriedades e as notas separadoras (desde a 0.1.10); as
-  seções, com papel, margens, cabeçalhos, numeração, colunas e o resto (desde a 0.1.12).
+  seções, com papel, margens, cabeçalhos, numeração, colunas e o resto (desde a 0.1.12); as
+  alterações controladas, com autores e datas (desde a 0.1.13).
   Comentário ainda avisa só quando não pode ser lido (danificado, acima de 5000, ancorado
   só no cabeçalho, no rodapé ou numa caixa de texto) ou quando a edição apagou a marca de
-  referência dele sem levá-lo junto. A impressão e o PDF saem sem os comentários.
+  referência dele sem levá-lo junto. Desde a 0.1.13 a impressão e o PDF levam os comentários
+  na margem quando "Imprimir marcações" está ligado.
   Os estilos que o EditDoc não altera e o tema voltam como vieram. Ainda avisam, com
   confirmação, só o que não pode voltar inteiro: objeto, link ou campo com referência
   quebrada no arquivo, ou acima dos limites (2000 objetos; 20.000 campos, links ou
@@ -334,12 +356,23 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   largura da mais larga. Copiar e colar não leva a quebra de seção (o texto vai). Desfazer não
   desfaz a troca de papel, orientação e margens (como antes da 0.1.12), nem "Vincular ao
   anterior".
+- Controle de alterações (0.1.13): a alteração de célula, de propriedades da tabela, da seção e
+  da numeração só pode ser **aceita** (rejeitar não é feito; a mensagem diz quantas ficaram);
+  excluir linha ou coluna de tabela com o controle ligado não fica marcado; recortar e colar
+  vira exclusão e inserção (não "movido"). Em **Sem marcação**, o parágrafo cuja marca foi
+  excluída e que ainda tem texto continua numa linha própria (o Word junta com o de baixo), uma
+  tabulação ou quebra de linha dentro do texto excluído continua ocupando espaço, e a imagem
+  excluída continua aparecendo; em **Original** a formatação de parágrafo de antes não aparece.
+  As alterações dentro de um comentário ou de uma caixa de texto são preservadas, mas não se
+  aceitam nem rejeitam no EditDoc; as das notas, na edição da nota. O comentário impresso na
+  margem é texto pequeno ao lado do trecho, não um balão.
 - O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
   atualize (F9) se o texto mudou. O controle de conteúdo que envolve uma linha ou uma
   célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
   ou só o fim de um controle de conteúdo tira o controle ao salvar, com aviso.
-- Formatação: o filho de propriedade que o formato não define (arquivo de outro programa)
-  e as revisões de formatação saem, com aviso; a formatação do código de um campo (o
+- Formatação: o filho de propriedade que o formato não define (arquivo de outro programa) sai,
+  com aviso (as revisões de formatação são preservadas desde a 0.1.13, menos as de dentro de um
+  estilo); a formatação do código de um campo (o
   texto escondido entre o começo e o separador) segue a do começo do campo. Tabulação:
   na primeira linha com recuo próprio a parada aparece deslocada desse recuo.
 - Objetos flutuantes (0.1.7): o texto contorna o objeto por um lado só (o maior, ou o que
@@ -413,7 +446,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.12-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.13-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

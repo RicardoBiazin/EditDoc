@@ -499,8 +499,10 @@ Implementados na 0.1.5.
   der o mesmo valor) e extra (vai inteiro). `szCs` diferente de `sz` fica e o escritor não
   gera o seu. Extensões do Word (`w14`, `w15`, `w16*`) ficam; a raiz da parte as declara e
   as põe no `mc:Ignorable`, e o validador as aceita no document.xml. Revisão de
-  formatação sai (REVISAO); filho `w:` fora do esquema sai (FORMATACAO). A marca de
-  parágrafo (`pPr/rPr`) é saneada: sem revisão, sem estilo inexistente, na ordem.
+  formatação saía (REVISAO) até a 0.1.12; desde a 0.1.13 é preservada (ver "Controle de
+  alterações"). Filho `w:` fora do esquema sai (FORMATACAO). A marca de parágrafo (`pPr/rPr`) é
+  saneada: sem estilo inexistente, na ordem (desde a 0.1.13 o w:ins/w:del dela é lido à parte e o
+  w:rPrChange fica).
   Tabela: o escritor continua impondo "Table Grid" e as bordas explícitas (`tblLook` e as
   faixas do estilo não voltam); `gridBefore`/`gridAfter` mudam a grade e continuam com aviso.
 - Qt (`ponte_qt/propriedades.py`): PROP_RPR_EXTRA (UserProperty + 28) no caractere,
@@ -575,7 +577,8 @@ Implementados na 0.1.6.
   que o EditDoc passa a usar. Tabela: `Tabela.estilo` e o `tblLook` voltam;
   `Celula.fundo_estilo` (fora da comparação e do JSON) é o fundo condicional da tela.
 
-Limites: "Imprimir marcações" não existe (impressão e PDF sem comentários); comentário em
+Limites: até a 0.1.12 "Imprimir marcações" não existia (impressão e PDF sem comentários); desde a
+0.1.13 existe (ver "Controle de alterações"). Comentário em
 cabeçalho, rodapé ou caixa de texto não é preservado; copiar e colar texto comentado não
 leva o comentário; da formatação condicional de tabela, só o fundo aparece na tela.
 
@@ -811,7 +814,8 @@ SECAO, PAGINA e CABECALHO_SECAO (perda).
   mudou, com os atributos na ordem do Word; sem mudança, a forma canônica sai igual (conferido
   nos `.docx` reais). As referências de cabeçalho entram depois que as partes são gravadas; duas
   seções que citavam a mesma parte com o mesmo conteúdo continuam citando uma parte só (a
-  chave). Revisão (`w:sectPrChange`) sai com REVISAO; filho fora do esquema, com FORMATACAO.
+  chave). Revisão (`w:sectPrChange`): saía com REVISAO; desde a 0.1.13 fica nos extras e volta.
+  Filho fora do esquema sai com FORMATACAO.
   Limites contra arquivo hostil: 2000 quebras de seção (as que passam se juntam à seguinte,
   aviso SECAO) e 45 colunas. Formato de número que a tela não desenha passou a ser preservado
   (NUMERO_PAGINA sem perda). O leitor lê o `w:sectPr` do parágrafo só no corpo e fora de tabela
@@ -886,6 +890,90 @@ variante de cabeçalho mais alta (como na 0.1.8); a área de notas usa a largura
 estreita; copiar e colar não leva a quebra de seção; desfazer não desfaz a troca de papel e
 margens nem o "Vincular ao anterior".
 
+## Controle de alterações (0.1.13)
+
+Até a 0.1.12 as revisões eram aceitas ao abrir (aviso REVISAO, com perda): o inserido ficava como
+texto comum e o excluído sumia ao salvar.
+
+- Modelo (`modelo/documento.py`, `modelo/revisoes.py`): `Revisao` (tipo `ins`/`del`/`moveFrom`/
+  `moveTo`, autor, `w:date`, `w16du:dateUtc`; o `w:id` lido fica fora da comparação). No run,
+  `insercao` (w:ins ou w:moveTo) e `exclusao` (w:del ou w:moveFrom): o mesmo trecho pode ter as
+  duas (inserido por um autor e apagado por outro); `mudanca_formato` é o `w:rPrChange` canônico
+  sem o `w:id`. No parágrafo, `marca_insercao`/`marca_exclusao` (o w:ins/w:del do rPr do pPr),
+  `mudanca_formato` (w:pPrChange) e `mudanca_numeracao` (w:numberingChange e w:ins do numPr). As
+  pontas de um movimento são marcas no fluxo (`MarcaMovimento`, como os marcadores). Tabela:
+  `mudanca_grade` (w:tblGridChange); as revisões de tabela, linha e célula (w:tblPrChange,
+  w:trPrChange, w:tcPrChange, w:ins/w:del do trPr, w:cellIns/w:cellDel/w:cellMerge) ficam nos
+  extras da 0.1.5, e o w:sectPrChange nos extras da seção da 0.1.12, todos sem o `w:id`.
+  `Documento.controlar_alteracoes` é o `w:trackRevisions` do settings.xml.
+- Arquivo (`formato_docx/revisoes.py`): o leitor põe a revisão dos `w:ins`/`w:del`/`w:moveFrom`/
+  `w:moveTo` em cada run de dentro (texto, imagem, objeto, campo, referência de nota e de
+  comentário); `w:delText` e `w:delInstrText` só valem dentro de `w:del`. O escritor agrupa os
+  runs vizinhos de mesma revisão: `w:ins` (ou `w:moveTo`) por fora, `w:del` (ou `w:moveFrom`)
+  por dentro, como o Word; dentro de `w:del` o texto é `w:delText` e o código de campo
+  `w:delInstrText`; marcador, âncora de comentário, controle de conteúdo e as pontas de movimento
+  fecham o elemento e saem por fora. O `w:rPrChange` é o último filho do rPr; a marca do parágrafo
+  é o começo do rPr do pPr; o `w:pPrChange` é o último filho do pPr. Revisões em cabeçalho, rodapé,
+  nota e comentário passam pelo mesmo leitor e escritor; a caixa de texto com revisão continua só
+  leitura (objeto preservado, volta igual). Acima dos limites (`LIMITES`: 100 mil revisões, 500
+  autores, nome de 255 caracteres, data de 64), ou com data absurda, o comportamento antigo, com
+  REVISAO. As revisões dentro de um estilo continuam saindo com FORMATACAO.
+- `w:id` (decisão): o esquema pede id único entre as anotações do mesmo tipo, e o Word numera
+  comentários e revisões numa sequência só. Sem documento real com revisões para conferir, ficou
+  a escolha mais restrita: o escritor numera as revisões no fim de cada parte
+  (`revisoes.Numerador`, com as pontas do movimento ligadas por um atributo provisório) sem
+  repetir NENHUM número que já existe: os dos comentários, os dos marcadores (numerados de 0 em
+  diante) e todos os `w:id` do XML que volta como veio (comentários e notas que não mudaram,
+  objetos preservados). O validador (`revisoes.validar`, chamado pelo `ordem.validar`) confere:
+  id único entre todas as revisões das partes de texto e diferente dos de comentário e marcador
+  (os ids do XML preservado podem se repetir como vieram), `w:t`/`w:instrText` nunca dentro de
+  `w:del` e `w:delText`/`w:delInstrText` só dentro, cada moveFromRangeStart com o seu fim e um
+  moveToRangeStart do mesmo nome. A conferência compara, por parágrafo, as revisões de cada trecho
+  e as da marca e das propriedades.
+- Qt (`ponte_qt/revisoes.py`): no caractere `PROP_REV_INS` (UserProperty + 40), `PROP_REV_DEL`
+  (+ 41) e `PROP_REV_RPR` (+ 42); no bloco `PROP_REV_MARCA` (+ 43) e `PROP_REV_PPR` (+ 44). O texto
+  excluído continua no documento, como no Word. As linhas e células revisadas, no JSON que já
+  existia; a seção, no registro (aceitar troca a seção do caractere ou a final, no desfazer).
+- Modos de exibição (decididos por spike, docs/SPIKES.md "0.1.13"): um `QSyntaxHighlighter` por
+  documento (`RealceRevisoes`, criado quando a primeira revisão aparece) aplica formatos
+  adicionais do layout, que não entram no desfazer nem no "alterado". "Toda a marcação": inserido
+  sublinhado e excluído tachado na cor do autor, movido em verde (a segunda linha pintada por
+  `desenhar`), barra cinza na margem esquerda; "Marcação simples": o texto final, barra vermelha;
+  "Sem marcação": o final; "Original": o texto de antes, com a formatação de antes do
+  `w:rPrChange`. Texto escondido: fonte de 0,01 pt, transparente (largura zero no layout de 1440
+  dpi); parágrafo sem nada visível e com a marca escondida: `QTextBlock.setVisible(False)`. O modo
+  vale para a janela (corpo, cabeçalhos e notas). O caret pula o texto escondido como pula as
+  marcas sem largura.
+- Edição (`edicao/revisoes.py`, chamada pelo `PainelDocumento` e pelos comandos): Revisão >
+  Controlar alterações (Ctrl+Shift+E). Ligado: digitar e colar criam inserção do autor das Opções
+  (o mesmo dos comentários, 0.1.6); apagar texto alheio (ou comum) marca a exclusão, apagar o
+  próprio texto ainda não aceito remove; o Enter deixa a marca nova (inserida) no parágrafo de
+  cima; formatar guarda a formatação de antes, uma vez (a primeira é a que vale), sem marcar o
+  texto que o próprio autor inseriu; substituir é exclusão mais inserção. Desligado: o texto novo
+  não herda a revisão do vizinho e o Enter no meio de uma marca inserida deixa a marca nova sem
+  revisão. Aceitar e rejeitar: a atual (ou as da seleção), todas, todas de um autor; Anterior e
+  Próxima; menu de contexto; painel lateral. Tudo num passo de desfazer.
+- Painel (`interface/painel_revisoes.py`, `interface/revisoes_janela.py`): o painel lateral dos
+  comentários virou "Comentários e revisões", com duas abas; a lista mostra tipo, autor, data e o
+  começo do trecho; escolher uma linha seleciona o trecho; Aceitar e Rejeitar valem para ela.
+- Saídas: copiar leva o texto como se lê (em "Toda a marcação", o final, como o Word); localizar
+  não acha o que está escondido no modo; a contagem de palavras usa o texto do modo (o final em
+  "Toda a marcação"); o `.txt` sempre o final. Impressão e PDF seguem o modo da tela com
+  "Imprimir marcações" ligado (o padrão, como no Word), que também imprime o realce dos trechos
+  comentados e o texto dos comentários na margem direita; desligado, o texto final, sem
+  comentários.
+
+Limites: rejeitar a revisão de célula, de propriedades de tabela, de seção e de numeração não é
+feito (exigiria refazer a grade ou a seção): elas só se aceitam, e a mensagem diz quantas ficaram;
+excluir linha ou coluna de tabela com o controle ligado não é rastreado (sai como antes); no modo
+final, o parágrafo cuja marca foi excluída mas que ainda tem texto fica separado do de baixo, e a
+tabulação e a quebra de linha dentro do texto escondido continuam ocupando espaço; imagem e objeto
+excluídos não somem nos modos sem marcação; a formatação de parágrafo de antes não aparece no modo
+Original; as revisões das notas se aceitam e rejeitam na edição da nota, e as de dentro de um
+comentário ou de uma caixa de texto só são preservadas; mover texto (recortar e colar) com o
+controle ligado vira exclusão e inserção, não movimento; o comentário na margem do PDF não é um
+balão (texto pequeno ao lado do trecho, um embaixo do outro).
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
@@ -893,12 +981,14 @@ Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto op
 numeração, desde a 0.1.4; formatação que o modelo não representa e controles de conteúdo de
 parágrafo e de bloco, desde a 0.1.5; comentários editáveis e referências de estilo sem
 definição, desde a 0.1.6; notas de rodapé e de fim, desde a 0.1.10; seções, com papel, cabeçalhos, numeração,
-colunas e o resto do `w:sectPr`, desde a 0.1.12) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
+colunas e o resto do `w:sectPr`, desde a 0.1.12; alterações controladas, desde a 0.1.13) ou
+descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
 LISTA_NIVEL só para referência quebrada, nível fora de 0 a 8 ou numeração acima dos
 limites, e LISTA_EM_CAIXA só quando a numeração do arquivo não pôde ser lida. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
 confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
-não pede confirmação. Revisões e controles de conteúdo de linha ou célula de tabela entram
-aqui até as versões que os implementam; NOTA, desde a 0.1.10, é só a nota que não pode ser lida
+não pede confirmação. Controles de conteúdo de linha ou célula de tabela entram aqui até a versão
+que os implementar; REVISAO, desde a 0.1.13, é só a revisão que não pode ser guardada (acima dos
+limites, data absurda, fora do lugar do esquema); NOTA, desde a 0.1.10, é só a nota que não pode ser lida
 (sem referência no corpo, acima dos limites, referência fora do corpo). Nenhuma parte do pacote sai sem
 aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
 NOTA, MINIATURA). COMENTARIO desde a 0.1.6 é só o comentário que não pode ser lido.
@@ -936,6 +1026,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Mover e redimensionar | 0.1.9 (feito) | arrastar, alças, setas, quebra de texto, diálogo Posição e tamanho, cabeçalho |
 | Notas | 0.1.10 (feito) | footnotes.xml e endnotes.xml, numeração, área de notas na página, edição no lugar, aba Referências, PDF |
 | Seções | 0.1.12 (feito) | sectPr de cada seção sem perda, papel e cabeçalhos por folha, numeração por seção, quebras de seção, Vincular ao anterior |
+| Controle de alterações | 0.1.13 (feito) | w:ins, w:del, movimentos, formatação, marca de parágrafo, tabela e seção sem perda; quatro modos de exibição; edição rastreada; aceitar e rejeitar; painel; imprimir marcações |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em
@@ -943,7 +1034,7 @@ modo contínuo, com paginação só na impressão.
 
 ## Fora da 0.1.0
 
-Revisão com controle de alterações (comentários desde a 0.1.6; notas de rodapé desde a 0.1.10), gerar e atualizar
+Revisão (comentários desde a 0.1.6; notas de rodapé desde a 0.1.10; controle de alterações desde a 0.1.13), gerar e atualizar
 índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações e formas (preservadas sem
 edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas na tela (preservadas desde a 0.1.12; as seções se editam desde a 0.1.12), ortografia (prevista para a
 0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).

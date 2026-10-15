@@ -110,9 +110,12 @@ def testar_arquivo() -> None:
     secao("arquivo: rPr e pPr que o modelo nao representa voltam identicos, sem aviso")
     entrada = fx.docx_com_xml(CORPO)
     modelo, avisos = ler(entrada)
-    checa_igual(codigos(avisos), {"FORMATACAO": 1, "REVISAO": 2},
-                "so' o filho fora do esquema (FORMATACAO) e a revisao de formatacao (REVISAO) "
-                "dao aviso")
+    # Reescrita na 0.1.13: a revisao de formatacao (w:rPrChange, w:pPrChange) passou a ser
+    # preservada (Run/Paragrafo.mudanca_formato) e nao da' mais o aviso REVISAO. A verificacao
+    # do filho fora do esquema continua igual.
+    checa_igual(codigos(avisos), {"FORMATACAO": 1},
+                "so' o filho fora do esquema (FORMATACAO) da' aviso; a revisao de formatacao "
+                "e' preservada (0.1.13)")
     p0 = modelo.paragrafos[0]
     checa(p0.extras is not None and all(n in p0.extras for n in ("pBdr", "tabs", "shd", "keepNext",
                                                                  "leftChars", "lineRule", "start")),
@@ -146,9 +149,12 @@ def testar_arquivo() -> None:
     checa(re.search(r'mc:Ignorable="[^"]*\bw14\b', raiz) is not None and 'xmlns:w14=' in raiz[:2000],
           "a raiz declara o w14 e o poe no mc:Ignorable")
     perdas = corpo.findall("w:body/w:p", NS)[1]
-    checa(perdas.find(".//w:xyz", NS) is None and perdas.find(".//w:rPrChange", NS) is None
-          and perdas.find(".//w:pPrChange", NS) is None,
-          "o filho fora do esquema e as revisoes de formatacao saem (como os avisos dizem)")
+    checa(perdas.find(".//w:xyz", NS) is None,
+          "o filho fora do esquema sai (como o aviso diz)")
+    # 0.1.13: as revisoes de formatacao voltam, sem o w:id (o escritor numera).
+    checa(perdas.find(".//w:rPrChange", NS) is not None and perdas.find(".//w:pPrChange", NS) is not None
+          and perdas.find(".//w:rPrChange", NS).get("{%s}author" % W) == "A",
+          "as revisoes de formatacao voltam ao arquivo (0.1.13), com o autor")
 
     secao("arquivo: idempotencia e mudanca de uma propriedade representada")
     relido, avisos2 = ler(dados)

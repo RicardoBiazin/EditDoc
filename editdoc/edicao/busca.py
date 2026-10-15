@@ -5,13 +5,17 @@ inteira e maiusculas/minusculas sao as duas opcoes.
 
 Limitacao que o Qt impoe: a busca nao atravessa quebra de paragrafo. Um termo
 que cruza dois paragrafos nao e' encontrado.
+
+Alteracoes controladas (0.1.13): a busca ve o que o modo de exibicao mostra (o trecho que tem
+texto escondido no modo, como o excluido em "Sem marcacao", nao e' achado), e substituir com
+o controle ligado e' exclusao mais insercao do autor.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtGui import QTextCursor, QTextDocument
+from PySide6.QtGui import QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import QTextEdit
 
 
@@ -42,16 +46,46 @@ def localizar(editor: QTextEdit, texto: str, opcoes: Opcoes,
         return False
     doc = editor.document()
     flags = _flags(opcoes, para_tras)
-    achado = doc.find(texto, editor.textCursor(), flags)
+    achado = _achar(doc, texto, editor.textCursor(), flags)
     if achado.isNull():
         comeco = QTextCursor(doc)
         comeco.movePosition(QTextCursor.MoveOperation.End if para_tras
                             else QTextCursor.MoveOperation.Start)
-        achado = doc.find(texto, comeco, flags)
+        achado = _achar(doc, texto, comeco, flags)
     if achado.isNull():
         return False
     editor.setTextCursor(achado)
     return True
+
+
+def _achar(doc: QTextDocument, texto: str, de, flags) -> QTextCursor:
+    """`doc.find`, pulando a ocorrencia que tem texto escondido no modo das revisoes."""
+    from editdoc.ponte_qt import revisoes as pq_revisoes
+    achado = doc.find(texto, de, flags)
+    if achado.isNull() or not pq_revisoes.tem_revisoes(doc):
+        return achado
+    for _ in range(100000):
+        if achado.isNull() or not pq_revisoes.intervalos_ocultos(
+                doc, achado.selectionStart(), achado.selectionEnd()):
+            return achado
+        achado = doc.find(texto, achado, flags)
+    return QTextCursor()
+
+
+def _trocar(editor, cursor: QTextCursor, substituto: str) -> None:
+    """Troca a selecao do cursor pelo substituto (0.1.13: com o controle de alteracoes ligado,
+    a selecao vira exclusao e o substituto, insercao do autor)."""
+    from editdoc.edicao import revisoes as ed_revisoes
+    if not ed_revisoes.controle_ligado(editor):
+        cursor.insertText(substituto)
+        return
+    formato = QTextCharFormat(cursor.charFormat())
+    ed_revisoes.apagar_intervalo(editor, cursor.document(), cursor.selectionStart(),
+                                 cursor.selectionEnd())
+    # O cursor acompanha o documento: o fim da selecao e' o fim do trecho (excluido ou nao).
+    cursor.setPosition(min(cursor.selectionEnd(), cursor.document().characterCount() - 1))
+    ajuste = ed_revisoes.formato_para_digitar(editor, formato)
+    cursor.insertText(substituto, ajuste if ajuste is not None else formato)
 
 
 def _selecao_coincide(cursor: QTextCursor, texto: str, opcoes: Opcoes) -> bool:
@@ -73,8 +107,9 @@ def substituir_atual(editor: QTextEdit, texto: str, substituto: str,
     cursor = editor.textCursor()
     if _selecao_coincide(cursor, texto, opcoes):
         cursor.beginEditBlock()
-        cursor.insertText(substituto)
+        _trocar(editor, cursor, substituto)
         cursor.endEditBlock()
+        editor.setTextCursor(cursor)
     return localizar(editor, texto, opcoes)
 
 
@@ -95,10 +130,10 @@ def substituir_todas(editor: QTextEdit, texto: str, substituto: str,
     editor_cursor = QTextCursor(doc)
     editor_cursor.beginEditBlock()
     while True:
-        achado = doc.find(texto, posicao, flags)
+        achado = _achar(doc, texto, posicao, flags)
         if achado.isNull():
             break
-        achado.insertText(substituto)
+        _trocar(editor, achado, substituto)
         posicao = QTextCursor(doc)
         posicao.setPosition(achado.position())
         trocas += 1

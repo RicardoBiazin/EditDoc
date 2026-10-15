@@ -124,6 +124,31 @@ def documento_simples(paragrafos: int = 260) -> bytes:
                  (), {})
 
 
+def documento_com_revisoes(paragrafos: int = 400, por_paragrafo: int = 5) -> bytes:
+    """0.1.13: 2000 revisoes (400 paragrafos x 5: insercoes e exclusoes de dois autores,
+    formatacao alterada e a marca de paragrafo inserida a cada 4), com Controlar alteracoes
+    ligado no arquivo."""
+    from editdoc.modelo.documento import Revisao
+    autores = ("Ana", "Beto")
+    pars = []
+    for i in range(paragrafos):
+        runs = [Run(f"Parágrafo {i}. {tf.TEXTO[:60]}")]
+        for k in range(por_paragrafo):
+            autor = autores[(i + k) % 2]
+            if k % 3 == 0:
+                runs.append(Run(f" novo{k}", insercao=Revisao("ins", autor, "2026-03-01T10:00:00Z")))
+            elif k % 3 == 1:
+                runs.append(Run(f" velho{k}", exclusao=Revisao("del", autor, "2026-03-01T11:00:00Z")))
+            else:
+                runs.append(Run(f" forma{k}", negrito=True, mudanca_formato=(
+                    '<w:rPrChange xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+                    f'2006/main" w:author="{autor}"><w:rPr></w:rPr></w:rPrChange>')))
+            runs.append(Run(" meio "))
+        pars.append(Paragrafo(runs=runs))
+    doc = Documento(paragrafos=pars, controlar_alteracoes=True)
+    return fx.bytes_de(doc)
+
+
 def _painel(docx: bytes):
     painel = tf._painel()
     tf._carregar(painel, docx)
@@ -653,7 +678,10 @@ PONTOS_P95 = (("capa", manual_sintetico, "capa", FATOR_DO_SIMPLES),
               ("sumario", manual_sintetico, "sumario", FATOR_DO_SIMPLES),
               ("corpo", manual_sintetico, "corpo", FATOR_DO_SIMPLES),
               ("antes das ancoras da capa (sumario em controle de conteudo)", manual_capa_cheia,
-               "inicio", FATOR_ANTES_DA_CAPA))
+               "inicio", FATOR_ANTES_DA_CAPA),
+              # 0.1.13: 2000 revisoes, com Controlar alteracoes ligado (cada tecla e' insercao).
+              ("2000 revisoes, controle ligado", documento_com_revisoes, "corpo",
+               FATOR_DO_SIMPLES))
 
 
 def testar_p95() -> None:
@@ -695,6 +723,36 @@ def testar_p95() -> None:
                       f"{fator}x o simples ({s:.1f} ms), com teto de {TETO_MS:.0f} ms")
 
 
+def testar_modos_com_2000_revisoes() -> None:
+    secao("0.1.13: 2000 revisoes: trocar o modo de exibicao em menos de 1 s, e a lista")
+    from editdoc.edicao import revisoes as ed
+    from editdoc.ponte_qt import revisoes as pq
+    painel = _painel(documento_com_revisoes())
+    try:
+        doc = painel.documento_corpo()
+        t = time.perf_counter()
+        itens = ed.listar(doc)
+        lista_ms = (time.perf_counter() - t) * 1000
+        checa(len(itens) >= 2000, f"a lista tem as revisoes ({len(itens)}, {lista_ms:.0f} ms)")
+        checa(ed.controle_ligado(painel), "o controle veio ligado do arquivo")
+        tempos = {}
+        for modo in ("simples", "final", "original", "todas"):
+            t = time.perf_counter()
+            pq.definir_modo(doc, modo)
+            painel._limpar_cache()
+            painel._altura_doc_anterior = None
+            painel._atualizar_geometria()
+            painel.viewport().grab()
+            tempos[modo] = (time.perf_counter() - t) * 1000
+        print(f"         trocar o modo (com a pintura): {tempos} ms; lista: {lista_ms:.0f} ms")
+        checa(max(tempos.values()) < 1000,
+              f"cada troca de modo em menos de 1 s (pior: {max(tempos.values()):.0f} ms)")
+    finally:
+        _fechar(painel)
+        painel.deleteLater()
+        drenar_eventos()
+
+
 def main() -> int:
     # As fontes do Windows antes de qualquer documento, como no gate: o fallback do offscreen e'
     # duas vezes mais largo e quebra linha a toda hora; carregadas depois, o Qt continua com o
@@ -705,6 +763,7 @@ def main() -> int:
     # documento simples vai de 5 para 10 ms depois delas).
     testar_criterio_do_p95()
     testar_p95()
+    testar_modos_com_2000_revisoes()
     testar_conferencia()
     testar_tiles()
     testar_antes_da_capa()

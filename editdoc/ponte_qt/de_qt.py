@@ -18,6 +18,10 @@ campo e de marcador (`marcas.marca_de`), uma por caractere de objeto.
 Listas (0.1.4): o numId e o ilvl diretos saem das propriedades do bloco (`listas.py`), e o
 recuo que o nivel da lista da' nao vira formatacao direta. Um QTextList (HTML colado de
 outro programa) vira o tipo simples (`Paragrafo.numeracao`), que o escritor materializa.
+
+Alteracoes controladas (0.1.13): as revisoes do formato de caractere e do bloco voltam ao run e
+ao paragrafo (`revisoes.py`). A marca que nao pode ficar dentro de w:ins/w:del (marcador,
+ancora de comentario, trecho de movimento) volta sem elas, como o leitor a le.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
+from editdoc.ponte_qt import revisoes as pq_revisoes
 from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
@@ -98,6 +103,19 @@ def _run(frag_texto: str, cf: QTextCharFormat) -> Run:
         run.cor_hex = cf.foreground().color().name()[1:].upper()
     # Propriedades preservadas (0.1.5): o XML dos extras volta como veio.
     run.extras = pq_props.extras_de_rpr(cf)
+    if pq_revisoes.tem_revisao(cf):
+        pq_revisoes.ler_run(cf, run)  # 0.1.13
+    return run
+
+
+def _revisoes_da_marca(run: Run) -> Run:
+    """A marca de intervalo (marcador, ancora de comentario, movimento) nao leva revisao."""
+    from editdoc.modelo.documento import MarcaComentario, MarcaMovimento, Marcador
+    m = run.marca
+    if isinstance(m, (Marcador, MarcaMovimento)) or (isinstance(m, MarcaComentario)
+                                                     and m.tipo != "referencia"):
+        run.insercao = run.exclusao = None
+        run.mudanca_formato = None
     return run
 
 
@@ -142,8 +160,10 @@ def _run_direto(texto: str, cf: QTextCharFormat, sid_par, res) -> Run:
     return run
 
 
-def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
-    bf = bloco.blockFormat()
+def paragrafo_do_formato(bf, res, em_celula: bool = False) -> Paragrafo:
+    """O `Paragrafo` (sem os runs) que o formato do bloco descreve: estilo, lista, formatacao
+    direta, quebra e extras (0.1.13: tambem para guardar as propriedades de antes de uma
+    formatacao com o controle de alteracoes ligado)."""
     p = Paragrafo()
     sid = pq_estilos.estilo_do_bloco(bf)
     if sid is not None and sid != res.estilos.id_padrao() and res.estilos.obter(sid) is not None:
@@ -166,6 +186,13 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
     p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore) \
         and not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)
     p.extras = pq_props.extras_de_ppr(bf)
+    pq_revisoes.ler_paragrafo(bf, p)  # 0.1.13
+    return p
+
+
+def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
+    bf = bloco.blockFormat()
+    p = paragrafo_do_formato(bf, res, em_celula)
     lista = bloco.textList()
     if lista is not None and p.lista is None:
         # QTextList de HTML colado de outro programa: o tipo simples (0.1.4).
@@ -225,7 +252,7 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                     run = _run_direto("", cf, p.estilo, res)
                     run.marca = marca
                     run.link = link
-                    p.runs.append(run)
+                    p.runs.append(_revisoes_da_marca(run))
             elif opacos.eh_opaco(cf):
                 # Objetos opacos iguais lado a lado viram um fragmento so': um por caractere.
                 obj = opacos.objeto_de(cf)
@@ -233,7 +260,10 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                     if caractere != CARACTERE_OBJETO:
                         continue
                     if obj is not None:
-                        p.runs.append(Run(texto=CARACTERE_OBJETO, objeto=obj, link=link))
+                        run = Run(texto=CARACTERE_OBJETO, objeto=obj, link=link)
+                        if pq_revisoes.tem_revisao(cf):
+                            pq_revisoes.ler_run(cf, run)  # 0.1.13
+                        p.runs.append(run)
                     else:
                         log.warning("objeto opaco sem registro descartado ao salvar")
             elif cf.isImageFormat():
@@ -243,8 +273,11 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                         continue
                     imagem = imagem_do_formato(doc, cf)
                     if imagem is not None:
-                        p.runs.append(Run(texto=CARACTERE_OBJETO, imagem=imagem, link=link,
-                                          extras=pq_props.extras_de_rpr(cf)))
+                        run = Run(texto=CARACTERE_OBJETO, imagem=imagem, link=link,
+                                  extras=pq_props.extras_de_rpr(cf))
+                        if pq_revisoes.tem_revisao(cf):
+                            pq_revisoes.ler_run(cf, run)  # 0.1.13
+                        p.runs.append(run)
             else:
                 run = _run_direto(frag.text(), cf, p.estilo, res)
                 run.link = link
@@ -336,6 +369,8 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
         tabela.margens_celula_tw = tuple(int(m) for m in margens)
     extras = dado.get("extras")
     tabela.extras = extras if isinstance(extras, str) and extras else None
+    grade = dado.get("mudanca_grade")
+    tabela.mudanca_grade = grade if isinstance(grade, str) and grade else None  # 0.1.13
     estilo = dado.get("estilo")
     if isinstance(estilo, str) and estilo and res is not None \
             and getattr(res.estilos.obter(estilo), "tipo", None) == "tabela":
@@ -402,5 +437,7 @@ def extrair(documento_qt: QTextDocument) -> Documento:
     # Notas (0.1.10): o catalogo vigente (as referencias ja' vieram como marcas).
     notas = pq_notas.catalogo(documento_qt)
     doc.notas = None if getattr(documento_qt, "_notas_base", None) is None and notas.vazia()         and not notas.secao else notas
+    # Alteracoes controladas (0.1.13): o w:trackRevisions.
+    doc.controlar_alteracoes = bool(getattr(documento_qt, "_controlar_alteracoes", False))
     tipos_dos_paragrafos(doc)
     return doc

@@ -10,6 +10,9 @@ numeradas, depois do titulo "Notas de rodapé" (e "Notas de fim").
 Listas (0.1.4): o item sai com o numero calculado como na tela ("1.1.", "a)", "•") e o
 sufixo do nivel (tabulacao, espaco ou nada). O simbolo da fonte Symbol ou Wingdings sai como
 o caractere Unicode parecido.
+
+Alteracoes controladas (0.1.13): sai o texto final, como no Word: o excluido nao entra, e o
+paragrafo cuja marca foi excluida continua na mesma linha do seguinte.
 """
 
 from __future__ import annotations
@@ -27,6 +30,8 @@ _SUFIXO = {"tab": "\t", "space": " ", "nothing": ""}
 
 
 def _texto_do_run(r, numeros: dict | None) -> str:
+    if r.exclusao is not None:
+        return ""  # excluido (ou movido para outro lugar): o .txt leva o texto final
     m = r.marca
     if isinstance(m, MarcaNota) and not m.propria:
         if m.personalizada:
@@ -47,6 +52,7 @@ def _texto_do_paragrafo(p: Paragrafo, rotulos: dict | None = None,
 
 def _linhas(blocos, rotulos: dict | None = None, numeros: dict | None = None) -> list[str]:
     saida: list[str] = []
+    juntar = False  # a marca do paragrafo de cima foi excluida (0.1.13)
     for bloco in blocos:
         if isinstance(bloco, Tabela):
             for linha in bloco.linhas:
@@ -54,7 +60,14 @@ def _linhas(blocos, rotulos: dict | None = None, numeros: dict | None = None) ->
                            for c in linha.celulas]
                 saida.append("\t".join(celulas))
         else:
-            saida.append(_texto_do_paragrafo(bloco, rotulos, numeros))
+            texto = _texto_do_paragrafo(bloco, rotulos, numeros)
+            if saida and juntar:
+                saida[-1] += texto
+            else:
+                saida.append(texto)
+            juntar = bloco.marca_exclusao is not None
+            continue
+        juntar = False
     return saida
 
 

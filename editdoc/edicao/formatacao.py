@@ -21,7 +21,10 @@ _PROPORCIONAL = QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
 def _aplicar_caractere(editor: QTextEdit, formato: QTextCharFormat) -> None:
     cursor = editor.textCursor()
     if cursor.hasSelection():
-        cursor.mergeCharFormat(formato)
+        # Controle de alteracoes (0.1.13): a formatacao de antes fica guardada (w:rPrChange).
+        from editdoc.edicao.revisoes import registrando_formatacao
+        with registrando_formatacao(editor):
+            cursor.mergeCharFormat(formato)
     else:
         editor.mergeCurrentCharFormat(formato)
 

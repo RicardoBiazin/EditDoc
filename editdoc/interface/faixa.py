@@ -75,6 +75,9 @@ ROTULOS = {
     "novo_comentario": "Novo comentário", "excluir_comentario": "Excluir",
     "comentario_anterior": "Anterior", "comentario_proximo": "Próximo",
     "mostrar_comentarios": "Mostrar comentários",
+    "controlar_alteracoes": "Controlar alterações", "aceitar_revisao": "Aceitar",
+    "rejeitar_revisao": "Rejeitar", "revisao_anterior": "Anterior", "revisao_proxima": "Próxima",
+    "painel_revisoes": "Painel de revisões",
     "inserir_nota_rodape": "Nota de Rodapé", "inserir_nota_fim": "Nota de Fim",
     "proxima_nota": "Próxima", "nota_anterior": "Anterior", "opcoes_notas": "Opções",
 }
@@ -595,10 +598,52 @@ class Faixa(QFrame):
                 "novo_comentario", "responder_comentario", "editar_comentario",
                 "resolver_comentario", "excluir_comentario", "excluir_todos_comentarios",
                 "comentario_anterior", "comentario_proximo", "mostrar_comentarios")]))
-        linha = LinhaDeGrupos([comentarios], [comentarios])
+        controle = self._grupo_controle(c)
+        alteracoes = self._grupo_alteracoes(c)
+        # Recolhe primeiro o grupo Controle, depois Alteracoes, por ultimo Comentarios.
+        linha = LinhaDeGrupos([comentarios, controle, alteracoes],
+                              [controle, alteracoes, comentarios])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha
+
+    def _grupo_controle(self, c: Comandos) -> GrupoFaixa:
+        """Controle de alteracoes (0.1.13): ligar, o modo de exibicao e o painel, como no Word."""
+        modos = ("modo_simples", "modo_todas", "modo_sem", "modo_original")
+        botao_modo = _menu("Exibir", [c.acao(i) for i in (*modos, "imprimir_marcacoes")])
+        botao_modo.setAccessibleName("Exibir para revisão")
+        botao_modo.setToolTip("Como as alterações aparecem: Marcação simples, Toda a marcação, "
+                              "Sem marcação ou Original")
+        return GrupoFaixa(
+            "Controle", _duas_linhas(
+                [_botao(c, "controlar_alteracoes")],
+                [botao_modo, _botao(c, "painel_revisoes")]),
+            _menu("Controle", [c.acao(i) for i in (
+                "controlar_alteracoes", *modos, "imprimir_marcacoes", "painel_revisoes")]))
+
+    def _grupo_alteracoes(self, c: Comandos) -> GrupoFaixa:
+        """Aceitar e rejeitar (a atual, todas, as de um autor), anterior e proxima (0.1.13)."""
+        def com_menu(id_, ids):
+            botao = _botao(c, id_)
+            menu = QMenu(botao)
+            for i in ids:
+                menu.addAction(c.acao(i))
+            botao.setMenu(menu)
+            botao.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+            botao.setAccessibleDescription(
+                f"{botao.accessibleDescription()}. A seta abre Todas e De um autor.")
+            return botao
+        aceitar = com_menu("aceitar_revisao", ("aceitar_revisao", "aceitar_todas",
+                                               "aceitar_do_autor"))
+        rejeitar = com_menu("rejeitar_revisao", ("rejeitar_revisao", "rejeitar_todas",
+                                                 "rejeitar_do_autor"))
+        return GrupoFaixa(
+            "Alterações", _duas_linhas(
+                [aceitar, rejeitar],
+                [_botao(c, "revisao_anterior"), _botao(c, "revisao_proxima")]),
+            _menu("Alterações", [c.acao(i) for i in (
+                "aceitar_revisao", "aceitar_todas", "aceitar_do_autor", "rejeitar_revisao",
+                "rejeitar_todas", "rejeitar_do_autor", "revisao_anterior", "revisao_proxima")]))
 
     def _montar_exibir(self, c: Comandos) -> LinhaDeGrupos:
         mostrar = GrupoFaixa(

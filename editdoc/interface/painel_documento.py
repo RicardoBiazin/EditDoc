@@ -67,6 +67,7 @@ from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import imagens as ed_imagens
 from editdoc.edicao import links as ed_links
 from editdoc.edicao import listas as ed_listas
+from editdoc.edicao import revisoes as ed_revisoes
 from editdoc.edicao import tabelas as ed_tabelas
 from editdoc.interface.cabecalhos import FaixaQt
 from editdoc.interface.vista_paginas import VistaPaginas, origem_da_faixa
@@ -93,6 +94,7 @@ from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import opacos as pq_opacos
 from editdoc.ponte_qt import propriedades as pq_props
+from editdoc.ponte_qt import revisoes as pq_revisoes
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
 
 Mover = QTextCursor.MoveMode.MoveAnchor
@@ -265,7 +267,11 @@ class PainelDocumento(VistaPaginas):
         self._depois_de_mover()
 
     def _remover_selecao(self) -> None:
-        """Apaga a selecao; com ancoras de comentario, pela regra do Word (0.1.6)."""
+        """Apaga a selecao; com ancoras de comentario, pela regra do Word (0.1.6). Com o
+        controle de alteracoes ligado (0.1.13), o texto fica, marcado como excluido."""
+        if ed_revisoes.controle_ligado(self):
+            ed_revisoes.apagar_selecao(self, self._cursor)
+            return
         if not self._no_corpo() or not ed_comentarios.remover_selecao(self._cursor):
             self._cursor.removeSelectedText()
         else:
@@ -278,6 +284,8 @@ class PainelDocumento(VistaPaginas):
 
     def copy(self) -> None:
         if not self._cursor.hasSelection():
+            return
+        if self._copiar_no_modo():
             return
         frag = QTextDocumentFragment(self._cursor)
         md = QMimeData()
@@ -316,6 +324,33 @@ class PainelDocumento(VistaPaginas):
                     else QImage()
                 md.setImageData(inteira if not inteira.isNull() else pq_imagens.previa(registro[0]))
         QApplication.clipboard().setMimeData(md)
+
+    def _copiar_no_modo(self) -> bool:
+        """Alteracoes controladas (0.1.13): copiar leva o texto como se le (em Toda a marcacao,
+        o final, como o Word): sem o excluido (ou, no Original, sem o inserido). Sem trecho
+        escondido na selecao, False (o copiar de sempre)."""
+        doc = self.document()
+        if not pq_revisoes.tem_revisoes(doc):
+            return False
+        inicio, fim = self._cursor.selectionStart(), self._cursor.selectionEnd()
+        ocultos = pq_revisoes.intervalos_ocultos(doc, inicio, fim,
+                                                 ed_revisoes.modo_para_copiar(doc))
+        if not ocultos:
+            return False
+        tmp = QTextDocument()
+        c = QTextCursor(tmp)
+        c.insertFragment(QTextDocumentFragment(self._cursor))
+        for a, b in reversed(ocultos):
+            c.setPosition(a - inicio)
+            c.setPosition(min(b - inicio, tmp.characterCount() - 1), Selecionar)
+            c.removeSelectedText()
+        c.select(QTextCursor.SelectionType.Document)
+        frag = QTextDocumentFragment(c)
+        md = QMimeData()
+        md.setHtml(_html_sem_espacador(frag))
+        md.setText(frag.toPlainText().replace(chr(0xFFFC), ""))
+        QApplication.clipboard().setMimeData(md)
+        return True
 
     def cut(self) -> None:
         self.copy()
@@ -384,6 +419,8 @@ class PainelDocumento(VistaPaginas):
             if isinstance(dado, dict):
                 ed_notas.aplicar_colado(self.document(), dado, inicio_colado,
                                         self._cursor.position())
+        # Alteracoes controladas (0.1.13): o colado e' insercao do autor.
+        ed_revisoes.marcar_colado(self, self.document(), inicio_colado, self._cursor.position())
         self._cursor.endEditBlock()
         self._depois_de_mover()
         if md.hasFormat(MIME_OPACOS_OMITIDOS):
@@ -880,11 +917,17 @@ class PainelDocumento(VistaPaginas):
         # Logo depois de um link, o texto digitado nao entra no link (0.1.3).
         para_digitar = ed_links.formato_para_digitar(self.document(), self._cursor.position(),
                                                      formato)
+        rev = ed_revisoes.formato_para_digitar(self, para_digitar)
+        if rev is not None:
+            # Alteracoes controladas (0.1.13): insercao do autor (controle ligado) ou sem a
+            # revisao do vizinho (desligado).
+            para_digitar = rev
         if pq_notas.eh_nota(formato):
             # Depois da marca da nota (0.1.10): o texto nao sai sobrescrito nem com o estilo da
             # referencia; vem o formato do texto de antes da marca.
             limpo = ed_links_formato_antes_da_nota(self.document(), self._cursor.position())
-            self._cursor.insertText(texto, limpo)
+            ajuste = ed_revisoes.formato_para_digitar(self, limpo)
+            self._cursor.insertText(texto, ajuste if ajuste is not None else limpo)
         elif formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato) \
                 or pq_marcas.eh_marca(formato) or pq_secoes.eh_quebra(formato):
             # Digitar logo depois de uma imagem, de um campo, de um objeto opaco ou de uma
@@ -954,12 +997,17 @@ class PainelDocumento(VistaPaginas):
         bf.setPageBreakPolicy(_QUEBRA if quebra else _SEM_QUEBRA)
         bf.clearProperty(pq_listas.PROP_SAIU_DA_LISTA)  # a marca do Backspace nao passa adiante
         proximo = ed_estilos.formatos_do_proximo(self.document(), bf) if no_fim else None
+        revisado = ed_revisoes.controle_ligado(self) or pq_revisoes.tem_revisoes(self.document())
+        marca = ed_revisoes.marca_antes_do_enter(self._cursor) if revisado else None
         self._cursor.insertBlock(bf)
         if proximo is not None:
             bloco_fmt, car_fmt = proximo
             self._cursor.setBlockFormat(bloco_fmt)
             self._cursor.setBlockCharFormat(car_fmt)
             self._cursor.setCharFormat(car_fmt)
+        if revisado:
+            # Alteracoes controladas (0.1.13): a marca de cima e' a nova (inserida).
+            ed_revisoes.depois_do_enter(self, self._cursor, marca)
         self._cursor.endEditBlock()
         self._depois_de_mover()
 
@@ -998,9 +1046,14 @@ class PainelDocumento(VistaPaginas):
         return ed_listas.mudar_nivel(self, -1 if para_tras else 1)
 
     def _marcador_em(self, pos: int) -> bool:
-        """O caractere em `pos` e' a marca (sem largura) de um marcador (0.1.3)."""
+        """O caractere em `pos` e' a marca (sem largura) de um marcador (0.1.3), ou texto
+        escondido no modo de exibicao das revisoes (0.1.13): o caret passa por ele."""
         cf = pq_links.formato_em(self.document(), pos)
-        return cf is not None and pq_marcas.eh_marcador(cf)
+        if cf is None:
+            return False
+        if pq_marcas.eh_marcador(cf):
+            return True
+        return pq_revisoes.tem_revisao(cf) and pq_revisoes.oculto_em(self.document(), pos)
 
     def _objeto_com_quadro(self, pos: int) -> bool:
         """O caractere em `pos` e' um objeto flutuante que reserva espaco (float do Qt)."""
@@ -1108,6 +1161,13 @@ class PainelDocumento(VistaPaginas):
         return True
 
     def _apagar(self, anterior: bool, palavra: bool = False) -> None:
+        if ed_revisoes.controle_ligado(self) and not self._cursor.hasSelection() and not palavra \
+                and not self._secao_em(self._cursor.position() - (1 if anterior else 0)):
+            # Alteracoes controladas (0.1.13): o caractere fica, marcado como excluido (ou some,
+            # se o proprio autor o inseriu).
+            ed_revisoes.apagar_caractere(self, self._cursor, anterior)
+            self._depois_de_mover()
+            return
         if self._cursor.hasSelection():
             self._remover_selecao()
         elif palavra:

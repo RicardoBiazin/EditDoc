@@ -21,6 +21,9 @@ tipo, o id e o conteudo (texto, estilos, links e marcas), depois de `notas.prepa
 propriedades efetivas (formato, inicio, reinicio, posicao).
 Secoes (0.1.12): onde cada uma termina, o papel, as margens, a numeracao, o tipo, os extras do
 w:sectPr e os cabecalhos e rodapes que cada uma declara.
+Alteracoes controladas (0.1.13): de cada trecho, a insercao, a exclusao e a formatacao de antes
+(com o texto); da marca de paragrafo, a insercao e a exclusao; a formatacao de paragrafo e a
+numeracao de antes; e as marcas de movimento (com as outras marcas).
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -39,6 +42,7 @@ from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.escritor import texto_gravavel
 from editdoc.modelo import marcas
 from editdoc.modelo import notas as mod_notas
+from editdoc.modelo import revisoes as mod_revisoes
 from editdoc.modelo.documento import CARACTERE_OBJETO, Documento, Tabela, normalizar
 from editdoc.modelo.secoes import secoes_de
 
@@ -96,6 +100,26 @@ def _marcas(paragrafo) -> tuple:
     return tuple(r.marca for r in paragrafo.runs if r.marca is not None)
 
 
+def _revisoes(paragrafo) -> tuple:
+    """As revisoes do paragrafo (0.1.13): de cada trecho revisado, (insercao, exclusao,
+    formatacao de antes, texto), com os vizinhos iguais juntos; e as da marca e do paragrafo."""
+    trechos: list[list] = []
+    for r in paragrafo.runs:
+        if r.insercao is None and r.exclusao is None and not r.mudanca_formato:
+            if trechos and trechos[-1][0] is not None:
+                trechos.append([None])
+            continue
+        chave = (r.insercao, r.exclusao, r.mudanca_formato)
+        texto = CARACTERE_OBJETO if r.eh_objeto() else texto_gravavel(r.texto)[0]
+        if trechos and trechos[-1][0] == chave:
+            trechos[-1][1] += texto
+        else:
+            trechos.append([chave, texto])
+    return (tuple((t[0], t[1]) for t in trechos if t[0] is not None),
+            paragrafo.marca_insercao, paragrafo.marca_exclusao, paragrafo.mudanca_formato,
+            paragrafo.mudanca_numeracao)
+
+
 def _itens(blocos, saida: list, onde: str) -> None:
     """Sequencia comparavel: um item por paragrafo, tabela, linha e celula."""
     n_par = 0
@@ -116,7 +140,8 @@ def _itens(blocos, saida: list, onde: str) -> None:
                           bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
                           bloco.estilo, _estilos(bloco),
                           _objetos(bloco), _links(bloco), _marcas(bloco),
-                          (bloco.lista, bloco.lista_nivel), bloco.secao is not None))
+                          (bloco.lista, bloco.lista_nivel), bloco.secao is not None,
+                          _revisoes(bloco)))
 
 
 def _comentarios(doc: Documento) -> tuple:
@@ -157,7 +182,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
     a: list = []
     b: list = []
     # O escritor grava as marcas em pares (marcas.equilibrar): e' isso que tem de voltar.
-    esperado = mod_notas.preparar(fx_comentarios.preparar(marcas.equilibrar(esperado)[0]))
+    esperado = mod_notas.preparar(fx_comentarios.preparar(
+        mod_revisoes.equilibrar_movimentos(marcas.equilibrar(esperado)[0])))
     esperado_n, lido_n = normalizar(esperado), normalizar(lido)
     _itens(esperado_n.paragrafos, a, "")
     _itens(lido_n.paragrafos, b, "")
@@ -204,6 +230,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"lista (numeracao) diferente no {lugar}")
             if x[12] != y[12]:
                 raise FalhaDeConferencia(f"quebra de secao diferente no {lugar}")
+            if x[13] != y[13]:
+                raise FalhaDeConferencia(f"alteracao controlada diferente no {lugar}")
             if x[6:8] != y[6:8]:
                 raise FalhaDeConferencia(f"estilo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")

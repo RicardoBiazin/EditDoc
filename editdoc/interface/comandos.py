@@ -242,6 +242,35 @@ DEFINICOES = (
     Definicao("comentario_proximo", "Próximo", (), dica="Ir para o próximo comentário"),
     Definicao("mostrar_comentarios", "Mostrar comentários", (), True,
               "Mostrar o painel de comentários"),
+    # Revisao: controle de alteracoes (0.1.13).
+    Definicao("controlar_alteracoes", "Controlar alterações", ("Ctrl+Shift+E",), True,
+              "Controlar alterações: registrar inserções, exclusões e formatação"),
+    Definicao("modo_simples", "Marcação simples", (), True,
+              "Mostrar o texto final com uma barra onde houve alteração"),
+    Definicao("modo_todas", "Toda a marcação", (), True,
+              "Mostrar inserções sublinhadas e exclusões tachadas, na cor de cada autor"),
+    Definicao("modo_sem", "Sem marcação", (), True,
+              "Mostrar o texto final, sem as marcas das alterações"),
+    Definicao("modo_original", "Original", (), True,
+              "Mostrar o texto como era antes das alterações"),
+    Definicao("imprimir_marcacoes", "Imprimir marcações", (), True,
+              "Imprimir e exportar o PDF com as alterações e os comentários"),
+    Definicao("aceitar_revisao", "Aceitar", (),
+              dica="Aceitar a alteração do cursor (ou as da seleção) e ir para a próxima"),
+    Definicao("aceitar_todas", "Aceitar todas as alterações", (),
+              dica="Aceitar todas as alterações do documento"),
+    Definicao("aceitar_do_autor", "Aceitar todas de um autor...", (),
+              dica="Aceitar todas as alterações de um autor"),
+    Definicao("rejeitar_revisao", "Rejeitar", (),
+              dica="Rejeitar a alteração do cursor (ou as da seleção) e ir para a próxima"),
+    Definicao("rejeitar_todas", "Rejeitar todas as alterações", (),
+              dica="Rejeitar todas as alterações do documento"),
+    Definicao("rejeitar_do_autor", "Rejeitar todas de um autor...", (),
+              dica="Rejeitar todas as alterações de um autor"),
+    Definicao("revisao_anterior", "Anterior", (), dica="Ir para a alteração anterior"),
+    Definicao("revisao_proxima", "Próxima", (), dica="Ir para a próxima alteração"),
+    Definicao("painel_revisoes", "Painel de revisões", (), True,
+              "Mostrar a lista de alterações do documento"),
     # Referencias: notas de rodape e de fim (0.1.10).
     Definicao("inserir_nota_rodape", "Inserir nota de rodapé", ("Ctrl+Alt+F",),
               dica="Inserir nota de rodapé no cursor"),
@@ -302,7 +331,19 @@ REVISAO_DAS_ACOES = {"novo_comentario": "novo", "responder_comentario": "respond
                      "editar_comentario": "editar", "resolver_comentario": "resolver",
                      "excluir_comentario": "excluir", "excluir_todos_comentarios": "excluir_todos",
                      "comentario_anterior": "anterior", "comentario_proximo": "proximo",
-                     "mostrar_comentarios": "mostrar"}
+                     "mostrar_comentarios": "mostrar",
+                     # Controle de alteracoes (0.1.13).
+                     "controlar_alteracoes": "controlar", "imprimir_marcacoes": "imprimir_marcas",
+                     "aceitar_revisao": "aceitar", "aceitar_todas": "aceitar_todas",
+                     "aceitar_do_autor": "aceitar_autor", "rejeitar_revisao": "rejeitar",
+                     "rejeitar_todas": "rejeitar_todas", "rejeitar_do_autor": "rejeitar_autor",
+                     "revisao_anterior": "revisao_anterior", "revisao_proxima": "revisao_proxima",
+                     "painel_revisoes": "painel_revisoes"}
+#: Modos de exibicao das revisoes (0.1.13): id da acao -> modo de `modelo/revisoes.py`.
+MODO_DAS_ACOES = {"modo_simples": "simples", "modo_todas": "todas", "modo_sem": "final",
+                  "modo_original": "original"}
+#: Comandos que so' valem com o cursor numa alteracao (o atualizador os habilita).
+REVISAO = ("aceitar_revisao", "rejeitar_revisao")
 
 #: Comandos que so' valem com o cursor num item numerado (o atualizador os habilita).
 LISTA_NUMERADA = ("reiniciar_numeracao", "continuar_numeracao", "definir_valor_numeracao")
@@ -342,6 +383,20 @@ ALINHAMENTOS = {
 
 ESPACAMENTOS = {"espaco_1": 100, "espaco_115": 115, "espaco_15": 150, "espaco_2": 200}
 
+
+#: Comandos de formatacao que, com o controle de alteracoes ligado (0.1.13), guardam a
+#: formatacao de antes (w:rPrChange e w:pPrChange). A fonte e o tamanho passam pela
+#: `formatacao._aplicar_caractere`, que faz o mesmo.
+FORMATACAO_RASTREADA = {
+    "negrito", "italico", "sublinhado", "tachado", "subscrito", "sobrescrito", "aumentar_fonte",
+    "diminuir_fonte", "limpar_formatacao", "limpar_caractere", "marcadores", "numeracao",
+    "diminuir_recuo", "aumentar_recuo", "alinhar_esquerda", "centralizar", "alinhar_direita",
+    "justificar", "espaco_1", "espaco_115", "espaco_15", "espaco_2", "marcador_redondo",
+    "marcador_vazado", "marcador_quadrado", "numero_decimal_ponto", "numero_decimal_parentese",
+    "numero_letra_minuscula", "numero_letra_maiuscula", "numero_romano_minusculo",
+    "numero_romano_maiusculo", "multinivel_decimal", "multinivel_capitulo", "multinivel_titulos",
+    "estilo_normal", "estilo_titulo1", "estilo_titulo2", "estilo_titulo3",
+}
 
 #: Comandos de arquivo: quem os executa e' a janela. Ver `ao_arquivo` em Comandos.
 ARQUIVO = ("novo", "abrir", "salvar", "salvar_como", "fechar", "imprimir",
@@ -490,6 +545,8 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
     executores.update(executores_inserir)
     for id_, gancho in REVISAO_DAS_ACOES.items():
         executores[id_] = lambda g=gancho: _chamar(revisao, g)
+    for id_, modo in MODO_DAS_ACOES.items():
+        executores[id_] = lambda m=modo: _chamar(revisao, "modo", m)
     # Notas (0.1.10): o dialogo das opcoes e' da janela.
     executores["inserir_nota_rodape"] = lambda: ed_notas.inserir(editor, "rodape")
     executores["inserir_nota_fim"] = lambda: ed_notas.inserir(editor, "fim")
@@ -514,10 +571,13 @@ class Comandos(QObject):
         self._acoes: dict[str, QAction] = {}
         self._executores = _executores(editor, ao_localizar, ao_substituir, ao_arquivo or {},
                                        ao_layout, ao_inserir, ao_exibir, ao_revisao)
+        self._editor = editor
         self._grupo_alinhamento = QActionGroup(self)
         self._grupo_alinhamento.setExclusive(True)
         self._grupo_espacamento = QActionGroup(self)
         self._grupo_espacamento.setExclusive(True)
+        self._grupo_modo = QActionGroup(self)
+        self._grupo_modo.setExclusive(True)
 
         for definicao in DEFINICOES:
             acao = QAction(definicao.texto, self)
@@ -537,8 +597,15 @@ class Comandos(QObject):
                 self._grupo_alinhamento.addAction(acao)
             if definicao.id in ESPACAMENTOS:
                 self._grupo_espacamento.addAction(acao)
+            if definicao.id in MODO_DAS_ACOES:
+                self._grupo_modo.addAction(acao)
 
     def _executar(self, id_: str) -> None:
+        if id_ in FORMATACAO_RASTREADA:
+            from editdoc.edicao.revisoes import registrando_formatacao
+            with registrando_formatacao(self._editor):
+                self._executores[id_]()
+            return
         self._executores[id_]()
 
     def acao(self, id_: str) -> QAction:

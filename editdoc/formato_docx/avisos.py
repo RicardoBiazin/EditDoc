@@ -33,6 +33,10 @@ resto) voltam ao arquivo: SECAO so' aparece acima do limite de secoes ou para qu
 fora do corpo; PAGINA e CABECALHO_SECAO deixaram de existir. COLUNAS e NUMERO_PAGINA sao sem
 perda (preservados, mostrados em uma coluna e em decimal).
 
+Desde a 0.1.13 as alteracoes controladas (w:ins, w:del, movimentos, formatacao, marca de
+paragrafo, tabela, secao) voltam ao arquivo e se editam: REVISAO so' aparece para a revisao que
+nao pode ser guardada (acima dos limites, data estranha, w:ins/w:del fora do lugar do esquema).
+
 Desde a 0.1.3, hiperlinks, campos (DATE, REF, TOC...), marcadores e as partes do pacote
 que o EditDoc nao edita (custom.xml, customXml, fontTable, webSettings, settings.xml) voltam
 ao arquivo: HIPERLINK, CAMPO e PARTE_PERDIDA so' aparecem para o que nao pode voltar
@@ -185,8 +189,9 @@ CATALOGO: dict[str, tuple] = {
                   f"referência no texto e {_plural(n, 'sai', 'saem')} do arquivo ao salvar.",
         True),
     "REVISAO": (
-        lambda n: f"{n} {_plural(n, 'alteração controlada foi aceita', 'alterações controladas foram aceitas')}: "
-                  "as exclusões somem ao salvar.",
+        lambda n: f"{n} {_plural(n, 'alteração controlada não pôde ser preservada', 'alterações controladas não puderam ser preservadas')} "
+                  "(acima dos limites do EditDoc ou fora do lugar no arquivo): o texto inserido "
+                  "fica como texto comum e o excluído some ao salvar.",
         True),
     "NOTA": (
         lambda n: f"{n} {_plural(n, 'nota de rodapé ou de fim não pôde ser lida', 'notas de rodapé ou de fim não puderam ser lidas')} "

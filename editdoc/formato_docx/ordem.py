@@ -49,12 +49,15 @@ ORDEM_PPR = [
     "mirrorIndents", "suppressOverlap", "jc", "textDirection", "textAlignment",
     "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange",
 ]
+#: rPr (0.1.13): o da marca de paragrafo (CT_ParaRPr) comeca com w:ins, w:del, w:moveFrom e
+#: w:moveTo; os dois terminam com w:rPrChange.
 ORDEM_RPR = [
+    "ins", "del", "moveFrom", "moveTo",
     "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
     "outline", "shadow", "emboss", "imprint", "noProof", "snapToGrid", "vanish", "webHidden",
     "color", "spacing", "w", "kern", "position", "sz", "szCs", "highlight", "u", "effect",
     "bdr", "shd", "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout",
-    "specVanish", "oMath",
+    "specVanish", "oMath", "rPrChange",
 ]
 #: Ordem de `w:lvl` (numeracao): o escritor monta lvl com estes filhos.
 ORDEM_LVL = ["start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff", "lvlText",
@@ -158,7 +161,7 @@ def validar_xml_space(raiz) -> list[str]:
     """Texto com espaco nas pontas precisa de xml:space="preserve"."""
     problemas: list[str] = []
     opacos = dentro_de_opacos(raiz)
-    for t in raiz.iter(q("t"), q("delText"), q("instrText")):
+    for t in raiz.iter(q("t"), q("delText"), q("instrText"), q("delInstrText")):
         if t in opacos:
             continue
         texto = t.text or ""
@@ -538,10 +541,13 @@ def validar_estilos(partes: dict[str, bytes], preservados=()) -> list[str]:
     return problemas
 
 
-def validar(partes: dict[str, bytes], estilos_preservados=()) -> list[str]:
+def validar(partes: dict[str, bytes], estilos_preservados=(), ids_preservados=()) -> list[str]:
     """Tudo: pacote e partes. Lista vazia quando o arquivo esta' de acordo.
 
-    `estilos_preservados`: ver `validar_estilos` (0.1.6)."""
+    `estilos_preservados`: ver `validar_estilos` (0.1.6). `ids_preservados` (0.1.13): w:id das
+    revisoes que voltam com o XML de origem (comentarios e notas que nao mudaram), que podem
+    se repetir como vieram; ver `revisoes.validar`."""
+    from editdoc.formato_docx import revisoes  # 0.1.13
     from editdoc.formato_docx import numeracao  # import tardio: numeracao usa as ordens daqui
     from editdoc.formato_docx import comentarios  # 0.1.6
     from editdoc.formato_docx import notas  # 0.1.10
@@ -549,4 +555,4 @@ def validar(partes: dict[str, bytes], estilos_preservados=()) -> list[str]:
     return (validar_pacote(partes) + validar_partes_xml(partes)
             + validar_estilos(partes, estilos_preservados)
             + numeracao.validar(partes) + comentarios.validar(partes) + notas.validar(partes)
-            + secoes.validar(partes))
+            + secoes.validar(partes) + revisoes.validar(partes, ids_preservados))

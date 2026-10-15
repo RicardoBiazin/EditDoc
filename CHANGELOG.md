@@ -1,3 +1,65 @@
+## 0.1.13 - 2026-10-15
+
+Controle de alterações: as revisões do Word (inserções, exclusões, movimentos, formatação,
+parágrafos, tabelas e seções) voltam ao arquivo, aparecem nos quatro modos do Word, se editam
+com o controle ligado e se aceitam ou rejeitam.
+
+Defeito: até a 0.1.12 o arquivo com alterações controladas perdia as revisões ao salvar (aviso
+REVISAO, com perda): as inserções viravam texto comum, as exclusões sumiam, a formatação de antes
+(w:rPrChange, w:pPrChange), as linhas e células inseridas ou excluídas e a revisão da seção saíam;
+e o EditDoc não tinha como registrar as próprias alterações.
+
+- Arquivo (`formato_docx/revisoes.py`, `modelo/revisoes.py`): `w:ins`, `w:del` (com `w:delText`
+  e `w:delInstrText`), `w:moveFrom`/`w:moveTo` com as pontas (`moveFromRangeStart/End`,
+  `moveToRangeStart/End`), `w:rPrChange`, `w:pPrChange`, a marca de parágrafo inserida ou
+  excluída, `w:numberingChange`, linhas inseridas/excluídas (`w:trPr/w:ins|w:del`),
+  `w:cellIns`/`w:cellDel`/`w:cellMerge`, `w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`,
+  `w:tblGridChange`, `w:sectPrChange`, com autor, data e `w16du:dateUtc`, no corpo, nos
+  cabeçalhos e rodapés, nas notas e nos comentários; a caixa de texto com revisão volta igual
+  (objeto preservado). `w:trackRevisions` do settings.xml lido e gravado. O que não é
+  representado volta idêntico em c14n (sem os `w:id`, que o escritor numera); a segunda gravação
+  dá os mesmos bytes. REVISAO só para a revisão que não pode ser guardada (acima dos limites:
+  100 mil revisões, 500 autores, nome de 255 caracteres; data absurda; fora do lugar do esquema).
+- `w:id`: único entre todas as revisões das partes de texto e diferente de todo id de comentário
+  e de marcador (o Word numera comentários e revisões numa sequência só; a escolha mais restrita,
+  sem documento real com revisões para conferir). Validador: id repetido, `w:t` dentro de
+  `w:del`, `w:delText` fora, movimento sem par e trecho sem fim reprovam (contraprovas na suíte).
+  A conferência compara as revisões de cada parágrafo.
+- Tela: Revisão > Exibir: **Marcação simples** (o texto final, barra vermelha na margem), **Toda
+  a marcação** (inserido sublinhado, excluído tachado, na cor de cada autor; movido em verde,
+  duplo; barra na margem), **Sem marcação** e **Original** (o texto de antes, com a formatação
+  de antes). Trocar o modo não mexe no documento, no desfazer nem no "alterado"
+  (`QSyntaxHighlighter`, decidido por spike: docs/SPIKES.md). Painel lateral "Comentários e
+  revisões" com a lista de alterações (tipo, autor, data, trecho): escolher seleciona, Aceitar e
+  Rejeitar valem para a linha.
+- Edição: **Revisão > Controlar alterações (Ctrl+Shift+E)** liga e desliga e vai ao settings.xml.
+  Ligado: digitar e colar criam inserção do autor das Opções; apagar texto de outro autor marca a
+  exclusão, apagar o próprio texto ainda não aceito remove; Enter cria a marca de parágrafo
+  inserida; negrito, fonte, alinhamento, recuo, espaçamento, listas e estilos guardam a formatação
+  de antes; substituir é exclusão mais inserção. Desligado: o texto novo não herda a revisão do
+  vizinho. **Aceitar** e **Rejeitar** (a atual ou a seleção, todas, todas de um autor),
+  **Anterior** e **Próxima**, também no menu de contexto. Um passo de desfazer em cada comando.
+- Localizar não acha o texto escondido no modo; a contagem de palavras usa o texto do modo (o
+  final em Toda a marcação); copiar leva o texto como se lê (o final em Toda a marcação, como o
+  Word); o `.txt` leva o final.
+- Impressão e PDF: **Imprimir marcações** (ligado por padrão, como no Word) segue o modo da tela e
+  agora imprime também os comentários (o realce do trecho e o texto na margem direita), que a
+  0.1.6 deixara de fora; desligado, sai o texto final, sem comentários.
+- Achado na validação com um documento gerado pelo EditDoc (controle ligado, dois autores): a
+  imagem dentro de `w:del` era relida sem a exclusão e a conferência recusava o arquivo.
+  Corrigido no leitor (imagem e objeto levam a revisão do run), com teste.
+- Desempenho: com 2000 revisões e o controle ligado, digitar 10,8 ms no p95 (gate de 16 ms);
+  trocar o modo de exibição, 268 a 277 ms (critério: menos de 1 s).
+- Limites (docs/ARQUITETURA.md): revisões de célula, de propriedades de tabela, de seção e de
+  numeração só se aceitam; excluir linha ou coluna com o controle ligado não é rastreado; no modo
+  final o parágrafo com a marca excluída e ainda com texto fica separado do de baixo; imagem e
+  objeto excluídos continuam visíveis nos modos sem marcação; as revisões de dentro de um
+  comentário ou de uma caixa de texto só são preservadas.
+- Suíte: `tests/teste_revisoes.py` (nova, 181 verificações) e dois pontos novos em
+  `teste_desempenho.py`. Reescrita, com motivo: `teste_formatacao_preservada` esperava o aviso
+  REVISAO e a saída do w:rPrChange/w:pPrChange; agora confere que eles voltam (a verificação do
+  filho fora do esquema continua igual).
+
 ## 0.1.12 - 2026-10-15
 
 Várias seções no mesmo documento: cada uma com o seu papel, as suas margens, os seus cabeçalhos

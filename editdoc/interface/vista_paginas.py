@@ -47,6 +47,7 @@ from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import propriedades as pq_props
+from editdoc.ponte_qt import revisoes as pq_revisoes
 from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.modelo.secoes import ROTULOS_TIPO
@@ -306,6 +307,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
     # Bordas de paragrafo e de trecho e preenchimento das tabulacoes (0.1.5).
     pq_props.desenhar(painter, layout.doc, ctx.clip)
+    # Alteracoes controladas (0.1.13): barra na margem e a segunda linha dos movimentos.
+    pq_revisoes.desenhar(painter, layout.doc, ctx.clip)
     if layout.secoes_baixas():
         # Tabela partida numa secao mais baixa (0.1.12): a linha de cima fecha onde o texto acaba.
         from editdoc.interface.notas import fechar_linhas_empurradas

@@ -252,6 +252,12 @@ def ler_estilos(raiz, dados: bytes, fontes_tema: dict, numeracao=None,
 
 # -- saneamento ------------------------------------------------------------------------
 
+#: Revisoes dentro de um estilo (0.1.13): continuam saindo, com FORMATACAO (as alteracoes
+#: controladas que o EditDoc trata sao as do texto; o ORDEM_RPR passou a conhecer o rPrChange).
+_REVISOES_NO_ESTILO = {"ins", "del", "moveFrom", "moveTo", "rPrChange", "pPrChange", "tblPrChange",
+                       "tcPrChange", "trPrChange", "cellIns", "cellDel", "cellMerge"}
+
+
 def sanear(raiz, listas: set | None = None) -> int:
     """Deixa pPr/rPr/tblPr/tcPr/bordas na ordem do esquema e tira o que o validador nao aceita.
 
@@ -278,7 +284,7 @@ def sanear(raiz, listas: set | None = None) -> int:
                     continue
                 if not f.tag.startswith("{%s}" % W):
                     estrangeiros.append(f)
-                elif etree.QName(f).localname in lista:
+                elif etree.QName(f).localname in lista and                         etree.QName(f).localname not in _REVISOES_NO_ESTILO:
                     conhecidos.append(f)
                 else:
                     el.remove(f)

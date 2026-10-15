@@ -15,7 +15,16 @@ PAGE e NUMPAGES (M5) viram um `Run` com `campo`; desde a 0.1.3 os outros (TOC, R
 IF...) viram marcas de inicio (com o codigo) e de fim no fluxo, com o resultado como texto
 entre elas. Hiperlinks viram `Run.link`; marcadores, marcas no fluxo. O resto do pacote
 (custom.xml, customXml, fontTable, webSettings, settings.xml...) vai para `Documento.pacote`
-(`pacote.py`). Revisoes aceitas; exclusoes tem aviso.
+(`pacote.py`). Revisoes aceitas; exclusoes tem aviso (ate' a 0.1.12).
+
+Alteracoes controladas (0.1.13, `revisoes.py`): w:ins, w:del (com w:delText e w:delInstrText),
+w:moveFrom e w:moveTo viram `Run.insercao`/`Run.exclusao` dos runs de dentro; os trechos de
+movimento (RangeStart/RangeEnd) viram marcas `MarcaMovimento`; w:rPrChange e w:pPrChange viram
+`mudanca_formato`; a marca de paragrafo inserida ou excluida, `Paragrafo.marca_insercao/
+marca_exclusao`; as revisoes de tabela, linha, celula e secao ficam nos extras (sem o w:id);
+w:tblGridChange vai para `Tabela.mudanca_grade`; o w:trackRevisions do settings.xml para
+`Documento.controlar_alteracoes`. Acima dos limites, ou fora do lugar, o comportamento antigo
+(insercao aceita, exclusao fora) com o aviso REVISAO.
 
 0.1.5: as propriedades de run, de paragrafo e de tabela que o modelo nao representa vao para
 os extras (`propriedades.py`) e voltam ao arquivo; o controle de conteudo de bloco e de
@@ -60,6 +69,7 @@ from editdoc.formato_docx import opacos
 from editdoc.formato_docx import pacote as fx_pacote
 from editdoc.formato_docx import secoes as fx_secoes
 from editdoc.formato_docx import propriedades as fx_props
+from editdoc.formato_docx import revisoes as fx_revisoes
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
 from editdoc.formato_docx.nomes import (A_NS, CP, CT_DOCUMENTO_MACRO, DC, DCT, MATH_NS, MC_NS,
@@ -73,11 +83,12 @@ from editdoc.modelo import comentarios as mod_comentarios
 from editdoc.modelo import notas as mod_notas
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Campo, Celula,
                                       Documento, Imagem, Linha, Link, MarcaCampo,
-                                      MarcaComentario, MarcaConteudo, Marcador, MarcaNota, MarcaQuebra,
-                                      Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
+                                      MarcaComentario, MarcaConteudo, Marcador, MarcaMovimento,
+                                      MarcaNota, MarcaQuebra, Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
 from editdoc.modelo import numeracao as mod_numeracao
+from editdoc.modelo import revisoes as mod_revisoes
 from editdoc.modelo import secoes as mod_secoes
 from editdoc.modelo.secoes import Secao
 from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
@@ -122,6 +133,8 @@ LIMITES_PADRAO = {
     **mod_comentarios.LIMITES,
     # Notas de rodape e de fim (0.1.10): quantas, o tamanho de cada uma e da parte.
     **mod_notas.LIMITES,
+    # Alteracoes controladas (0.1.13): revisoes e autores por documento.
+    **mod_revisoes.LIMITES,
 }
 
 #: Tipo do .docx (w:type de headerReference) -> tipo do modelo.
@@ -152,7 +165,7 @@ _JC = {"left": "esquerda", "start": "esquerda", "center": "centro",
 #: modelo nao representa vai para os extras (`propriedades.py`) e volta ao arquivo.
 
 _CONTEINERES_INLINE = {"hyperlink", "fldSimple", "smartTag", "customXml", "dir", "bdo",
-                       "moveTo", "ins"}
+                       "moveTo", "ins", "del", "moveFrom"}
 _IGNORADOS_INLINE = {"pPr", "proofErr", "permStart", "permEnd", "lastRenderedPageBreak"}
 _IGNORADOS_BLOCO = {"sectPr", "permStart", "permEnd",
                     "tblPr", "tblGrid", "sdtPr", "sdtEndPr", "tcPr", "trPr"}
@@ -272,6 +285,12 @@ class _Contexto:
         self.notas_citadas: dict[str, set[int]] = {"rodape": set(), "fim": set()}
         self.nota_tipo: str | None = None
         self.simbolo_pendente: Run | None = None
+        #: alteracoes controladas (0.1.13): a insercao e a exclusao em volta do que se le, a
+        #: contagem para os limites e os trechos de movimento abertos ((tipo, w:id) -> par)
+        self.rev_insercao = None
+        self.rev_exclusao = None
+        self.revisoes = fx_revisoes.Contagem(self.lim)
+        self.movimentos: dict[tuple, int] = {}
 
     def estilo_existe(self, sid, tipo: str) -> bool:
         """O estilo vale: existe com o tipo, ou (0.1.6) o arquivo o cita sem definir e a
@@ -336,6 +355,13 @@ def _ler_rpr(rpr, run: Run, ctx: _Contexto) -> None:
             elif sid not in (None, "DefaultParagraphFont"):
                 c.somar("ESTILO")
     run.extras = fx_props.ler_extras_rpr(rpr, fontes, c)
+    mudanca = rpr.find(q("rPrChange"))
+    if mudanca is not None:
+        # Formatacao alterada (0.1.13): a de antes, guardada sem o w:id.
+        if ctx.revisoes.aceita(mudanca.get(q("author")) or ""):
+            run.mudanca_formato = fx_revisoes.canonico(mudanca)
+        else:
+            c.somar("REVISAO")
 
 
 def _ler_ppr(ppr, ctx: _Contexto) -> dict:
@@ -376,6 +402,25 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
             out["secao"] = secao
         elif loc == "pageBreakBefore":
             out["quebra_antes"] = _onoff(f)
+        elif loc == "pPrChange":
+            # Propriedades de paragrafo alteradas (0.1.13): as de antes, sem o w:id.
+            if ctx.revisoes.aceita(f.get(q("author")) or ""):
+                out["mudanca_formato"] = fx_revisoes.canonico(f)
+            else:
+                c.somar("REVISAO")
+        elif loc == "rPr":
+            # Marca de paragrafo inserida ou excluida (0.1.13): o w:ins/w:del do rPr do pPr.
+            for marca in f:
+                if _local(marca)[0] != W or _local(marca)[1] not in ("ins", "del", "moveFrom",
+                                                                    "moveTo"):
+                    continue
+                rev = fx_revisoes.revisao_de(marca, ctx.revisoes)
+                if rev is None:
+                    c.somar("REVISAO")
+                elif rev.tipo in fx_revisoes.INSERCOES:
+                    out["marca_insercao"] = rev
+                else:
+                    out["marca_exclusao"] = rev
     extras = fx_props.ler_extras_ppr(ppr, ctx.estilo_existe, c)
     if extras is not None:
         out["extras"] = extras
@@ -416,6 +461,13 @@ def _ler_numpr(numpr, out: dict, ctx: _Contexto) -> None:
             c.somar("LISTA_NIVEL")
             ilvl = 0 if ilvl is None else min(max(ilvl, 0), mod_numeracao.NIVEIS - 1)
         out["lista_nivel"] = ilvl
+    # Revisao da numeracao (0.1.13): w:numberingChange e w:ins do numPr, guardados sem w:id.
+    revisoes = [f for f in numpr if _local(f)[0] == W and _local(f)[1] in ("numberingChange", "ins")]
+    if revisoes:
+        guardado = etree.Element(q("numPr"), nsmap={"w": W})
+        for f in revisoes:
+            guardado.append(copy.deepcopy(f))
+        out["mudanca_numeracao"] = fx_revisoes.canonico(guardado)
 
 
 #: Destino do texto que esta' no codigo de um campo (entre o begin e o separate): nao
@@ -486,6 +538,7 @@ class _Pedacos:
             run = run_de_imagem(imagem)
             # O rPr do run da imagem (borda em volta, noProof) vai junto pelos extras (0.1.5).
             run.extras = self.base.extras
+            self._revisoes(run)
             self.saida.append(run)
 
     def objeto(self, item, ctx: "_Contexto") -> None:
@@ -494,11 +547,18 @@ class _Pedacos:
             return
         run = _opaco(item, self.rpr, ctx)
         if run is not None:
+            self._revisoes(run)
             self.saida.append(run)
+
+    def _revisoes(self, run: Run) -> None:
+        """A imagem e o objeto no w:ins/w:del (0.1.13) levam a revisao do run de origem."""
+        run.insercao = self.base.insercao
+        run.exclusao = self.base.exclusao
+        run.mudanca_formato = self.base.mudanca_formato
 
 
 def _ler_run(r, ctx: _Contexto, saida: list[Run]) -> None:
-    run = Run()
+    run = Run(insercao=ctx.rev_insercao, exclusao=ctx.rev_exclusao)
     rpr = r.find(q("rPr"))
     if rpr is not None:
         _ler_rpr(rpr, run, ctx)
@@ -533,7 +593,9 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
     elif loc == "t":
         partes.append(f.text or "")
     elif loc == "delText":
-        return
+        # Texto excluido (0.1.13): so' vale dentro de w:del (o Word nao mostra o de fora).
+        if ctx.rev_exclusao is not None:
+            partes.append(f.text or "")
     elif loc == "tab":
         partes.append("\t")
     elif loc == "br":
@@ -557,7 +619,9 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
         return
     elif loc == "fldChar":
         _fld_char(f, partes, ctx)
-    elif loc == "instrText":
+    elif loc in ("instrText", "delInstrText"):
+        if loc == "delInstrText" and ctx.rev_exclusao is None:
+            return  # codigo excluido fora de w:del: o Word o ignora
         if ctx.campos and ctx.campos[-1]["fase"] == "instr":
             topo = ctx.campos[-1]
             if "rpr_codigo" not in topo:
@@ -970,11 +1034,10 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
                     "inicio" if loc == "commentRangeStart" else "fim", ident)))
         elif loc == "fldSimple":
             _campo_simples(f, ctx, saida)
-        elif loc in ("ins", "moveTo"):
-            c.somar("REVISAO")
-            _runs_em(f, ctx, saida)
-        elif loc in ("del", "moveFrom"):
-            c.somar("REVISAO")
+        elif loc in ("ins", "moveTo", "del", "moveFrom"):
+            _revisao_em(f, loc, ctx, saida)
+        elif loc in fx_revisoes.TAGS_MOVIMENTO:
+            _movimento(f, loc, ctx, saida)
         elif loc == "sdt":
             _conteudo_de_run(f, ctx, saida)
         elif loc in ("smartTag", "customXml", "dir", "bdo"):
@@ -985,6 +1048,49 @@ def _runs_em(elemento, ctx: _Contexto, saida: list[Run]) -> None:
             continue
         else:
             c.somar("ELEMENTO_DESCONHECIDO")
+
+
+def _revisao_em(f, loc: str, ctx: _Contexto, saida: list) -> None:
+    """w:ins, w:del, w:moveFrom, w:moveTo (0.1.13): os runs de dentro levam a revisao. A que
+    nao pode ser guardada (limites, data estranha) faz como ate' a 0.1.12: o inserido fica como
+    texto comum e o excluido sai, com o aviso REVISAO."""
+    rev = fx_revisoes.revisao_de(f, ctx.revisoes)
+    insercao = loc in fx_revisoes.INSERCOES
+    if rev is None:
+        ctx.coletor.somar("REVISAO")
+        if insercao:
+            _runs_em(f, ctx, saida)
+        return
+    anterior = (ctx.rev_insercao, ctx.rev_exclusao)
+    if insercao:
+        ctx.rev_insercao = rev
+    else:
+        ctx.rev_exclusao = rev
+    try:
+        _runs_em(f, ctx, saida)
+    finally:
+        ctx.rev_insercao, ctx.rev_exclusao = anterior
+
+
+def _movimento(f, loc: str, ctx: _Contexto, saida: list) -> None:
+    """Inicio ou fim do trecho de um movimento (0.1.13): marca no fluxo, ligada pelo w:id."""
+    if _destino_do_texto(ctx) is not None:
+        return  # no codigo de um campo: o Word nao o mostra
+    marca = fx_revisoes.movimento_de(f, ctx.revisoes)
+    if marca is None:
+        ctx.coletor.somar("REVISAO")
+        return
+    chave = (marca.tipo, _atr(f, "id"))
+    if not marca.fim:
+        ctx.pares += 1
+        ctx.movimentos[chave] = ctx.pares
+        marca = replace(marca, par=ctx.pares)
+    else:
+        par = ctx.movimentos.pop(chave, None)
+        if par is None:
+            return  # fim sem inicio: nada a ligar
+        marca = replace(marca, par=par)
+    saida.append(Run(marca=marca))
 
 
 def _conteudo_de_run(f, ctx: _Contexto, saida: list) -> None:
@@ -1072,6 +1178,8 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
                 if not r.eh_objeto() and "\f" in r.texto:
                     r.texto = r.texto.replace("\f", "\n")  # no lugar: a marca de campo e' o mesmo objeto
     secao = props.pop("secao", None)
+    # A marca de paragrafo (0.1.13) e' a do fim do w:p: so' a ultima parte a leva.
+    marcas_rev = {k: props.pop(k) for k in ("marca_insercao", "marca_exclusao") if k in props}
     saida = [Paragrafo(runs=[], **props)]
     for run in runs:
         if run.eh_objeto() or run.campo is not None or run.marca is not None:
@@ -1092,6 +1200,8 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
     if secao is not None:
         # A secao termina no fim do w:p: no ultimo dos paragrafos em que ele se partiu.
         saida[-1].secao = secao
+    for chave, valor in marcas_rev.items():
+        setattr(saida[-1], chave, valor)
     return saida
 
 
@@ -1135,6 +1245,14 @@ def _blocos(elemento, paras: list[Bloco], ctx: _Contexto, achatar: bool = False)
             _conteudo_de_bloco(f, paras, ctx, achatar)
         elif loc in ("del", "moveFrom"):
             c.somar("REVISAO")
+        elif loc in fx_revisoes.TAGS_MOVIMENTO:
+            # Trecho de movimento entre paragrafos (0.1.13): o fim fica no fim do paragrafo de
+            # cima; o inicio, no comeco do de baixo (como os marcadores).
+            antes = len(ctx.marcas_pendentes)
+            _movimento(f, loc, ctx, ctx.marcas_pendentes)
+            if loc.endswith("End") and len(ctx.marcas_pendentes) > antes and paras \
+                    and isinstance(paras[-1], Paragrafo):
+                paras[-1].runs.append(ctx.marcas_pendentes.pop())
         elif loc in ("bookmarkStart", "bookmarkEnd"):
             _marcador(f, loc, ctx, ctx.marcas_pendentes)
         elif loc in ("commentRangeStart", "commentRangeEnd"):
@@ -1333,9 +1451,7 @@ def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
                 tabela.margens_celula_tw = (margens["top"], margens["left"],
                                             margens["bottom"], margens["right"])
             elif loc in _TBLPR_NEUTRAS:
-                if loc == "tblPrChange":
-                    c.somar("REVISAO")
-                continue
+                continue  # tblPrChange (0.1.13): fica nos extras, sem o w:id
             # tblpPr (tabela flutuante), shd, tblCellSpacing, bidiVisual, legenda...: desde a
             # 0.1.5 vao para os extras da tabela e voltam ao arquivo.
         tabela.extras = fx_props.ler_extras_tabela(tbl_pr)
@@ -1358,6 +1474,9 @@ def _tabela(tbl, ctx: _Contexto) -> Tabela | None:
     if grade is not None:
         for g in grade.findall(q("gridCol")):
             colunas.append(_inteiro(_atr(g, "w")) or 0)
+        mudanca = grade.find(q("tblGridChange"))
+        if mudanca is not None:
+            tabela.mudanca_grade = fx_revisoes.canonico(mudanca)  # 0.1.13
 
     # -- linhas
     ctx.nivel_tabela += 1
@@ -1510,8 +1629,7 @@ def _linha(tr, tcs: list, ctx: _Contexto) -> Linha:
                     linha.altura_exata = _atr(f, "hRule") == "exact"
             elif loc in ("gridBefore", "gridAfter"):
                 c.somar("FORMATACAO")  # a grade da linha: o leitor completa com celula vazia
-            elif loc in ("ins", "del", "trPrChange"):
-                c.somar("REVISAO")
+            # ins, del e trPrChange (0.1.13): extras da linha, sem o w:id.
             # cantSplit, jc, hidden, tblCellSpacing...: extras da linha (0.1.5).
         linha.extras = fx_props.ler_extras_tabela(tr_pr)
     for tc in tcs:
@@ -1555,8 +1673,7 @@ def _celula(tc, ctx: _Contexto) -> Celula | None:
                     c.somar("FORMATACAO")  # padrao de hachura
             elif loc == "vAlign":
                 celula.alinhamento_vertical = _VALIGN.get(_atr(f, "val") or "")
-            elif loc in ("cellIns", "cellDel", "cellMerge", "tcPrChange"):
-                c.somar("REVISAO")
+            # cellIns, cellDel, cellMerge e tcPrChange (0.1.13): extras da celula, sem o w:id.
             # tcMar, textDirection, noWrap...: extras da celula (0.1.5).
         celula.extras = fx_props.ler_extras_tabela(tc_pr)
     _blocos(tc, celula.blocos, ctx)
@@ -2176,6 +2293,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         fontes_tema: dict = {}
         tema: bytes | None = None
         pares_impares = False
+        controlar = False
         notas_config: dict = {}
         relacoes = relacoes_de(alvo_doc)
         for tipo, alvo, externo in relacoes.values():
@@ -2203,6 +2321,8 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                 tab_padrao = _tab_padrao(config)
                 pares = config.find(q("evenAndOddHeaders"))
                 pares_impares = pares is not None and _onoff(pares)
+                controle = config.find(q("trackRevisions"))
+                controlar = controle is not None and _onoff(controle)
                 # Notas (0.1.10): as propriedades do documento inteiro.
                 for tipo_nota in mod_notas.TIPOS:
                     pr, _descartado = fx_notas.ler_propriedades(
@@ -2314,6 +2434,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                                            original=final.original, chaves=final.chaves,
                                            colunas=final.colunas), **meta))
     doc.notas = notas
+    doc.controlar_alteracoes = controlar
     mod_numeracao.tipos_dos_paragrafos(doc)
     return doc, coletor.avisos()
 

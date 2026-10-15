@@ -21,8 +21,14 @@ Tres classes de filho:
 w:szCs e' o caso especial: so' vai para os extras quando difere do w:sz, e entao o escritor
 nao gera o seu.
 
-Revisoes de formatacao (w:rPrChange, w:pPrChange, w:ins/w:del na marca de paragrafo) saem
-com o aviso REVISAO, como as outras revisoes (aceitas). Filho w: que o esquema nao tem sai
+Revisoes de formatacao (0.1.13): o w:rPrChange do run e o w:pPrChange do paragrafo sao lidos a
+parte (`formato_docx/revisoes.py`, `Run.mudanca_formato`, `Paragrafo.mudanca_formato`); o
+w:ins/w:del da marca de paragrafo vira `Paragrafo.marca_insercao/marca_exclusao`; o w:rPrChange
+da marca de paragrafo fica nos extras (sem o w:id), e as revisoes de tabela, linha e celula
+(w:tblPrChange, w:trPrChange, w:tcPrChange, w:ins/w:del da linha, w:cellIns/w:cellDel/
+w:cellMerge) tambem, e voltam. Ate' a 0.1.12 tudo isso saia com o aviso REVISAO; hoje so' a
+revisao fora do lugar do esquema (w:ins no rPr de um run) sai, com REVISAO. Filho w: que o
+esquema nao tem sai
 com FORMATACAO (perda de verdade). Filho de outro namespace so' fica se for das extensoes do
 Word (w14, w15, w16...): a raiz da parte gravada declara o prefixo e o poe no mc:Ignorable.
 
@@ -68,8 +74,11 @@ _PPR_DETALHES = {
     "ind": (("recuo_esquerdo_tw", "recuo_primeira_linha_tw", "recuo_direito_tw"), ("ind",)),
     "spacing": (("espaco_antes_tw", "espaco_depois_tw", "espacamento_linha_pct"), ("spacing",)),
 }
-#: Revisoes de formatacao: saem com REVISAO.
+#: Revisoes (0.1.13): rPrChange e pPrChange sao lidos a parte (`formato_docx/revisoes.py`); a
+#: marca de paragrafo tem w:ins/w:del/w:moveFrom/w:moveTo (lidos a parte) e w:rPrChange (fica
+#: nos extras). Fora desses lugares a revisao sai, com REVISAO.
 _REVISOES = {"rPrChange", "pPrChange", "ins", "del", "moveFrom", "moveTo"}
+_REVISOES_DA_MARCA = {"ins", "del", "moveFrom", "moveTo"}
 #: O que o leitor trata a parte (quebra de secao no paragrafo).
 _PPR_A_PARTE = {"sectPr"}
 
@@ -171,16 +180,22 @@ def _ordenar(elemento, indice: dict) -> None:
         elemento.append(f)
 
 
-def _sanear_rpr(rpr, estilo_existe, coletor=None) -> None:
+def _sanear_rpr(rpr, estilo_existe, coletor=None, marca: bool = False) -> None:
     """rPr de dentro (marca de paragrafo, sdtPr): sem revisao, sem filho desconhecido, sem
-    estilo inexistente, na ordem do esquema."""
+    estilo inexistente, na ordem do esquema. `marca` (0.1.13): o rPr da marca de paragrafo,
+    cujo w:ins/w:del o leitor ja' leu (sai daqui sem aviso) e cujo w:rPrChange fica (sem w:id)."""
+    from editdoc.formato_docx import revisoes as fx_revisoes
     revisao = False
     for f in list(rpr):
         ns, loc = _local(f)
         if not loc:
             rpr.remove(f)
             continue
-        if ns == W and loc in _REVISOES:
+        if marca and ns == W and loc in _REVISOES_DA_MARCA:
+            rpr.remove(f)
+        elif marca and ns == W and loc == "rPrChange":
+            fx_revisoes.sem_ids(f)
+        elif ns == W and loc in _REVISOES:
             revisao = True
             rpr.remove(f)
         elif ns == W and loc not in _INDICE_RPR:
@@ -394,8 +409,8 @@ def ler_extras_rpr(rpr, fontes_tema: dict, coletor=None) -> str | None:
             if ns in _URIS_EXTENSOES:
                 guardar.append(f)
             continue  # outro namespace qualquer: o Word tambem o ignoraria
-        if loc in _RPR_REPRESENTADOS:
-            continue
+        if loc in _RPR_REPRESENTADOS or loc == "rPrChange":
+            continue  # rPrChange: Run.mudanca_formato (0.1.13), lido pelo leitor
         if loc in _REVISOES:
             revisao = True
             continue
@@ -433,8 +448,8 @@ def ler_extras_ppr(ppr, estilo_existe=None, coletor=None) -> str | None:
             if ns in _URIS_EXTENSOES:
                 guardar.append(f)
             continue
-        if loc in _PPR_REPRESENTADOS or loc in _PPR_A_PARTE:
-            continue
+        if loc in _PPR_REPRESENTADOS or loc in _PPR_A_PARTE or loc == "pPrChange":
+            continue  # pPrChange: Paragrafo.mudanca_formato (0.1.13), lido pelo leitor
         if loc in _REVISOES:
             revisao = True
             continue
@@ -452,7 +467,7 @@ def ler_extras_ppr(ppr, estilo_existe=None, coletor=None) -> str | None:
             continue
         if loc == "rPr":
             marca = copy.deepcopy(f)
-            _sanear_rpr(marca, estilo_existe, coletor)
+            _sanear_rpr(marca, estilo_existe, coletor, marca=True)
             if len(marca):
                 guardar.append(marca)
             continue
@@ -555,19 +570,26 @@ _TBLPR_FORA = {"tblStyle", "tblW", "jc", "tblInd", "tblBorders", "tblLayout", "t
 _TRPR_FORA = {"tblHeader", "trHeight", "gridBefore", "gridAfter", "wBefore", "wAfter"}
 _TCPR_FORA = {"tcW", "gridSpan", "hMerge", "vMerge", "tcBorders", "shd", "vAlign"}
 _TABELA = {"tblPr": _TBLPR_FORA, "trPr": _TRPR_FORA, "tcPr": _TCPR_FORA}
+#: Revisoes de tabela (0.1.13): ficam nos extras, sem o w:id (o escritor numera), e voltam.
 _REVISOES_TABELA = {"tblPrChange", "trPrChange", "tcPrChange", "ins", "del", "cellIns", "cellDel",
                     "cellMerge"}
 
 
 def ler_extras_tabela(el, coletor=None) -> str | None:
     """Os filhos de tblPr, trPr ou tcPr que o modelo nao representa (o leitor ja' avisou do
-    que nao volta: grade alterada, revisao)."""
+    que nao volta: grade alterada). Desde a 0.1.13 as revisoes ficam (sem o w:id)."""
+    from editdoc.formato_docx import revisoes as fx_revisoes
     if el is None:
         return None
     nome = _local(el)[1]
     fora = _TABELA[nome]
-    guardar = [f for f in el if _local(f)[0] == W and _local(f)[1] not in fora
-               and _local(f)[1] not in _REVISOES_TABELA]
+    guardar = []
+    for f in el:
+        if _local(f)[0] != W or _local(f)[1] in fora:
+            continue
+        if _local(f)[1] in _REVISOES_TABELA:
+            f = fx_revisoes.sem_ids(copy.deepcopy(f))
+        guardar.append(f)
     return canonico(nome, guardar)
 
 
@@ -584,6 +606,14 @@ def montar_extras_tabela(el, extras: str | None) -> None:
     ordem = ORDENS.get(_local(el)[1])
     if ordem is not None:
         _ordenar(el, {n: i for i, n in enumerate(ordem)})
+    elif _local(el)[1] == "trPr":
+        # CT_TrPr: as propriedades em qualquer ordem, depois w:ins, w:del e w:trPrChange (0.1.13).
+        fim = {"ins": 0, "del": 1, "trPrChange": 2}
+        filhos_el = list(el)
+        finais = sorted((f for f in filhos_el if _local(f)[1] in fim), key=lambda f: fim[_local(f)[1]])
+        for f in finais:
+            el.remove(f)
+            el.append(f)
 
 
 # -- controle de conteudo -------------------------------------------------------------------

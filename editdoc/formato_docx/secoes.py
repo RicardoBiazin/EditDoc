@@ -16,7 +16,8 @@ Ao gravar, o escritor parte do w:sectPr de origem (`Secao.original`, a ordem e o
 que o arquivo tinha) e so' troca o que o modelo mudou: sem mudanca, a forma canonica sai igual.
 O w:footnotePr/w:endnotePr da ULTIMA secao continua com as notas (0.1.10, `formato_docx/notas`).
 
-Fora do esquema: w:sectPrChange (revisao) sai com REVISAO; filho w: desconhecido sai com
+Revisao: desde a 0.1.13 o w:sectPrChange fica nos extras (sem o w:id) e volta. Filho w:
+desconhecido sai com
 FORMATACAO; filho de outro namespace so' fica se for extensao do Word (w14, w15...). Arquivo
 hostil: mais de SECOES_MAXIMAS secoes (as que passam viram uma so', aviso SECAO) e w:cols com
 mais de COLUNAS_MAXIMAS colunas (as colunas saem, aviso FORMATACAO).
@@ -177,8 +178,10 @@ def _limpar(sect, coletor, final: bool) -> None:
             continue
         if ns == W:
             if loc == "sectPrChange":
-                coletor.somar("REVISAO")
-                sect.remove(f)
+                # Revisao das propriedades da secao (0.1.13): fica, sem o w:id (o escritor
+                # numera), e volta ao arquivo.
+                from editdoc.formato_docx import revisoes as fx_revisoes
+                fx_revisoes.sem_ids(f)
             elif loc not in ORDEM_SECTPR:
                 coletor.somar("FORMATACAO")
                 sect.remove(f)
@@ -410,7 +413,9 @@ def validar(partes: dict[str, bytes]) -> list[str]:
     rels_nome = caminho_dos_rels("word/document.xml")
     relacoes = _relacoes(partes[rels_nome], "word") if rels_nome in partes else {}
     problemas: list[str] = []
-    secoes = list(raiz.iter(q("sectPr")))
+    # O w:sectPr de dentro do w:sectPrChange (0.1.13) e' a secao de antes, nao uma secao.
+    secoes = [x for x in raiz.iter(q("sectPr"))
+              if x.getparent() is None or x.getparent().tag != q("sectPrChange")]
     if len(secoes) > SECOES_MAXIMAS + 1:  # as quebras e a ultima secao
         problemas.append(f"secoes demais: {len(secoes)} (maximo {SECOES_MAXIMAS + 1})")
     for sect in secoes:

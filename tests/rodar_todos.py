@@ -116,6 +116,8 @@ SUITES = [
      "0.1.10: notas de rodape e de fim: c14n, numeracao, nota na pagina da referencia, edicao, PDF"),
     ("teste_secoes.py",
      "0.1.12: varias secoes: sectPr c14n, papel por folha, cabecalho herdado, PAGE, quebras, desfazer, PDF"),
+    ("teste_revisoes.py",
+     "0.1.13: controle de alteracoes: c14n, validador, 4 modos, aceitar/rejeitar, edicao rastreada, PDF"),
     ("teste_galeria.py",
      "galeria e painel de estilos acompanham o cursor; faixa final sem corte em todas as abas"),
     ("teste_exibir.py",

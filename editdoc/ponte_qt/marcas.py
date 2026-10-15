@@ -32,7 +32,7 @@ from PySide6.QtGui import (QColor, QFontMetricsF, QPen, QPyTextObject, QTextChar
 
 from editdoc import log_interno
 from editdoc.modelo.documento import (CARACTERE_OBJETO, Campo, MarcaCampo, MarcaComentario,
-                                      MarcaConteudo, Marcador)
+                                      MarcaConteudo, Marcador, MarcaMovimento)
 from editdoc.ponte_qt.campos import fonte_de
 
 log = log_interno.obter(__name__)
@@ -98,6 +98,12 @@ def _campo_de_dict(dado, nivel: int = 0) -> Campo | None:
 
 
 def json_da_marca(marca) -> str:
+    if isinstance(marca, MarcaMovimento):
+        # Trecho de movimento (0.1.13): sem largura, como o marcador.
+        return json.dumps({"movimento": marca.tipo, "fim": marca.fim, "nome": marca.nome,
+                           "autor": marca.autor, "data": marca.data, "utc": marca.data_utc,
+                           "outros": [list(x) for x in marca.outros], "par": marca.par},
+                          ensure_ascii=False)
     if isinstance(marca, MarcaComentario):
         return json.dumps({"comentario": marca.tipo, "id": int(marca.id)})
     if isinstance(marca, Marcador):
@@ -123,6 +129,14 @@ def marca_de_json(texto):
         if isinstance(ident, int) and not isinstance(ident, bool):
             return MarcaComentario(dado["comentario"], ident)
         return None
+    if dado.get("movimento") in ("de", "para"):
+        textos = {k: dado.get(k) if isinstance(dado.get(k), str) else None
+                  for k in ("nome", "autor", "data", "utc")}
+        outros = tuple((str(x[0]), str(x[1])) for x in dado.get("outros") or []
+                       if isinstance(x, list) and len(x) == 2)
+        par = dado.get("par") if isinstance(dado.get("par"), int) else 0
+        return MarcaMovimento(dado["movimento"], dado.get("fim") is True, textos["nome"] or "",
+                              textos["autor"] or "", textos["data"], textos["utc"], outros, par)
     if dado.get("marcador") in ("inicio", "fim") and isinstance(dado.get("nome"), str) \
             and dado["nome"]:
         return Marcador(dado["marcador"], dado["nome"])
@@ -163,7 +177,8 @@ def formato_de_marca(base: QTextCharFormat, marca) -> QTextCharFormat:
     for prop in (QTextFormat.Property.ImageName, QTextFormat.Property.ImageWidth,
                  QTextFormat.Property.ImageHeight, QTextFormat.Property.TextToolTip):
         cf.clearProperty(prop)
-    cf.setObjectType(TIPO_MARCADOR if isinstance(marca, (Marcador, MarcaComentario))
+    cf.setObjectType(TIPO_MARCADOR if isinstance(marca, (Marcador, MarcaComentario,
+                                                          MarcaMovimento))
                      else TIPO_MARCA_CAMPO)
     cf.setProperty(PROP_MARCA, json_da_marca(marca))
     return cf
