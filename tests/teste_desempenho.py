@@ -149,6 +149,42 @@ def documento_com_revisoes(paragrafos: int = 400, por_paragrafo: int = 5) -> byt
     return fx.bytes_de(doc)
 
 
+#: As tabelas do arquivo real de duas secoes da 0.1.12 (fora do repositorio), em linhas x colunas:
+#: 16 tabelas, 362 celulas, com a linha de cabecalho repetida.
+FORMAS_DO_PLANO = ((3, 4), (10, 3), (11, 2), (1, 1), (1, 1), (16, 4), (6, 3), (10, 4), (1, 1),
+                   (12, 4), (4, 4), (4, 2), (9, 4), (8, 2), (12, 2), (5, 5))
+
+
+def documento_plano() -> bytes:
+    """0.1.14: o equivalente sintetico do "plano" real que passava do gate (48,6 ms na 0.1.11): 16
+    tabelas com as formas dele (362 celulas de ~35 caracteres, cabecalho repetido, bordas de
+    grade), ~150 paragrafos de corpo com 89 itens de lista numerada entre elas. O custo que o Qt
+    tem a cada tecla e' refazer TODAS as tabelas que vem depois do ponto editado (ver
+    docs/SPIKES.md, 0.1.14)."""
+    from editdoc.modelo.documento import Borda, BordasTabela, Linha, Tabela
+    grade = BordasTabela(sup=Borda(), inf=Borda(), esq=Borda(), dir=Borda(), horizontal=Borda(),
+                         vertical=Borda())
+    pars: list = [Paragrafo(runs=[Run("Plano de migração do sistema", negrito=True,
+                                      tamanho_meio_pt=32)])]
+    item = 0
+    for t, (linhas, colunas) in enumerate(FORMAS_DO_PLANO):
+        pars.append(Paragrafo(runs=[Run(f"Etapa {t + 1}. Descrição da etapa, com os responsáveis "
+                                        "e o prazo de cada entrega prevista no cronograma.")]))
+        for _ in range(6 if t % 3 else 5):
+            item += 1
+            pars.append(Paragrafo(runs=[Run(f"Item {item}: atividade de validação com o setor "
+                                            "responsável e registro no controle.")],
+                                  numeracao="numeracao"))
+        w = 9638 // colunas
+        pars.append(Tabela(colunas_tw=[w] * colunas, bordas=grade, linhas=[
+            Linha(cabecalho=(r == 0 and linhas > 1), celulas=[
+                fx._cel(f"Célula {r}.{c}: conteúdo do plano"[:35]) for c in range(colunas)])
+            for r in range(linhas)]))
+        pars.append(Paragrafo(runs=[Run("Observação sobre a tabela acima, com o critério de "
+                                        "aceite e a referência ao anexo.")]))
+    return fx.bytes_de(Documento(paragrafos=pars))
+
+
 def _painel(docx: bytes):
     painel = tf._painel()
     tf._carregar(painel, docx)
@@ -171,6 +207,21 @@ def _ponto(painel, nome: str) -> int:
     if nome == "capa":
         b = doc.firstBlock()
         return b.position() + b.length() - 1
+    if nome.startswith("plano_"):
+        # 0.1.14: a 1/3 do documento, numa celula a 1/2 e num item de lista a 1/4.
+        from PySide6.QtGui import QTextCursor
+        fracao = {"plano_terco": 3, "plano_celula": 2, "plano_item": 4}[nome]
+        b = doc.findBlockByNumber(doc.blockCount() // fracao)
+        while b.isValid():
+            na_tabela = QTextCursor(b).currentTable() is not None
+            if nome == "plano_terco" and len(b.text()) > 10:
+                break
+            if nome == "plano_celula" and na_tabela and len(b.text()) > 10:
+                break
+            if nome == "plano_item" and not na_tabela and b.text().startswith("Item "):
+                break
+            b = b.next()
+        return b.position() + 6
     b = doc.firstBlock()
     alvo = "Seção 4" if nome == "sumario" else "Parágrafo 120."
     while b.isValid() and alvo not in b.text():
@@ -461,6 +512,111 @@ def testar_cache_igual() -> None:
     _fechar(painel)
 
 
+# -- o plano: tabelas e listas (0.1.14) -------------------------------------------------------
+
+def _celula_que_atravessa_pagina(painel) -> int:
+    """Posicao numa celula do meio de uma tabela que atravessa a divisa de paginas."""
+    from PySide6.QtGui import QTextTable
+    doc = painel.documento_corpo()
+    dl = doc.documentLayout()
+    hb = painel.layout_pag.hb
+    for quadro in doc.rootFrame().childFrames():
+        if isinstance(quadro, QTextTable) and quadro.rows() >= 8:
+            r = dl.frameBoundingRect(quadro)
+            if int(r.top() // hb) != int(r.bottom() // hb):
+                return quadro.cellAt(quadro.rows() // 2, 1).firstPosition() + 4
+    return -1
+
+
+def testar_plano() -> None:
+    secao("0.1.14: o plano (16 tabelas, 89 itens de lista): a celula e o item refazem so' o que "
+          "mudou")
+    from editdoc.interface import vista_paginas as vp
+    from editdoc.ponte_qt import listas as pq_listas
+    painel = _painel(documento_plano())
+    try:
+        pos = _celula_que_atravessa_pagina(painel)
+        checa(pos > 0, "a fixture tem uma tabela que atravessa a divisa de paginas")
+        celula = _tiles_por_tecla(painel, pos)
+        # Painel de 1000 px: 4 tiles por fileira. A celula ocupa uma ou duas colunas de tiles.
+        checa(celula <= 3.0, f"digitar numa celula: {celula:.1f} tiles por tecla (a 0.1.13 tirava "
+                             "a tabela inteira do cache)")
+        original = vp.VistaPaginas._faixa_na_tabela
+        vp.VistaPaginas._faixa_na_tabela = lambda self, *a: None
+        try:
+            sabotado = _tiles_por_tecla(painel, pos)
+        finally:
+            vp.VistaPaginas._faixa_na_tabela = original
+        checa(sabotado > celula + 4, f"contraprova: com a tabela inteira, {sabotado:.1f} tiles por "
+                                     "tecla")
+        # A tela com cache e' igual a' refeita: letra, palavra que quebra a linha da celula,
+        # Backspace, Enter na celula (a linha da tabela cresce) e Backspace de volta.
+        from PySide6.QtCore import Qt
+        K = Qt.Key
+        teclas = ([K.Key_A] * 4 + [K.Key_Space] + [K.Key_B] * 40 + [K.Key_Backspace] * 8
+                  + [K.Key_Return] + [K.Key_C] * 2 + [K.Key_Backspace] * 3)
+        ruins = _sequencia_confere(painel, pos, teclas)
+        checa_igual(ruins, 0, f"celula: {len(teclas)} teclas sem nada velho na tela")
+        # Contraprova: a faixa horizontal errada (fora da celula) deixa a tela velha.
+        original_x = vp.VistaPaginas._colunas_da_celula
+        vp.VistaPaginas._colunas_da_celula = lambda self, p: (-5000.0, -4000.0)
+        try:
+            sabotado = _sequencia_confere(painel, pos, teclas[:6])
+        finally:
+            vp.VistaPaginas._colunas_da_celula = original_x
+        checa(sabotado > 0, f"contraprova: fora da celula, {sabotado} teclas deixam a tela velha")
+        # Listas: digitar num item nao recalcula os numeros, e cada tile nao pede mais o
+        # retangulo de todos os itens (as faixas dos itens sao feitas uma vez por tecla).
+        doc = painel.documento_corpo()
+        numerador = pq_listas.numerador_de(doc)
+        checa(len(numerador.rotulos()) >= 80, f"a fixture tem os itens de lista "
+                                              f"({len(numerador.rotulos())})")
+        item = _ponto(painel, "plano_item")
+        versao = numerador.versao
+        feitas = [0]
+        original_faixas = pq_listas.Numerador.faixas
+
+        def contar(self, d):
+            antes = self._faixas
+            resultado = original_faixas(self, d)
+            if self._faixas is not antes:
+                feitas[0] += 1
+            return resultado
+
+        pq_listas.Numerador.faixas = contar
+        try:
+            tiles = _tiles_por_tecla(painel, item)
+            calculos = feitas[0]
+            checa(numerador.versao == versao, f"digitar no item nao recalcula os numeros "
+                                              f"(mudancas de estrutura: {numerador.versao - versao})")
+            # Uma vez por pintura: as 8 teclas, a de antes, a ida e a volta do desfazer (11).
+            checa(calculos <= 8 + 3, f"faixas dos itens refeitas {calculos} vezes em 11 pinturas "
+                                     f"({tiles:.1f} tiles por tecla)")
+            # Contraprova: sem o cache (a geracao do layout sobe a cada pedido), refaz por tile.
+            feitas[0] = 0
+            pq_listas.Numerador._layout_mudou(numerador)
+            original_rotulos = pq_listas.desenhar_rotulos
+
+            def sem_cache(painter, d, recorte):
+                pq_listas.Numerador._layout_mudou(pq_listas.numerador_de(d))
+                return original_rotulos(painter, d, recorte)
+
+            pq_listas.desenhar_rotulos = sem_cache
+            vp.pq_listas.desenhar_rotulos = sem_cache
+            try:
+                _tiles_por_tecla(painel, item)
+            finally:
+                pq_listas.desenhar_rotulos = original_rotulos
+                vp.pq_listas.desenhar_rotulos = original_rotulos
+            checa(feitas[0] > calculos + 8, f"contraprova: sem o cache, {feitas[0]} vezes")
+        finally:
+            pq_listas.Numerador.faixas = original_faixas
+    finally:
+        _fechar(painel)
+        painel.deleteLater()
+        drenar_eventos()
+
+
 # -- objetos e faixas pintados uma vez --------------------------------------------------------
 
 def testar_caches_de_pintura() -> None:
@@ -723,6 +879,69 @@ def testar_p95() -> None:
                       f"{fator}x o simples ({s:.1f} ms), com teto de {TETO_MS:.0f} ms")
 
 
+def _p95_em_partes(painel, pos: int, teclas: int = 80) -> tuple[float, float, float]:
+    """(p95 da tecla com a pintura, p95 so' da tecla, p95 so' da pintura), em ms."""
+    _ir(painel, pos)
+    for _ in range(5):
+        _tecla(painel)
+        painel.viewport().grab()
+    total, tecla, pintura = [], [], []
+    for _ in range(teclas):
+        t0 = time.perf_counter()
+        _tecla(painel)
+        t1 = time.perf_counter()
+        painel.viewport().grab()
+        t2 = time.perf_counter()
+        total.append((t2 - t0) * 1000)
+        tecla.append((t1 - t0) * 1000)
+        pintura.append((t2 - t1) * 1000)
+    for _ in range(teclas + 5):
+        painel.undo()
+    painel.viewport().grab()
+    return _p95(total), _p95(tecla), _p95(pintura)
+
+
+#: Folga da PINTURA do plano sobre o p95 inteiro do simples (0.1.14). Cada tile do plano tem tabela
+#: e numeros de lista (medido: 0,8 ms por tile parado, ~3 ms carregado, contra ~0,4 do simples) e a
+#: linha do item da fixture cruza uma fileira de tiles (8 por tecla): medido carregado, 24 a 28 ms
+#: contra 9,5 a 11 do simples. Com a tabela inteira saindo do cache (a 0.1.13), a celula refaz 12
+#: a 20 tiles e passa do limite (contraprova sem relogio em `testar_plano`).
+FATOR_DA_PINTURA_DO_PLANO = 3.5
+
+
+def testar_p95_do_plano() -> None:
+    secao("0.1.14: p95 no plano (1/3, celula, item): a pintura no gate; a tecla e' do Qt")
+    simples = documento_simples()
+    plano = documento_plano()
+
+    def medir(docx: bytes, nome: str):
+        painel = _painel(docx)
+        try:
+            return _p95_em_partes(painel, _ponto(painel, nome))
+        finally:
+            _fechar(painel)
+            painel.deleteLater()
+            drenar_eventos()
+
+    for nome in ("plano_terco", "plano_celula", "plano_item"):
+        pinturas, refs = [], []
+        # Uma rodada; mais duas so' se passar do limite (o teto de 180 s da suite).
+        passou = False
+        for _rodada in range(1 + RODADAS_EXTRA):
+            refs.append(medir(simples, "corpo")[0])
+            total, tecla, pintura = medir(plano, nome)
+            pinturas.append(pintura)
+            print(f"         {nome}: p95 {total:.1f} ms (tecla {tecla:.1f}, pintura {pintura:.1f}); "
+                  f"simples {refs[-1]:.1f}")
+            # A tecla e' o insertText do Qt, que refaz todas as tabelas depois do ponto editado
+            # (ver docs/SPIKES.md, 0.1.14): fica fora do criterio. A pintura e' do EditDoc.
+            passou, m, s, limite = avaliar(pinturas, refs, FATOR_DA_PINTURA_DO_PLANO)
+            if passou:
+                break
+        checa(passou, f"{nome}: pintura p95 mediana {m:.1f} ms no gate ou ate' "
+                      f"{FATOR_DA_PINTURA_DO_PLANO}x o simples ({s:.1f} ms; limite {limite:.1f})")
+
+
 def testar_modos_com_2000_revisoes() -> None:
     secao("0.1.13: 2000 revisoes: trocar o modo de exibicao em menos de 1 s, e a lista")
     from editdoc.edicao import revisoes as ed
@@ -763,11 +982,13 @@ def main() -> int:
     # documento simples vai de 5 para 10 ms depois delas).
     testar_criterio_do_p95()
     testar_p95()
+    testar_p95_do_plano()
     testar_modos_com_2000_revisoes()
     testar_conferencia()
     testar_tiles()
     testar_antes_da_capa()
     testar_cache_igual()
+    testar_plano()
     testar_caches_de_pintura()
     testar_pontilhado_e_marcas()
     return resumir()

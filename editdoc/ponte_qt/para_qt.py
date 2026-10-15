@@ -479,7 +479,20 @@ def inserir_tabela_modelo(cursor: QTextCursor, tabela: Tabela,
         cur = cel_qt.firstCursorPosition()
         _inserir_blocos(cur, celula.blocos, res)
     aplicar_formatos_das_celulas(qt)
+    if _tabela_revisada(tabela):
+        # 0.1.14: tabela so' com revisao de propriedades, de linha ou de celula (sem texto
+        # revisado) tambem entra na lista de alteracoes.
+        cursor.document()._tem_revisoes = True
     return qt
+
+
+def _tabela_revisada(tabela: Tabela) -> bool:
+    from editdoc.formato_docx import revisoes as fx_revisoes
+    if getattr(tabela, "mudanca_grade", None) or fx_revisoes.tem_revisao(tabela.extras):
+        return True
+    return any(fx_revisoes.tem_revisao(linha.extras)
+               or any(fx_revisoes.tem_revisao(c.extras) for c in linha.celulas)
+               for linha in tabela.linhas)
 
 
 def preencher_blocos(documento_qt: QTextDocument, blocos: list, estilos=None) -> None:
@@ -539,6 +552,9 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     # Notas (0.1.10): o numero de cada referencia antes do primeiro plano da pagina.
     documento_qt._numeros_notas = pq_notas.numeros_continuos(documento_qt)
     concluir_listas(documento_qt)
+    if any("sectPrChange" in ((x.original or "") + (x.extras or ""))
+           for x in [final] + list(pq_secoes.registro(documento_qt).values())):
+        documento_qt._tem_revisoes = True  # 0.1.14: so' a revisao da secao tambem conta
     if pq_revisoes.tem_revisoes(documento_qt):
         pq_revisoes.marcar_revisado(documento_qt)  # 0.1.13: o realce do modo de exibicao
 

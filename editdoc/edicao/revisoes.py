@@ -14,8 +14,14 @@ Regras do Word que valem aqui:
   rejeitar tira a marca. A marca de paragrafo: aceitar a excluida (ou rejeitar a inserida) junta
   o paragrafo ao seguinte. A formatacao: aceitar esquece a de antes; rejeitar a devolve. O
   movimento: as duas pontas juntas. Linha de tabela inserida/excluida: aceitar ou rejeitar
-  remove a linha ou tira a marca. As revisoes de celula, de propriedades de tabela e de secao so'
-  se aceitam (rejeitar exigiria refazer a grade; ficam, e a mensagem diz).
+  remove a linha ou tira a marca. Desde a 0.1.14 rejeitar tambem as propriedades de antes da
+  tabela (w:tblPrChange, w:tblGridChange), da linha (w:trPrChange), da celula (w:tcPrChange), da
+  secao (w:sectPrChange) e a numeracao inserida (w:ins no w:numPr); a celula inserida (rejeitar)
+  ou excluida (aceitar) sai quando a coluna ou a linha inteira tem a mesma marca. Ficam, com a
+  mensagem: a celula sozinha (a grade ficaria torta), desfazer a mescla (w:cellMerge), o
+  w:tcPrChange que muda a mescla e o w:numberingChange (so' guarda o texto do numero de antes).
+- excluir linha ou coluna de tabela com o controle ligado (0.1.14, edicao/tabelas.py): a linha
+  ganha w:del no w:trPr e as celulas da coluna w:cellDel, e o texto delas fica excluido.
 
 Tudo e' um passo de desfazer (um bloco de edicao no documento). O que muda o texto passa pelo
 painel (`PainelDocumento._inserir`, `_apagar`, `_quebrar`, `paste`, `_remover_selecao`), que
@@ -47,7 +53,8 @@ Manter = QTextCursor.MoveMode.KeepAnchor
 _SEPARADOR = " "
 #: Caracteres de quadro (inicio e fim de celula/tabela): o controle nao os apaga.
 _QUADRO = ("﷐", "﷑")
-#: Revisoes que so' se aceitam (ver o topo).
+#: Tipos que podem ficar sem resolver ao rejeitar (ver o topo; desde a 0.1.14 so' casos de grade e
+#: o w:numberingChange).
 SO_ACEITAR = ("celula", "tabela", "secao", "numeracao")
 
 
@@ -315,6 +322,98 @@ def depois_do_enter(editor, cursor: QTextCursor, marca_original: tuple) -> None:
         _bloco_formato(doc, bloco, bf)
     if ligado:
         pq.marcar_revisado(doc)
+
+
+# -- recortar e colar: movimento (0.1.14) ----------------------------------------------------
+
+def lembrar_recorte(editor, cursor: QTextCursor) -> None:
+    """Antes de recortar com o controle ligado: guarda o trecho (texto e as pontas, que andam com
+    a edicao). Colar o mesmo texto em outro lugar do mesmo documento vira movimento. So' trecho
+    dentro de um paragrafo, fora de tabela e sem marcas (o caso que nao exige mover marca de
+    paragrafo nem pontas de outra coisa)."""
+    doc = cursor.document()
+    doc._recorte_movel = None
+    if not controle_ligado(editor) or not cursor.hasSelection():
+        return
+    a, b = cursor.selectionStart(), cursor.selectionEnd()
+    if doc.findBlock(a) != doc.findBlock(b) or QTextCursor(doc.findBlock(a)).currentTable() \
+            is not None:
+        return
+    texto = cursor.selectedText()
+    if not texto or any(_eh_marca_sem_largura(cf) or pq.tem_revisao(cf)
+                        for _x, _y, cf in _fragmentos(doc, a, b)):
+        return
+    inicio = QTextCursor(doc)
+    inicio.setPosition(a)
+    fim = QTextCursor(doc)
+    fim.setPosition(b)
+    fim.setKeepPositionOnInsert(True)
+    doc._recorte_movel = (inicio, fim, texto, pq.json_de(nova(editor, "del")))
+
+
+def colar_como_movimento(editor, doc: QTextDocument, a: int, b: int) -> bool:
+    """Depois de colar [a, b) (ja' marcado como insercao): se o colado e' o trecho recortado
+    (que ficou marcado como excluido, todo do autor), a origem vira w:moveFrom e o colado
+    w:moveTo, com as pontas (moveFromRangeStart/End, moveToRangeStart/End) e um nome. Senao,
+    fica como esta' (exclusao e insercao). Dentro do bloco de edicao do colar."""
+    guardado = getattr(doc, "_recorte_movel", None)
+    doc._recorte_movel = None
+    if guardado is None or not controle_ligado(editor) or b <= a:
+        return False
+    inicio, fim, texto, rev_json = guardado
+    x0, x1 = inicio.position(), fim.position()
+    if x1 - x0 != len(texto) or x1 - x0 != b - a or (x0 < b and a < x1):
+        return False
+    c = QTextCursor(doc)
+    c.setPosition(x0)
+    c.setPosition(x1, Manter)
+    origem_texto = c.selectedText()
+    c.setPosition(a)
+    c.setPosition(b, Manter)
+    if origem_texto != texto or c.selectedText() != texto:
+        return False
+    origem = _fragmentos(doc, x0, x1)
+    destino = _fragmentos(doc, a, b)
+    if any(pq.insercao_de(cf) is not None or _eh_marca_sem_largura(cf)
+           or (cf.property(pq.PROP_REV_DEL) if cf.hasProperty(pq.PROP_REV_DEL) else None)
+           != rev_json for _x, _y, cf in origem):
+        return False
+    if any(_eh_marca_sem_largura(cf) or pq.exclusao_de(cf) is not None
+           or pq.insercao_de(cf) is None for _x, _y, cf in destino):
+        return False
+    rev = pq.exclusao_de(origem[0][2])
+    de = Revisao("moveFrom", rev.autor, rev.data, rev.data_utc)
+    para = Revisao("moveTo", rev.autor, rev.data, rev.data_utc)
+    for x, y, cf in origem:
+        novo = QTextCharFormat(cf)
+        novo.setProperty(pq.PROP_REV_DEL, pq.json_de(de))
+        _trocar_formato(doc, x, y, novo)
+    for x, y, cf in destino:
+        novo = QTextCharFormat(cf)
+        novo.setProperty(pq.PROP_REV_INS, pq.json_de(para))
+        _trocar_formato(doc, x, y, novo)
+    usados = {m.nome for _p, m in _marcas_de_movimento(doc) if m.nome}
+    n = 1
+    while f"move{n}" in usados:
+        n += 1
+    nome = f"move{n}"
+    pontas = [(x0, MarcaMovimento("de", False, nome, rev.autor, rev.data, rev.data_utc)),
+              (x1, MarcaMovimento("de", True)),
+              (a, MarcaMovimento("para", False, nome, rev.autor, rev.data, rev.data_utc)),
+              (b, MarcaMovimento("para", True))]
+    # Da direita para a esquerda; na mesma posicao, o fim de um trecho fica antes do comeco do
+    # outro (insere-se primeiro o comeco).
+    for pos, marca in sorted(pontas, key=lambda p: (-p[0], 1 if p[1].fim else 0)):
+        if pos > doc.findBlock(pos).position():
+            vizinho = formato_em(doc, pos - 1)
+        else:
+            vizinho = formato_em(doc, pos)
+        base = pq.sem_revisao(QTextCharFormat(vizinho)) if vizinho is not None \
+            else QTextCharFormat()
+        cur = QTextCursor(doc)
+        cur.setPosition(pos)
+        pq_marcas.inserir(cur, marca, base)
+    return True
 
 
 def marcar_colado(editor, doc: QTextDocument, a: int, b: int) -> None:
@@ -660,6 +759,13 @@ def _itens_de_tabelas(doc: QTextDocument) -> list[Item]:
                         b = ult.lastCursorPosition().position()
                         itens.append(Item(tipo, marca.get(q("author")) or "", marca.get(q("date")),
                                           a, b, doc=doc, chave=("linha", pos_tab, r)))
+                mudanca = el.find(q("trPrChange"))
+                if mudanca is not None:
+                    # 0.1.14: as propriedades da linha (cabecalho, altura...) de antes.
+                    a = cel.firstCursorPosition().position()
+                    itens.append(Item("linha_prop", mudanca.get(q("author")) or "",
+                                      mudanca.get(q("date")), a, a, "Propriedades da linha",
+                                      doc=doc, chave=("linha_prop", pos_tab, r)))
             for col in range(tabela.columns()):
                 c = tabela.cellAt(r, col)
                 if c.row() != r or c.column() != col:
@@ -739,7 +845,12 @@ def selecionar(editor, item: Item) -> None:
 @dataclass
 class Resultado:
     resolvidas: int = 0
+    #: revisoes que nao puderam ser resolvidas e ficaram (desde a 0.1.14, so' os casos que
+    #: mudariam a grade de um jeito que a tabela do Qt nao representa, e o w:numberingChange)
     so_aceitar: int = 0
+    #: paginas da ultima secao devolvidas ao rejeitar o w:sectPrChange dela (0.1.14): a pagina
+    #: da ultima secao vive no layout, e quem tem o painel a aplica
+    paginas_finais: list = field(default_factory=list)
 
 
 def _filtro(item: Item | None, autor_: str | None):
@@ -785,6 +896,12 @@ def resolver(editor, aceitar: bool, item: Item | None = None, autor_: str | None
     finally:
         c.endEditBlock()
     doc._lista_revisoes = None
+    if res.paginas_finais and hasattr(editor, "definir_pagina_final"):
+        # A pagina da ultima secao vive no layout (como na 0.1.12, fora do desfazer).
+        from dataclasses import replace
+        atual = editor.layout_pag.pagina_arquivo
+        editor.definir_pagina_final(replace(res.paginas_finais[-1],
+                                            pares_impares=atual.pares_impares))
     return res
 
 
@@ -916,12 +1033,41 @@ def _resolver_paragrafo(doc, bloco, aceitar: bool, vale, res: Resultado) -> None
         if aceitar:
             novo_num = None
             res.resolvidas += 1
+        elif _rejeitar_numeracao(doc, bloco, num):
+            # 0.1.14: a numeracao inserida (w:ins no numPr) sai do paragrafo.
+            bloco = doc.findBlock(bloco.position())
+            novo_num = None
+            res.resolvidas += 1
         else:
             res.so_aceitar += 1
     if (novo_ppr, novo_num) != (ppr, num):
         bf = QTextBlockFormat(bloco.blockFormat())
         pq.definir_mudanca_de_bloco(bf, novo_ppr, novo_num)
         _bloco_formato(doc, bloco, bf)
+
+
+def _rejeitar_numeracao(doc, bloco, num: str) -> bool:
+    """Rejeitar a revisao da numeracao (0.1.14). Com o w:ins no w:numPr (a numeracao foi posta
+    com o controle ligado) o paragrafo volta a nao ter numeracao direta: o estado de antes. O
+    w:numberingChange sozinho guarda so' o TEXTO do numero de antes (w:original), nao a lista:
+    nao ha' o que devolver (fica, e a mensagem diz). False se nada foi feito."""
+    from editdoc.formato_docx.nomes import q
+    from editdoc.ponte_qt import listas as pq_listas
+    el = fx_revisoes.elemento_canonico(num)
+    if el is None or el.find(q("ins")) is None:
+        return False
+    bf = QTextBlockFormat(bloco.blockFormat())
+    real = pq_listas.recuo_real(bf)
+    for prop in pq_listas.PROPS_DE_LISTA:
+        bf.clearProperty(prop)
+    # O recuo visual do numero sai junto (o de verdade volta); `ajustar_recuos` confere depois.
+    if real is None:
+        bf.clearProperty(QTextFormat.Property.TextIndent)
+    else:
+        bf.setTextIndent(float(real))
+    _bloco_formato(doc, bloco, bf)
+    pq_listas.numerador_de(doc).marcar_sujo()
+    return True
 
 
 #: Propriedades do bloco que nao sao do paragrafo de antes (ficam ao rejeitar a formatacao).
@@ -1017,7 +1163,29 @@ def _resolver_tabelas(doc, aceitar: bool, vale, a: int, b: int, res: Resultado, 
                     break
         if removida:
             continue
-        # Celulas e propriedades da tabela: so' aceitar.
+        # Revisoes de linha nas propriedades (w:trPrChange, 0.1.14): aceitar esquece as de
+        # antes; rejeitar devolve as de antes (cabecalho, altura, extras da linha).
+        for r in reversed(range(tabela.rows())):
+            cel0 = tabela.cellAt(r, 0)
+            linha = _json_celula(cel0).get("extras_linha")
+            linha = linha if isinstance(linha, str) else None
+            if linha is None or "trPrChange" not in linha:
+                continue
+            if item is not None and item.chave != ("linha_prop", pos_tab, r):
+                continue
+            if item is None and not (a <= cel0.firstCursorPosition().position() <= b):
+                continue
+            if not vale("linha_prop", _autor_do_xml(linha), item.chave if item else None):
+                continue
+            if _resolver_linha_prop(tabela, r, linha, aceitar):
+                res.resolvidas += 1
+            else:
+                res.so_aceitar += 1
+        # Celulas (0.1.14: rejeitar tambem). A celula inserida que se rejeita e a excluida que se
+        # aceita saem: a coluna inteira (ou a linha inteira) quando todas as celulas dela tem a
+        # mesma marca; uma celula sozinha deixaria a grade torta, e fica (a mensagem diz).
+        sair_colunas: set[int] = set()
+        sair_linhas: set[int] = set()
         for r in range(tabela.rows()):
             for col in range(tabela.columns()):
                 c = tabela.cellAt(r, col)
@@ -1029,17 +1197,23 @@ def _resolver_tabelas(doc, aceitar: bool, vale, a: int, b: int, res: Resultado, 
                     continue
                 if item is not None and item.chave != ("celula", pos_tab, r, col):
                     continue
+                if item is None and not (a <= c.firstCursorPosition().position() <= b):
+                    continue
                 if not vale("celula", _autor_do_xml(extras_c), item.chave if item else None):
                     continue
-                if not aceitar:
+                resultado = _resolver_celula(tabela, r, col, extras_c, aceitar)
+                if resultado == "coluna":
+                    sair_colunas.add(col)
+                elif resultado == "linha":
+                    sair_linhas.add(r)
+                elif resultado:
+                    res.resolvidas += 1
+                else:
                     res.so_aceitar += 1
-                    continue
-                fmt = c.format().toTableCellFormat()
-                dado["extras"] = fx_revisoes.sem_elementos(
-                    extras_c, {"cellIns", "cellDel", "cellMerge", "tcPrChange"})
-                fmt.setProperty(PROP_CELULA, json.dumps(dado, sort_keys=True))
-                c.setFormat(fmt)
-                res.resolvidas += 1
+        if sair_colunas or sair_linhas:
+            res.resolvidas += _remover_da_grade(doc, tabela, sair_linhas, sair_colunas)
+            if not _tabela_viva(doc, pos_tab):
+                continue
         dado = ler_json(tabela.format(), PROP_TABELA)
         extras_t = dado.get("extras") if isinstance(dado.get("extras"), str) else None
         if (fx_revisoes.tem_revisao(extras_t) or dado.get("mudanca_grade")) and \
@@ -1047,7 +1221,10 @@ def _resolver_tabelas(doc, aceitar: bool, vale, a: int, b: int, res: Resultado, 
                 vale("tabela", _autor_do_xml(extras_t or dado.get("mudanca_grade") or ""),
                      item.chave if item else None):
             if not aceitar:
-                res.so_aceitar += 1
+                if _rejeitar_tabela(doc, tabela, dado):
+                    res.resolvidas += 1
+                else:
+                    res.so_aceitar += 1
             else:
                 tf = tabela.format()
                 dado["extras"] = fx_revisoes.sem_elementos(extras_t, {"tblPrChange"})
@@ -1055,6 +1232,201 @@ def _resolver_tabelas(doc, aceitar: bool, vale, a: int, b: int, res: Resultado, 
                 tf.setProperty(PROP_TABELA, json.dumps(dado, sort_keys=True))
                 tabela.setFormat(tf)
                 res.resolvidas += 1
+
+
+def etree_local(el) -> str:
+    tag = el.tag if isinstance(el.tag, str) else ""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _tabela_viva(doc, pos_tab: int) -> bool:
+    return any(t.firstPosition() == pos_tab for t in _tabelas(doc))
+
+
+def _celulas_da_linha(tabela, r: int):
+    for col in range(tabela.columns()):
+        c = tabela.cellAt(r, col)
+        if c.row() == r and c.column() == col:
+            yield col, c
+
+
+def _resolver_linha_prop(tabela, r: int, linha: str, aceitar: bool) -> bool:
+    """O w:trPrChange da linha r: aceitar tira; rejeitar devolve o w:trPr de antes (0.1.14)."""
+    import json
+    from editdoc.ponte_qt.para_qt import PROP_CELULA, ler_json
+    if aceitar:
+        novo = {"extras_linha": fx_revisoes.sem_elementos(linha, {"trPrChange"})}
+    else:
+        velha = fx_revisoes.linha_da_mudanca(linha)
+        if velha is None:
+            return False
+        novo = {"extras_linha": velha.extras, "altura_tw": velha.altura_tw,
+                "altura_exata": velha.altura_exata}
+        # O cabecalho repetido e' o headerRowCount da tabela: so' muda na beirada.
+        tf = tabela.format()
+        n = tf.headerRowCount()
+        if velha.cabecalho and r == n:
+            tf.setHeaderRowCount(n + 1)
+            tabela.setFormat(tf)
+        elif not velha.cabecalho and r == n - 1:
+            tf.setHeaderRowCount(n - 1)
+            tabela.setFormat(tf)
+    for _col, c in _celulas_da_linha(tabela, r):
+        fmt = c.format().toTableCellFormat()
+        dado = ler_json(fmt, PROP_CELULA)
+        dado.update(novo)
+        fmt.setProperty(PROP_CELULA, json.dumps(dado, sort_keys=True))
+        c.setFormat(fmt)
+    return True
+
+
+def _marca_da_celula(extras_c: str | None) -> str | None:
+    el = fx_revisoes.elemento_canonico(extras_c)
+    if el is None:
+        return None
+    from editdoc.formato_docx.nomes import q
+    for nome in fx_revisoes.MARCAS_DE_CELULA:
+        if el.find(q(nome)) is not None:
+            return nome
+    return None
+
+
+def _resolver_celula(tabela, r: int, col: int, extras_c: str, aceitar: bool):
+    """Uma celula com revisao. True se resolvida no lugar; "coluna"/"linha" se ela sai junto com
+    a coluna (ou a linha) inteira; False se nao pode ser feito (fica)."""
+    import json
+    from editdoc.ponte_qt.para_qt import PROP_CELULA, ler_json
+    marca = _marca_da_celula(extras_c)
+    sai = (marca == "cellIns" and not aceitar) or (marca == "cellDel" and aceitar)
+    if sai:
+        if all(_marca_da_celula(_json_celula(tabela.cellAt(x, col)).get("extras")) == marca
+               for x in range(tabela.rows())):
+            return "coluna"
+        if all(_marca_da_celula(_json_celula(c).get("extras")) == marca
+               for _k, c in _celulas_da_linha(tabela, r)):
+            return "linha"
+        return False
+    if marca == "cellMerge" and not aceitar:
+        # Desfazer a mescla exigiria partir a celula do Qt (limite registrado).
+        return False
+    c = tabela.cellAt(r, col)
+    fmt = c.format().toTableCellFormat()
+    dado = ler_json(fmt, PROP_CELULA)
+    if not aceitar and "tcPrChange" in extras_c:
+        velha = fx_revisoes.celula_da_mudanca(extras_c)
+        if velha is None or max(1, velha.colunas) != c.columnSpan() or (
+                (velha.mescla_vertical is not None) != (c.rowSpan() > 1 or _coberta(tabela, r, col))):
+            return False  # a grade de antes era outra (mescla): fica
+        dado.update(json.loads(_json_celula_de(velha)))
+        extras_c = dado.get("extras")
+        _aplicar_aparencia_da_celula(fmt, velha)
+    marcas = {"cellIns", "cellDel", "cellMerge", "tcPrChange"} if aceitar else \
+        {"cellIns", "cellDel", "cellMerge"}
+    dado["extras"] = fx_revisoes.sem_elementos(extras_c, marcas)
+    fmt.setProperty(PROP_CELULA, json.dumps(dado, sort_keys=True))
+    c.setFormat(fmt)
+    from editdoc.ponte_qt.para_qt import aplicar_formatos_das_celulas
+    aplicar_formatos_das_celulas(tabela)
+    return True
+
+
+def _coberta(tabela, r: int, col: int) -> bool:
+    return r > 0 and tabela.cellAt(r - 1, col).row() + tabela.cellAt(r - 1, col).rowSpan() > r
+
+
+def _json_celula_de(celula) -> str:
+    """As chaves da celula no JSON do Qt (sem as da linha)."""
+    from editdoc.ponte_qt.para_qt import json_da_celula
+    return json_da_celula(celula)
+
+
+def _aplicar_aparencia_da_celula(fmt, celula) -> None:
+    from PySide6.QtGui import QBrush, QColor
+    from editdoc.ponte_qt.para_qt import _VALIGN
+    if celula.sombreamento_hex is not None:
+        fmt.setBackground(QBrush(QColor("#" + celula.sombreamento_hex)))
+    else:
+        fmt.clearBackground()
+    if celula.alinhamento_vertical is not None:
+        fmt.setVerticalAlignment(_VALIGN[celula.alinhamento_vertical])
+    else:
+        fmt.clearProperty(QTextFormat.Property.TableCellVerticalAlignment if hasattr(
+            QTextFormat.Property, "TableCellVerticalAlignment") else 0x4810)
+
+
+def _remover_da_grade(doc, tabela, linhas: set, colunas: set) -> int:
+    """Tira as colunas e as linhas inteiras (da ultima para a primeira). A tabela que fica sem
+    nada sai inteira. Devolve quantas revisoes foram resolvidas (uma por celula)."""
+    from editdoc.ponte_qt.para_qt import aplicar_formatos_das_celulas
+    n = 0
+    if len(colunas) >= tabela.columns() or len(linhas) >= tabela.rows():
+        n = tabela.rows() * tabela.columns()
+        c = QTextCursor(doc)
+        c.setPosition(tabela.firstPosition() - 1)
+        c.setPosition(tabela.lastPosition() + 1, Manter)
+        c.removeSelectedText()
+        return n
+    for col in sorted(colunas, reverse=True):
+        n += tabela.rows()
+        tabela.removeColumns(col, 1)
+    for r in sorted(linhas, reverse=True):
+        n += sum(1 for _ in _celulas_da_linha(tabela, r))
+        tabela.removeRows(r, 1)
+    aplicar_formatos_das_celulas(tabela)
+    return n
+
+
+def _rejeitar_tabela(doc, tabela, dado: dict) -> bool:
+    """Devolve as propriedades da tabela de antes (w:tblPrChange) e a grade de antes
+    (w:tblGridChange), 0.1.14. As bordas: as de antes so' quando o w:tblPr de antes as declara
+    (as que vem do estilo da tabela nao sao relidas aqui: ficam as de agora)."""
+    import json
+    from PySide6.QtGui import QTextLength
+    from editdoc.modelo.unidades import px_de_twips
+    from editdoc.ponte_qt.para_qt import (_ALINHAMENTO, PROP_TABELA, aplicar_formatos_das_celulas,
+                                          json_da_tabela)
+    tf = tabela.format()
+    larguras = [round(c.rawValue() * 15) for c in tf.columnWidthConstraints()]
+    novo = dict(dado)
+    extras_t = dado.get("extras") if isinstance(dado.get("extras"), str) else None
+    if extras_t and "tblPrChange" in extras_t:
+        velha = fx_revisoes.tabela_da_mudanca(extras_t, larguras or [1000],
+                                              _resolvedor(doc).estilos)
+        if velha is None:
+            return False
+        dv = json.loads(json_da_tabela(velha))
+        for chave in ("alinhamento", "recuo_tw", "largura", "layout_fixo", "margens_celula_tw",
+                      "extras"):
+            novo[chave] = dv[chave]
+        if dv.get("estilo") is not None:
+            novo["estilo"] = dv["estilo"]
+        # So' os lados que o w:tblBorders de antes declara voltam; o resto fica como esta'.
+        from editdoc.formato_docx.nomes import q
+        velho_pr = fx_revisoes.anterior(extras_t, "tblPrChange", "tblPr")
+        declaradas = velho_pr.find(q("tblBorders")) if velho_pr is not None else None
+        if declaradas is not None and isinstance(dv.get("bordas"), dict):
+            lados = {"top": "sup", "bottom": "inf", "left": "esq", "start": "esq", "right": "dir",
+                     "end": "dir", "insideH": "horizontal", "insideV": "vertical"}
+            bordas = dict(dado.get("bordas") or {})
+            for f in declaradas:
+                nome = etree_local(f)
+                if nome in lados:
+                    bordas[lados[nome]] = dv["bordas"].get(lados[nome])
+            novo["bordas"] = bordas
+        if velha.alinhamento is not None:
+            tf.setAlignment(_ALINHAMENTO[velha.alinhamento])
+        else:
+            tf.clearProperty(QTextFormat.Property.BlockAlignment)
+        tf.setLeftMargin(px_de_twips(max(0, velha.recuo_tw or 0)))
+    grade = fx_revisoes.grade_da_mudanca(dado.get("mudanca_grade"))
+    if grade is not None and len(grade) == tabela.columns():
+        tf.setColumnWidthConstraints([QTextLength(QTextLength.Type.FixedLength, px_de_twips(w))
+                                      for w in grade])
+    novo["mudanca_grade"] = None
+    tf.setProperty(PROP_TABELA, json.dumps(novo, sort_keys=True))
+    tabela.setFormat(tf)
+    aplicar_formatos_das_celulas(tabela)
+    return True
 
 
 def _resolver_secoes(doc, aceitar: bool, vale, intervalos, res: Resultado, item) -> None:
@@ -1080,15 +1452,39 @@ def _resolver_secoes(doc, aceitar: bool, vale, intervalos, res: Resultado, item)
                 "secao", _autor_do_xml(texto), item.chave if item else None):
             continue
         if not aceitar:
-            res.so_aceitar += 1
-            continue
-        nova_secao = pq_secoes.copia(secao, original=fx_revisoes.secao_sem_mudanca(secao.original),
-                                     extras=fx_revisoes.secao_sem_mudanca(secao.extras))
+            # 0.1.14: o w:sectPr de antes volta (papel, margens, colunas, numeracao...), com os
+            # cabecalhos e rodapes de agora.
+            nova_secao = _secao_de_antes(secao, texto)
+            if nova_secao is None:
+                res.so_aceitar += 1
+                continue
+            if pos is None:
+                res.paginas_finais.append(nova_secao.pagina)
+        else:
+            nova_secao = pq_secoes.copia(
+                secao, original=fx_revisoes.secao_sem_mudanca(secao.original),
+                extras=fx_revisoes.secao_sem_mudanca(secao.extras))
         if pos is None:
             pq_secoes.trocar_final(doc, nova_secao)
         else:
             pq_secoes.trocar_secao_do_caractere(QTextCursor(doc), pos, nova_secao)
         res.resolvidas += 1
+
+
+def _secao_de_antes(secao, texto: str):
+    """A `Secao` do w:sectPr de antes (do w:sectPrChange), com os cabecalhos e rodapes de agora;
+    None se ilegivel."""
+    from editdoc.formato_docx import secoes as fx_secoes
+    from editdoc.formato_docx.avisos import Coletor
+    velho = fx_revisoes.secao_da_mudanca(texto)
+    if velho is None:
+        return None
+    try:
+        lida, _refs = fx_secoes.ler(velho, Coletor())
+    except (ValueError, TypeError):
+        return None
+    return pq_secoes.copia(secao, pagina=lida.pagina, tipo=lida.tipo, extras=lida.extras,
+                           original=lida.original, colunas=lida.colunas)
 
 
 def _limpar_movimentos(doc: QTextDocument) -> None:

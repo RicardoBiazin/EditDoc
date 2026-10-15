@@ -634,8 +634,12 @@ def testar_aceitar_rejeitar(pasta) -> None:
     _fechar(j)
     j, ok, dados, m, texto = resolver("celula", False)
     tab = next(b for b in m.paragrafos if not isinstance(b, Paragrafo))
-    checa(not ok and "cellIns" in (tab.linhas[0].celulas[0].extras or ""),
-          "rejeitar w:cellIns nao e' feito (so' aceitar), e a revisao fica")
+    # Reescrita na 0.1.14, com motivo: ate' a 0.1.13 rejeitar w:cellIns nao era feito ("so'
+    # aceitar", a revisao ficava). Agora a celula inserida sai; como todas as celulas da linha
+    # dela sao inseridas, sai a linha inteira (a grade fica reta).
+    checa(ok and len(tab.linhas) == 2 and "linha nova" not in texto
+          and not any("cellIns" in (c.extras or "") for lin in tab.linhas for c in lin.celulas),
+          "rejeitar w:cellIns: a celula inserida sai (a linha inteira, todas inseridas)")
     _fechar(j)
     j, ok, dados, m, texto = resolver("tabela", True)
     tab = next(b for b in m.paragrafos if not isinstance(b, Paragrafo))
@@ -692,6 +696,228 @@ def testar_aceitar_rejeitar(pasta) -> None:
     lista.lista.setCurrentRow(1)
     drenar_eventos()
     checa(painel.textCursor().hasSelection(), "clicar numa linha do painel seleciona o trecho")
+    _fechar(janela)
+
+
+TABELA_PROPS = (
+    '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="right"/>'
+    f'<w:tblPrChange w:id="50" {A}><w:tblPr><w:tblW w:w="6000" w:type="dxa"/>'
+    '<w:jc w:val="center"/></w:tblPr></w:tblPrChange></w:tblPr>'
+    '<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:tblGridChange w:id="51">'
+    '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="4000"/></w:tblGrid></w:tblGridChange>'
+    '</w:tblGrid>'
+    f'<w:tr><w:trPr><w:trHeight w:val="400"/><w:trPrChange w:id="52" {A}><w:trPr>'
+    '<w:trHeight w:val="900"/></w:trPr></w:trPrChange></w:trPr>'
+    '<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" '
+    f'w:fill="00FF00"/><w:tcPrChange w:id="53" {A}><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>'
+    '<w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tcPr></w:tcPrChange></w:tcPr>'
+    f'<w:p>{t("A1")}</w:p></w:tc>'
+    f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:cellDel w:id="54" {B}/></w:tcPr>'
+    f'<w:p>{t("B1")}</w:p></w:tc></w:tr>'
+    f'<w:tr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p>{t("A2")}</w:p></w:tc>'
+    f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:cellDel w:id="55" {B}/></w:tcPr>'
+    f'<w:p>{t("B2")}</w:p></w:tc></w:tr></w:tbl><w:p>{t("Depois.")}</w:p>')
+
+
+def _tabela_do(modelo):
+    return next(b for b in modelo.paragrafos if not isinstance(b, Paragrafo))
+
+
+def _docx_numerado_inserido() -> bytes:
+    """Um item de lista cuja numeracao foi posta com o controle ligado (w:ins no w:numPr)."""
+    base = fx.bytes_de(Documento(paragrafos=[
+        Paragrafo(runs=[Run("Item com numeração nova")], numeracao="numeracao"),
+        Paragrafo(runs=[Run("Texto comum.")])], controlar_alteracoes=True))
+    partes = fx.partes_de(base)
+    xml = partes["word/document.xml"].decode("utf-8")
+    xml = xml.replace("</w:numPr>", f'<w:ins w:id="60" {A}/></w:numPr>', 1)
+    partes["word/document.xml"] = xml.encode("utf-8")
+    return fx.montar(partes)
+
+
+def testar_rejeitar_estrutura(pasta) -> None:
+    secao("0.1.14: rejeitar propriedades de tabela, linha, celula, grade, secao e numeracao")
+    from editdoc.edicao import revisoes as ed
+    dados = fx.docx_com_xml(TABELA_PROPS, settings_extra="<w:trackRevisions/>")
+    m0, avisos = ler(dados)
+    checa(not codigos(avisos), f"a fixture abre sem aviso ({codigos(avisos)})")
+    janela = _janela(dados)
+    doc = janela.painel.documento_corpo()
+    tipos = sorted(i.tipo for i in ed.listar(doc))
+    checa(tipos == ["celula", "celula", "celula", "linha_prop", "tabela"],
+          f"a lista tem a tabela, a linha e as celulas ({tipos})")
+    antes = doc.toPlainText()
+    res = ed.resolver(janela.painel, False)
+    checa(res.resolvidas == 5 and res.so_aceitar == 0,
+          f"rejeitar todas: 5 resolvidas, nenhuma fica ({res})")
+    gravado = _gravado(janela, pasta, "rejeitar_tabela.docx")
+    m = ler(gravado)[0] if gravado else None
+    tab = _tabela_do(m) if m else None
+    corpo = corpo_xml(gravado) if gravado else None
+    checa(tab is not None and tab.largura == ("dxa", 6000) and tab.alinhamento == "centro",
+          f"w:tblPrChange rejeitado: a largura e o alinhamento de antes "
+          f"({tab.largura if tab else None}, {tab.alinhamento if tab else None})")
+    checa(tab is not None and tab.colunas_tw == [2000, 4000],
+          f"w:tblGridChange rejeitado: a grade de antes ({tab.colunas_tw if tab else None})")
+    checa(tab is not None and tab.linhas[0].altura_tw == 900,
+          "w:trPrChange rejeitado: a altura de antes da linha")
+    checa(tab is not None and tab.linhas[0].celulas[0].sombreamento_hex == "FFFF00",
+          "w:tcPrChange rejeitado: o sombreamento de antes da celula")
+    checa(tab is not None and len(tab.colunas_tw) == 2 and "B1" in doc.toPlainText()
+          and corpo is not None and corpo.find(".//w:cellDel", NS) is None,
+          "w:cellDel rejeitado: a coluna fica, sem a marca")
+    checa(corpo is not None and not any(corpo.find(f".//w:{n}", NS) is not None for n in (
+        "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange")),
+          "o arquivo nao tem mais nenhuma mudanca de propriedades")
+    janela.comandos.acao("desfazer").trigger()
+    checa(len(ed.listar(doc)) == 5 and doc.toPlainText() == antes,
+          "um desfazer devolve as cinco revisoes")
+    res = ed.resolver(janela.painel, True)
+    gravado = _gravado(janela, pasta, "aceitar_tabela.docx")
+    tab = _tabela_do(ler(gravado)[0]) if gravado else None
+    checa(tab is not None and len(tab.colunas_tw) == 1 and "B1" not in doc.toPlainText()
+          and tab.linhas[0].altura_tw == 400 and tab.linhas[0].celulas[0].sombreamento_hex == "00FF00",
+          "aceitar todas: a coluna excluida sai; altura e sombreamento de agora ficam")
+    _fechar(janela)
+
+    # Secao: o w:sectPr de antes volta (o papel Carta do SECT da fixture principal).
+    janela = _janela(docx_principal(cabecalho=False))
+    item = next(i for i in ed.listar(janela.painel.documento_corpo()) if i.tipo == "secao")
+    res = ed.resolver(janela.painel, False, item=item)
+    checa(res.resolvidas == 1, f"rejeitar a revisao da secao ({res})")
+    pagina = janela.painel.layout_pag.pagina_arquivo
+    checa((pagina.largura_tw, pagina.altura_tw) == (12240, 15840),
+          f"a pagina da tela volta para a de antes ({pagina.largura_tw} x {pagina.altura_tw})")
+    gravado = _gravado(janela, pasta, "rejeitar_secao.docx")
+    corpo = corpo_xml(gravado) if gravado else None
+    sz = corpo.findall(".//w:sectPr/w:pgSz", NS)[-1] if corpo is not None else None
+    checa(sz is not None and sz.get(f"{{{W}}}w") == "12240" and sz.get(f"{{{W}}}h") == "15840"
+          and corpo.find(".//w:sectPrChange", NS) is None,
+          "o arquivo tem o papel de antes e nao tem o w:sectPrChange")
+    _fechar(janela)
+
+    # Numeracao: a inserida (w:ins no w:numPr) sai do paragrafo ao rejeitar.
+    from editdoc.ponte_qt import listas as pq_listas
+    janela = _janela(_docx_numerado_inserido())
+    doc = janela.painel.documento_corpo()
+    tipos = [i.tipo for i in ed.listar(doc)]
+    checa("numeracao" in tipos, f"a numeracao inserida aparece na lista ({tipos})")
+    res = ed.resolver(janela.painel, False)
+    drenar_eventos()
+    checa(res.resolvidas >= 1 and res.so_aceitar == 0 and not pq_listas.numerador_de(doc).rotulos(),
+          f"rejeitar a numeracao: o paragrafo deixa de ser item ({res})")
+    gravado = _gravado(janela, pasta, "rejeitar_numeracao.docx")
+    corpo = corpo_xml(gravado) if gravado else None
+    checa(corpo is not None and corpo.find(".//w:numPr", NS) is None,
+          "o arquivo nao tem mais o w:numPr")
+    janela.comandos.acao("desfazer").trigger()
+    drenar_eventos()
+    checa(len(pq_listas.numerador_de(doc).rotulos()) == 1 and "numeracao" in [
+        i.tipo for i in ed.listar(doc)], "desfazer devolve a numeracao e a revisao")
+    _fechar(janela)
+
+
+def testar_excluir_rastreado(pasta) -> None:
+    secao("0.1.14: excluir linha e coluna com o controle ligado fica marcado (w:del, w:cellDel)")
+    from editdoc.edicao import revisoes as ed
+    from editdoc.edicao import tabelas as ed_tabelas
+    tabela = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>'
+              '<w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+              + "".join('<w:tr>' + "".join(f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>'
+                                           f'</w:tcPr><w:p>{t(f"c{r}{c}")}</w:p></w:tc>'
+                                           for c in range(2)) + '</w:tr>' for r in range(3))
+              + f'</w:tbl><w:p>{t("Fim.")}</w:p>')
+    dados = fx.docx_com_xml(tabela, settings_extra="<w:trackRevisions/>")
+    janela = _janela(dados)
+    painel = janela.painel
+    doc = painel.documento_corpo()
+    antes = doc.toPlainText()
+    _ir_para(janela, "c10")
+    checa(ed_tabelas.excluir_linhas(painel), "excluir linha com o controle ligado")
+    tipos = [i.tipo for i in ed.listar(doc)]
+    checa("linha_del" in tipos and "c10" in doc.toPlainText(),
+          f"a linha fica, marcada como excluida ({tipos})")
+    gravado = _gravado(janela, pasta, "linha_rastreada.docx")
+    corpo = corpo_xml(gravado) if gravado else None
+    linhas = corpo.findall(".//w:tr", NS) if corpo is not None else []
+    checa(len(linhas) == 3 and linhas[1].find("w:trPr/w:del", NS) is not None
+          and linhas[1].find(".//w:delText", NS) is not None,
+          "no arquivo: w:del no w:trPr da linha e o texto dela em w:delText")
+    janela.comandos.acao("desfazer").trigger()
+    checa(doc.toPlainText() == antes and not ed.listar(doc), "um desfazer devolve a linha sem marca")
+    _ir_para(janela, "c01")
+    checa(ed_tabelas.excluir_colunas(painel), "excluir coluna com o controle ligado")
+    gravado = _gravado(janela, pasta, "coluna_rastreada.docx")
+    corpo = corpo_xml(gravado) if gravado else None
+    marcadas = corpo.findall(".//w:tc/w:tcPr/w:cellDel", NS) if corpo is not None else []
+    checa(len(marcadas) == 3 and len(corpo.findall(".//w:tr", NS)[0].findall("w:tc", NS)) == 2,
+          f"no arquivo: as 3 celulas da coluna com w:cellDel, a coluna ainda la' ({len(marcadas)})")
+    res = ed.resolver(painel, True)
+    gravado = _gravado(janela, pasta, "coluna_aceita.docx")
+    tab = _tabela_do(ler(gravado)[0]) if gravado else None
+    checa(tab is not None and len(tab.colunas_tw) == 1 and "c01" not in doc.toPlainText(),
+          f"aceitar a exclusao da coluna: ela sai ({res})")
+    janela.comandos.acao("desfazer").trigger()
+    res = ed.resolver(painel, False)
+    checa(not ed.listar(doc) and "c01" in doc.toPlainText(),
+          f"rejeitar a exclusao da coluna: ela fica, sem marca ({res})")
+    _fechar(janela)
+    # Desligado: excluir linha continua removendo na hora (como antes).
+    janela = _janela(fx.docx_com_xml(tabela))
+    _ir_para(janela, "c10")
+    ed_tabelas.excluir_linhas(janela.painel)
+    checa("c10" not in janela.painel.documento_corpo().toPlainText(),
+          "com o controle desligado, a linha sai na hora")
+    _fechar(janela)
+
+
+def testar_mover(pasta) -> None:
+    secao("0.1.14: recortar e colar com o controle ligado vira movimento (moveFrom/moveTo)")
+    from editdoc.edicao import revisoes as ed
+    dados = fx.docx_com_xml(f'<w:p>{t("Alfa Beta Gama.")}</w:p><w:p>{t("Destino aqui.")}</w:p>',
+                            settings_extra="<w:trackRevisions/>")
+    janela = _janela(dados)
+    painel = janela.painel
+    doc = painel.documento_corpo()
+    antes = doc.toPlainText()
+    _ir_para(janela, "Beta ", 0, len("Beta "))
+    painel.cut()
+    _ir_para(janela, "aqui.", len("aqui."))
+    painel.paste()
+    tipos = sorted({i.tipo for i in ed.listar(doc)})
+    checa(tipos == ["moveFrom", "moveTo"], f"a lista tem a origem e o destino do movimento ({tipos})")
+    gravado = _gravado(janela, pasta, "movido.docx")
+    corpo = corpo_xml(gravado) if gravado else None
+    inicio_de = corpo.find(".//w:moveFromRangeStart", NS) if corpo is not None else None
+    inicio_para = corpo.find(".//w:moveToRangeStart", NS) if corpo is not None else None
+    checa(inicio_de is not None and inicio_para is not None
+          and inicio_de.get(f"{{{W}}}name") == inicio_para.get(f"{{{W}}}name")
+          and corpo.find(".//w:moveFromRangeEnd", NS) is not None
+          and corpo.find(".//w:moveToRangeEnd", NS) is not None
+          and corpo.find(".//w:moveFrom//w:t", NS) is not None
+          and corpo.find(".//w:moveTo//w:t", NS) is not None
+          and corpo.find(".//w:del", NS) is None and corpo.find(".//w:ins", NS) is None,
+          "no arquivo: w:moveFrom e w:moveTo com as pontas do mesmo nome, sem w:del nem w:ins")
+    res = ed.resolver(painel, False)
+    checa(doc.toPlainText().replace("￼", "") == antes and not ed.listar(doc),
+          f"rejeitar o movimento: o texto volta para a origem ({res})")
+    janela.comandos.acao("desfazer").trigger()
+    res = ed.resolver(painel, True)
+    final = doc.toPlainText().replace("￼", "")
+    checa("Alfa Gama." in final and "Destino aqui.Beta " in final,
+          f"aceitar o movimento: o texto fica no destino ({final!r})")
+    janela.comandos.acao("desfazer").trigger()
+    janela.comandos.acao("desfazer").trigger()
+    checa(doc.toPlainText() == antes, "desfazer o colar e o recortar devolve o texto")
+    # Contraprova: colar outro texto (nao o recortado) continua exclusao e insercao.
+    _ir_para(janela, "Beta ", 0, len("Beta "))
+    painel.cut()
+    _ir_para(janela, "Destino", 0, len("Destino"))
+    painel.copy()
+    _ir_para(janela, "aqui.", len("aqui."))
+    painel.paste()
+    tipos = sorted({i.tipo for i in ed.listar(doc)})
+    checa(tipos == ["del", "ins"], f"colar outro texto: exclusao e insercao ({tipos})")
     _fechar(janela)
 
 
@@ -863,6 +1089,9 @@ def main() -> int:
     with pasta_temporaria() as pasta:
         testar_modos()
         testar_aceitar_rejeitar(pasta)
+        testar_rejeitar_estrutura(pasta)
+        testar_excluir_rastreado(pasta)
+        testar_mover(pasta)
         testar_edicao(pasta)
         testar_saidas(pasta)
         testar_pdf_marcacoes()

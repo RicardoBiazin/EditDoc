@@ -419,6 +419,149 @@ def sem_elementos(texto: str | None, nomes) -> str | None:
     return canonico_props(_local(el), list(el))
 
 
+# -- o estado de antes (rejeitar, 0.1.14) ----------------------------------------------------
+
+#: Marcas de revisao da celula (CT_TcPr): ficam como estao quando o tcPrChange e' rejeitado.
+MARCAS_DE_CELULA = ("cellIns", "cellDel", "cellMerge")
+#: Marcas de revisao da linha (CT_TrPr): idem para o trPrChange.
+MARCAS_DE_LINHA = ("ins", "del")
+
+
+def _contexto_de_leitura(estilos=None, numeracao=None):
+    from editdoc.formato_docx import leitor
+    from editdoc.formato_docx.avisos import Coletor
+    ctx = leitor._Contexto(Coletor(), numeracao)
+    if estilos is not None:
+        ctx.estilos = estilos
+    return ctx
+
+
+def anterior(texto: str | None, mudanca: str, interno: str):
+    """O elemento de antes (`interno`, um w:tblPr, w:trPr, w:tcPr, w:sectPr) guardado no
+    `mudanca` (w:tblPrChange...) dos extras canonicos `texto`, ou None."""
+    el = elemento_canonico(texto)
+    if el is None:
+        return None
+    ch = el if el.tag == q(mudanca) else el.find(".//" + q(mudanca))
+    if ch is None:
+        return None
+    dentro = ch.find(q(interno))
+    return copy.deepcopy(dentro) if dentro is not None else etree.Element(q(interno))
+
+
+def _com_marcas(base, atual, nomes) -> None:
+    """Poe em `base` (o elemento de antes) as marcas `nomes` do elemento `atual`, no lugar delas
+    no esquema (as marcas de revisao vem antes da mudanca de propriedades e depois do resto)."""
+    if atual is None:
+        return
+    for x in list(base):
+        if x.tag in {q(n) for n in nomes}:
+            base.remove(x)
+    for x in atual:
+        if x.tag in {q(n) for n in nomes}:
+            base.append(copy.deepcopy(x))
+
+
+def tabela_da_mudanca(extras: str | None, colunas: list[int], estilos=None):
+    """A `Tabela` (so' as propriedades, sem as linhas uteis) que o w:tblPr de antes descreve,
+    com a grade `colunas`; None se nao ha' w:tblPrChange."""
+    velho = anterior(extras, "tblPrChange", "tblPr")
+    if velho is None:
+        return None
+    from editdoc.formato_docx import leitor
+    tbl = etree.Element(q("tbl"), nsmap={"w": W})
+    tbl.append(velho)
+    grade = etree.SubElement(tbl, q("tblGrid"))
+    for w in colunas:
+        etree.SubElement(grade, q("gridCol")).set(q("w"), str(int(w)))
+    tc = etree.SubElement(etree.SubElement(tbl, q("tr")), q("tc"))
+    etree.SubElement(tc, q("p"))
+    if len(colunas) > 1:
+        tcpr = etree.Element(q("tcPr"))
+        etree.SubElement(tcpr, q("gridSpan")).set(q("val"), str(len(colunas)))
+        tc.insert(0, tcpr)
+    return leitor._tabela(tbl, _contexto_de_leitura(estilos))
+
+
+def grade_da_mudanca(mudanca_grade: str | None) -> list[int] | None:
+    """As larguras (twips) da grade de antes, do w:tblGridChange guardado; None se ilegivel."""
+    el = elemento_canonico(mudanca_grade)
+    if el is None:
+        return None
+    grade = el.find(q("tblGrid"))
+    if grade is None:
+        return None
+    larguras = []
+    for g in grade.findall(q("gridCol")):
+        try:
+            larguras.append(int(g.get(q("w")) or "0"))
+        except ValueError:
+            return None
+    return larguras or None
+
+
+def linha_da_mudanca(extras_linha: str | None):
+    """A `Linha` (cabecalho, altura, extras) que o w:trPr de antes descreve, com as marcas de
+    linha inserida/excluida de agora; None se nao ha' w:trPrChange."""
+    velho = anterior(extras_linha, "trPrChange", "trPr")
+    if velho is None:
+        return None
+    _com_marcas(velho, elemento_canonico(extras_linha), MARCAS_DE_LINHA)
+    from editdoc.formato_docx import leitor
+    tr = etree.Element(q("tr"), nsmap={"w": W})
+    tr.append(velho)
+    return leitor._linha(tr, [], _contexto_de_leitura())
+
+
+def celula_da_mudanca(extras_celula: str | None):
+    """A `Celula` (sem o texto) que o w:tcPr de antes descreve, com as marcas de celula de agora
+    (cellIns, cellDel, cellMerge); None se nao ha' w:tcPrChange."""
+    velho = anterior(extras_celula, "tcPrChange", "tcPr")
+    if velho is None:
+        return None
+    _com_marcas(velho, elemento_canonico(extras_celula), MARCAS_DE_CELULA)
+    from editdoc.formato_docx import leitor
+    tc = etree.Element(q("tc"), nsmap={"w": W})
+    tc.append(velho)
+    etree.SubElement(tc, q("p"))
+    return leitor._celula(tc, _contexto_de_leitura())
+
+
+def secao_da_mudanca(texto: str | None):
+    """O w:sectPr de antes (do w:sectPrChange dos extras ou do original da secao), com as
+    referencias de cabecalho e rodape de agora e, se o de antes nao tem papel ou margens, os de
+    agora; None se nao ha' w:sectPrChange."""
+    velho = anterior(texto, "sectPrChange", "sectPr")
+    if velho is None:
+        return None
+    atual = elemento_canonico(texto)
+    from editdoc.formato_docx import secoes as fx_secoes
+    for nome in ("pgSz", "pgMar"):
+        if velho.find(q(nome)) is None and atual is not None and atual.find(q(nome)) is not None:
+            fx_secoes._inserir_em_ordem(velho, copy.deepcopy(atual.find(q(nome))))
+    for x in list(velho):
+        if x.tag in (q("headerReference"), q("footerReference"), q("sectPrChange")):
+            velho.remove(x)
+    return velho
+
+
+def com_marca(texto: str | None, recipiente: str, rev: Revisao) -> str:
+    """Os extras canonicos de um w:trPr ou w:tcPr (`recipiente`) com a marca `rev` (w:del na
+    linha, w:cellDel na celula...), sem w:id, antes de uma mudanca de propriedades (o lugar do
+    esquema). Uma marca do mesmo tipo que ja' estava e' trocada. (0.1.14: excluir linha e coluna
+    com o controle ligado.)"""
+    from editdoc.formato_docx.propriedades import canonico as canonico_props
+    el = elemento_canonico(texto)
+    filhos = list(el) if el is not None else []
+    filhos = [f for f in filhos if f.tag != q(rev.tipo)]
+    marca = elemento_de(rev)
+    marca.attrib.pop(_ID, None)
+    mudanca = q("trPrChange" if recipiente == "trPr" else "tcPrChange")
+    i = next((k for k, f in enumerate(filhos) if f.tag == mudanca), len(filhos))
+    filhos.insert(i, marca)
+    return canonico_props(recipiente, filhos)
+
+
 def secao_sem_mudanca(texto: str | None) -> str | None:
     """O w:sectPr canonico da secao (extras ou original) sem o w:sectPrChange."""
     el = elemento_canonico(texto)

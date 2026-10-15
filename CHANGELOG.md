@@ -1,3 +1,77 @@
+## 0.1.14 - 2026-10-15
+
+Digitar em documento com muitas tabelas e listas repinta só o que mudou; rejeitar passa a valer
+para as alterações de tabela, linha, célula, seção e numeração; excluir linha e coluna e mover
+texto ficam marcados com o controle de alterações ligado.
+
+Defeito 1 (desempenho): no arquivo real de duas seções com 16 tabelas e 89 itens de lista, digitar
+a 1/3 do documento passava do gate de 16 ms (48,6 ms na 0.1.11; 37 a 52 ms medidos agora, com a
+máquina carregada). Causa, medida e conferida no código do Qt 6.11 (docs/SPIKES.md, "0.1.14"):
+
+- do Qt, ~20 a 30 ms por tecla: num documento paginado o `QTextDocumentLayout` refaz TODAS as
+  tabelas que vêm depois do ponto editado, cada célula duas vezes e do zero. Digitar no começo do
+  arquivo custa 32 ms; no fim, 2 ms. Não há como desligar isso de fora do Qt (caminhos medidos e
+  descartados no SPIKES). Fica como pendência registrada;
+- do EditDoc, cortado: digitar numa célula tirava a tabela inteira do cache (a do arquivo atravessa
+  páginas: a tela toda, 20 tiles por tecla); agora só as linhas do texto ou a linha da tabela, e
+  só na coluna da célula (3,9 tiles por tecla a 1/3, 2,1 na célula a 1/2). Os números das listas
+  pediam o retângulo de todos os itens em cada tile (148 mil `blockBoundingRect` em 80 teclas):
+  agora as faixas dos itens ficam em cache até o layout mudar, e o Numerador continua sem
+  recalcular os números ao digitar dentro de um item (conferido: nenhuma mudança de estrutura em
+  80 teclas). Bordas e tabulações guardam o que cada bloco tem para pintar. Um tile do plano: 4,5
+  → 2,1 ms.
+
+Gate (p95 em ms, mediana de 3 rodadas, 0.1.13 → 0.1.14; docs/SPIKES.md): plano real a 1/3
+87,1 → 49,9, na célula a 1/2 57,6 → 35,3, no item de lista 45,6 → 40,0; plano sintético 64,8 →
+50,5, 43,9 → 38,0 e 62,6 → 51,0. A meta de 16 ms nesses pontos NÃO foi alcançada (a tecla do Qt
+sozinha passa dela). A tabela do gate não piorou: simples 5,5 → 5,4, manual 10,7/10,5/7,2 →
+10,5/10,0/6,8, capa cheia 16,1 → 15,9, 2000 revisões 12,4 → 10,2.
+
+Defeito 2 (controle de alterações): até a 0.1.13 as alterações de célula, de propriedades de
+tabela, de linha e de seção e a numeração só podiam ser aceitas; excluir linha ou coluna com o
+controle ligado não ficava marcado; recortar e colar virava exclusão e inserção; e um documento
+cujas únicas alterações eram de tabela ou de seção mostrava a lista vazia.
+
+- **Rejeitar** devolve o estado de antes guardado no elemento de mudança: `w:tblPrChange` (largura,
+  alinhamento, recuo, margens, layout, estilo, os lados de borda declarados), `w:tblGridChange` (a
+  grade), `w:trPrChange` (altura, linha de cabeçalho, extras; nova na lista: "Propriedades da
+  linha"), `w:tcPrChange` (sombreamento, alinhamento vertical, bordas, extras), `w:sectPrChange`
+  (papel, margens, colunas, numeração; os cabeçalhos de agora ficam) e a numeração inserida
+  (`w:ins` no `w:numPr`: o parágrafo deixa de ser item). A célula inserida (rejeitar) ou excluída
+  (aceitar) sai quando a coluna ou a linha inteira tem a mesma marca. Um passo de desfazer.
+- **Excluir linha** com o controle ligado deixa a linha, com `w:del` no `w:trPr` e o texto
+  excluído; **excluir coluna** marca cada célula com `w:cellDel`. Aceitar tira, rejeitar devolve.
+  A linha ou coluna que o próprio autor inseriu sai de verdade.
+- **Recortar e colar** o mesmo trecho no mesmo documento vira **movido**: `w:moveFrom`/`w:moveTo`
+  com as pontas (`moveFromRangeStart/End`, `moveToRangeStart/End`) e um nome (`moveN`).
+- Limites (README e docs/ARQUITETURA.md): rejeitar não desfaz a mescla (`w:cellMerge`), não tira a
+  célula inserida sozinha numa linha e não devolve o `w:numberingChange` (só guarda o texto do
+  número): ficam, e a mensagem diz quantas; mover só dentro de um parágrafo, fora de tabela e sem
+  marcas; em "Sem marcação" o parágrafo com a marca excluída, a imagem excluída e a tabulação ou
+  quebra de linha excluídas continuam como na 0.1.13 (medido: o realce do Qt não muda o tamanho
+  de uma imagem nem de uma tabulação; ver SPIKES).
+
+Colunas de texto (`w:cols`): spike feito (a página do Qt como uma coluna, dobrada na folha:
+funciona num documento solto, com quebra de coluna e hit-test), **adiado**: mudaria o mapa folha ↔
+página de toda a vista, dos campos de página, da impressão e das notas. Continuam preservadas e
+mostradas em uma coluna (docs/SPIKES.md, "0.1.14").
+
+Regressão com os 10 `.docx` reais da pasta de amostras (cópias temporárias, fora do
+repositório): abrir, salvar como, reabrir e salvar de novo. Todos gravam, passam na conferência e
+no validador, e a segunda gravação sai igual à primeira em c14n (só a hora de `docProps/core.xml`
+muda, como sempre); os avisos são os mesmos da 0.1.13 (CAIXA_DE_TEXTO e IMAGEM_FLUTUANTE em
+quatro deles).
+
+Testes: `teste_desempenho.py` (fixture nova `documento_plano`, equivalente sintética do arquivo
+real: 16 tabelas com as formas dele, 362 células, 89 itens; tiles por tecla numa célula de tabela
+que atravessa páginas, com contraprova; a tela com cache igual à refeita digitando na célula, com
+contraprova; listas sem recálculo e sem refazer as faixas por tile, com contraprova; p95 da pintura
+a 1/3, na célula e no item, com a tecla do Qt medida à parte), `teste_revisoes.py` (rejeitar
+tabela, grade, linha, célula, seção e numeração, com o arquivo gravado e o desfazer; excluir linha e
+coluna rastreados; recortar e colar como movimento, com a contraprova de colar outro texto).
+Reescrita, com motivo no teste: `teste_revisoes` esperava que rejeitar `w:cellIns` não fosse feito
+(a revisão ficava); agora a célula inserida sai (a linha inteira, todas inseridas).
+
 ## 0.1.13 - 2026-10-15
 
 Controle de alterações: as revisões do Word (inserções, exclusões, movimentos, formatação,

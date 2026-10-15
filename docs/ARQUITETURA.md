@@ -64,6 +64,23 @@ a base do bloco, a de antes ou a de agora), não o bloco inteiro; o tile guarda 
 documento cortada no corpo da página dele; e a conferência dos objetos flutuantes que refaz um
 trecho tira do cache só dali para baixo.
 
+Desde a 0.1.14, digitar numa célula não tira mais a tabela inteira do cache (numa tabela que
+atravessa páginas, era a tela toda). No sinal `contentsChange` (layout ainda velho) a vista guarda
+o retângulo da tabela de fora e o do bloco; na pintura, se a tabela tem o mesmo retângulo, as
+outras linhas da tabela não se moveram: com o bloco do mesmo tamanho, saem só as linhas do texto
+(a mesma regra do parágrafo); senão, só a linha da tabela (da base do texto da linha de cima ao
+topo do texto da de baixo). Nos dois casos só os tiles que cruzam a coluna da célula (com 400
+twips de folga): cada tile guarda também a faixa horizontal do documento que mostra. Tabela que
+mudou de altura: a tabela inteira, como antes. Os números das listas guardam a faixa vertical
+de cada item até o layout mudar (`Numerador.faixas`, pelo sinal `update` do layout): cada tile
+olhava todos os itens. As bordas e tabulações (`propriedades.desenhar`) guardam o que cada bloco
+tem para pintar até o documento mudar.
+
+O que não dá para tirar daqui: o `insertText` do Qt, num documento paginado, refaz TODAS as
+tabelas que vêm depois do ponto editado, as duas passadas de cada célula (medido e conferido no
+código do Qt 6.11; docs/SPIKES.md, 0.1.14). Num documento com muitas tabelas, digitar no começo
+custa dezenas de milissegundos que não são do EditDoc.
+
 Quebra de página: um atributo do parágrafo (`quebra_antes`). No `.docx` é `w:br w:type="page"` no
 começo do parágrafo. Quebra no meio do texto, ao ler, vira dois parágrafos: é a única perda de
 estrutura, e a aparência não muda.
@@ -883,7 +900,8 @@ Os formatos derivados entram no desfazer como o espaçador das notas: um passo a
 passo do usuário (`ConjuntoDeNotas.ajustar`). A conferência só olha o trecho editado, a não ser
 que a estrutura mude. Documento de uma seção só: nada disso roda.
 
-Limites: colunas são preservadas e mostradas em uma coluna (aviso COLUNAS, sem perda); o
+Limites: colunas são preservadas e mostradas em uma coluna (aviso COLUNAS, sem perda; o spike
+da 0.1.14 em docs/SPIKES.md mostra o caminho e por que ficou para depois); o
 parágrafo que não cabe numa seção mais baixa desce inteiro; o objeto flutuante à direita numa
 seção mais estreita fica na largura do documento; a altura do corpo de uma seção é a da sua
 variante de cabeçalho mais alta (como na 0.1.8); a área de notas usa a largura da seção mais
@@ -963,9 +981,36 @@ texto comum e o excluído sumia ao salvar.
   comentados e o texto dos comentários na margem direita; desligado, o texto final, sem
   comentários.
 
-Limites: rejeitar a revisão de célula, de propriedades de tabela, de seção e de numeração não é
-feito (exigiria refazer a grade ou a seção): elas só se aceitam, e a mensagem diz quantas ficaram;
-excluir linha ou coluna de tabela com o controle ligado não é rastreado (sai como antes); no modo
+Desde a 0.1.14 (`edicao/revisoes.py`, `formato_docx/revisoes.py`):
+
+- Rejeitar devolve o estado de antes guardado no elemento de mudança: o `w:tblPr` do
+  `w:tblPrChange` e a grade do `w:tblGridChange` (relidos pelo leitor numa tabela de mentira:
+  largura, alinhamento, recuo, margens, layout, estilo e extras; das bordas, só os lados que o
+  `w:tblBorders` de antes declara), o `w:trPr` do `w:trPrChange` (cabeçalho na beirada do
+  `headerRowCount`, altura, extras, com as marcas de linha inserida/excluída de agora), o `w:tcPr`
+  do `w:tcPrChange` (sombreamento, alinhamento vertical, bordas, extras, com as marcas de célula de
+  agora; se a mescla de antes era outra, fica), o `w:sectPr` do `w:sectPrChange` (relido por
+  `secoes.ler`, com os cabeçalhos de agora; o papel e as margens da última seção vão para o layout,
+  fora do desfazer, como na 0.1.12) e a numeração inserida (`w:ins` no `w:numPr`: o parágrafo
+  volta a não ter numeração direta). As linhas com `w:trPrChange` entram na lista ("Propriedades
+  da linha").
+- Célula inserida (rejeitar) ou excluída (aceitar): sai quando a coluna inteira (`removeColumns`)
+  ou a linha inteira tem a mesma marca; a célula sozinha fica (a grade do Qt não fica torta).
+- Excluir linha ou coluna com o controle ligado (`edicao/tabelas.py`): `w:del` no `w:trPr` da
+  linha ou `w:cellDel` no `w:tcPr` de cada célula da coluna (`fx_revisoes.com_marca`), e o texto
+  das células excluído, como no Word; a linha (ou a coluna inteira) que o próprio autor inseriu
+  sai de verdade. Um passo de desfazer.
+- Recortar e colar com o controle ligado (`lembrar_recorte`, `colar_como_movimento`): o recorte
+  guarda o trecho em dois `QTextCursor` (andam com a edição; o do fim não anda com o que é
+  inserido nele). Se o colado é o mesmo texto, no mesmo documento, e a origem continua inteira
+  excluída pelo autor, a origem vira `moveFrom`, o colado `moveTo`, e entram as quatro pontas com
+  um nome novo (`moveN`). Só trecho dentro de um parágrafo, fora de tabela e sem marcas.
+- Documento que só tem revisão de tabela ou de seção (sem texto revisado) passa a ter a lista e o
+  realce (`para_qt._tabela_revisada`; antes a lista ficava vazia).
+
+Limites: rejeitar não desfaz a mescla (`w:cellMerge`), nem tira a célula inserida sozinha numa
+linha, nem devolve o `w:numberingChange` (só guarda o texto do número de antes): ficam, e a
+mensagem diz quantas; no modo
 final, o parágrafo cuja marca foi excluída mas que ainda tem texto fica separado do de baixo, e a
 tabulação e a quebra de linha dentro do texto escondido continuam ocupando espaço; imagem e objeto
 excluídos não somem nos modos sem marcação; a formatação de parágrafo de antes não aparece no modo

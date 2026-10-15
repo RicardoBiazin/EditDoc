@@ -781,6 +781,145 @@ painel de revisões (2000 itens): 51 ms, em cache pela revisão do documento. Te
 `teste_desempenho` (o ponto "2000 revisoes, controle ligado" no p95 e
 `testar_modos_com_2000_revisoes`).
 
+## 0.1.14: o arquivo "plano" (tabelas), rejeitar o resto das revisões e colunas
+
+Feito em 15/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6 6.11.2,
+offscreen, dispositivo de 1440 dpi), com a máquina carregada (um jogo e o navegador abertos: o
+documento simples, que parado mede ~5 ms, mediu 9 a 11 ms). Scripts no rascunho da sessão, fora do
+repositório; o código do Qt conferido no `qtextdocumentlayout.cpp` do ramo 6.11 do qtbase.
+
+### Por que o `insertText` custa ~27 ms no plano
+
+O arquivo real de duas seções (13 páginas, 152 parágrafos de corpo com 89 itens de lista, 16
+tabelas com 362 células e cabeçalho repetido). `insertText` puro (sem pintura), mediana de 30
+teclas, conforme o ponto da tecla:
+
+| Bloco onde digita | ms por tecla |
+|---|---|
+| 0 (começo) | 32,7 |
+| 150 (1/4) | 26,0 |
+| 194 (1/3) | ~27 |
+| 300 (1/2) | 18,7 |
+| 420 | 9,8 |
+| 560 (fim) | 1,9 |
+
+O custo é proporcional ao que vem DEPOIS do ponto, e só às tabelas: com as tabelas tiradas do
+documento, 0,9 ms em qualquer ponto. Num documento sintético: 16 tabelas depois do ponto custam
+15,8 ms com página (`pageSize` com altura) e 0,06 ms sem página. O código do Qt explica:
+
+- `QTextDocumentLayoutPrivate::layoutFlow`, para cada quadro (tabela) no fluxo depois do trecho
+  editado: `if (document->pageSize().height() > 0.0f) cd->sizeDirty = true;` e refaz o quadro
+  (a tabela pode ter mudado de página). Os blocos comuns depois do trecho só são deslocados; as
+  tabelas são refeitas, todas, até o fim do documento. O laço só para antes do fim no layout
+  preguiçoso (`currentLazyLayoutPosition`), que só existe no layout do documento inteiro.
+- `layoutTable` refaz cada célula duas vezes: uma na largura infinita (para as larguras mínima e
+  máxima da coluna, mesmo com largura fixa) e uma na largura de verdade; `layoutCell` liga
+  `fullLayout = true` ("we get called with different widths all the time"), e cada bloco da
+  célula é refeito do zero (`QTextLayout::beginLayout` libera os glifos: o texto é moldado de
+  novo). O `goto recalc_minmax_widths` (terceira passada) NÃO acontece no plano (a soma das
+  larguras cabe; medido estreitando a última coluna: nada muda).
+
+Caminhos medidos para baixar isso, de fora do Qt:
+
+| Caminho | Medido no plano (começo) | Situação |
+|---|---|---|
+| tirar as bordas das células (o colapso de bordas do Qt consulta as vizinhas) | 31,3 → 30,1 ms | não resolve |
+| tirar formatos de tabela, célula, bloco e caractere | 31,9 → 25,6 ms | não resolve (e perde a aparência) |
+| texto de cada célula trocado por "x" | 31,7 → 22,9 ms | o custo é por célula, não só pelo texto |
+| `QFont.PreferNoShaping` em tudo | 25,8 → 23,7 ms | não resolve |
+| `setLayoutEnabled(False)` em volta da tecla | — | religar refaz o documento inteiro (`documentChanged(0, 0, length)`) |
+| layout próprio (`QAbstractTextDocumentLayout` em Python) | — | descartado: refazer a paginação do Qt, tabelas e floats em Python |
+
+Conclusão: com o `QTextDocumentLayout` do Qt, digitar antes de N tabelas custa O(células das N
+tabelas), em C++, e não há chave para desligar. O gate de 16 ms no plano não é alcançável nesta
+arquitetura enquanto o ponto tiver mais de ~150 células de tabela abaixo dele. Fica como pendência
+(caminhos: um documento por trecho entre tabelas, ou adiar o relayout das tabelas de baixo com um
+layout próprio — os dois são reescritas grandes).
+
+### O que era do EditDoc, e foi cortado
+
+Perfil da pintura (cProfile, 80 teclas a 1/3, numa célula): a tela inteira (20 tiles) saía do
+cache a cada tecla, porque a mudança dentro de tabela tirava a tabela inteira (e a do plano
+atravessa páginas); cada tile pedia o retângulo de todos os 89 itens de lista
+(`desenhar_rotulos`: 148 mil `blockBoundingRect` em 80 teclas) e interpretava os extras de cada
+bloco e fragmento (`propriedades.desenhar`).
+
+- Célula: a tabela com o mesmo retângulo de antes tira só as linhas do texto (bloco do mesmo
+  tamanho) ou só a linha da tabela, e só nos tiles da coluna da célula. Plano real a 1/3: 20 → 3,9
+  tiles por tecla (na célula a 1/2, 2,1).
+- Listas: a faixa vertical de cada item fica em cache até o layout mudar (sinal `update`); o
+  Numerador já não recalculava os números ao digitar dentro de um item (0 mudanças de estrutura
+  em 80 teclas, conferido): o custo de 11 ms da 0.1.12 era a pintura, não a contagem.
+- Bordas e tabulações: o que cada bloco tem para pintar fica em cache até o documento mudar.
+- Pintura de um tile do plano (tela inteira refeita, mediana de 10): 4,5 → 2,1 ms.
+
+### Tabela do gate (p95 em ms, 80 teclas com `viewport().grab()`, um processo por ponto, mediana de 3 rodadas intercaladas 0.1.13 x 0.1.14)
+
+Painel de 1000 × 800 da `teste_desempenho` (fixtures em código) e janela de 1400 × 950 (arquivo
+real, roteiro `gate_plano.py`); a coluna 0.1.13 é o código do commit da 0.1.13 extraído do git,
+medido na mesma hora (a máquina ficou parada nesta medida: o simples a 5,4 ms).
+
+| Documento | Onde digita | 0.1.13 | 0.1.14 |
+|---|---|---|---|
+| documento simples (referência) | corpo | 5,5 | 5,4 |
+| manual sintético | capa | 10,7 | 10,5 |
+| idem | sumário | 10,5 | 10,0 |
+| idem | corpo | 7,2 | 6,8 |
+| capa cheia | antes das âncoras | 16,1 | 15,9 |
+| 2000 revisões, controle ligado | corpo | 12,4 | 10,2 |
+| **plano sintético** (novo, `documento_plano`) | 1/3 do documento | 64,8 | 50,5 |
+| idem | célula a 1/2 | 43,9 | 38,0 |
+| idem | item de lista a 1/4 | 62,6 | 51,0 |
+| **plano real** (2 seções, 16 tabelas) | 1/3 (numa célula) | 87,1 | 49,9 |
+| idem | célula a 1/2 | 57,6 | 35,3 |
+| idem | item de lista a 1/4 | 45,6 | 40,0 |
+
+Nenhum ponto da tabela do gate piorou. O plano não chega a 16 ms: no plano real a 1/3 a tecla
+sozinha (o `insertText` do Qt) mede 26 a 28 ms e a pintura 10 a 13 ms (na 0.1.13 a pintura refazia
+20 tiles por tecla). O gate de 16 ms continua não alcançável nesse documento, pela causa acima.
+
+### Rejeitar (0.1.14)
+
+O estado de antes está inteiro no elemento de mudança (`w:tblPr`, `w:trPr`, `w:tcPr`, `w:sectPr`
+de antes). Escolhido: reler esse elemento com o próprio leitor (numa tabela, linha, célula ou seção
+de mentira) e aplicar o resultado no Qt, em vez de interpretar cada propriedade de novo. Limites
+encontrados: as bordas de tabela que vinham do estilo não são relidas (o estilo de tabela é XML do
+arquivo, fora do Qt): só os lados declarados no `w:tblBorders` de antes voltam; o `w:cellMerge`
+pediria partir a célula do Qt; a célula inserida sozinha deixaria a linha com uma célula a menos
+(o `QTextTable` não tem linha torta).
+
+Modo "Sem marcação" (o que a 0.1.13 deixou de limite), medido de novo: o formato adicional do
+`QSyntaxHighlighter` não muda o tamanho de uma imagem (`ImageWidth`/`ImageHeight` de 0,01 no
+realce: a imagem continua 200 x 100), não encolhe a tabulação nem desfaz a quebra de linha, e o Qt
+não esconde o separador de bloco. Os três continuam limites (exigiriam um manipulador de imagem
+próprio e mudar o texto, o que entraria no desfazer).
+
+### Colunas de texto: spike (adiado)
+
+Ideia testada: a página do Qt vira UMA coluna (`pageSize` com a largura da coluna e a altura do
+corpo) e a pintura dobra N páginas do Qt numa folha, lado a lado. Spike num `QTextDocument` solto
+(2 colunas iguais, A4, 60 parágrafos): as linhas partem entre colunas como entre páginas, a quebra
+de coluna é a quebra de página do bloco, o hit-test dobrado acha a posição certa (coluna 2 da
+folha 1 → parágrafo 14) e o layout leva 2 a 4 ms. PNG da folha em
+`%TEMP%\editdoc_0114_png\spike_colunas_folha*.png` (fora do repositório).
+
+Por que não entrou nesta versão (o que o mecanismo atual teria de mudar):
+
+- o documento é um só, com uma altura de página: numa seção de colunas, cada página do Qt passa a
+  ser uma coluna, e a folha passa a valer N páginas. Tudo que hoje supõe "folha n = faixa
+  [n·H, (n+1)·H)" muda: o `Mapa` da tela, os tiles (um tile mostraria N faixas), o cursor, a
+  seleção, o arraste de objeto, o hit-test, a régua, os objetos flutuantes relativos à página, as
+  notas de rodapé por folha, PAGE/NUMPAGES/SECTIONPAGES, a impressão e o PDF;
+- a seção contínua com colunas no meio da folha precisaria de páginas do Qt mais baixas que as
+  outras (o espaçador das notas daria a altura, mas o balanceamento da última folha é iterativo);
+- a quebra de coluna no MEIO do parágrafo (`w:br w:type="column"`, hoje um caractere de objeto) não
+  quebra página no Qt: teria de partir o parágrafo, como a quebra de página;
+- largura: a seção de colunas teria o recuo direito escondido da 0.1.12 (documento na largura da
+  seção mais larga), o que serve; colunas desiguais pediriam larguras diferentes por página.
+
+Risco alto para uma versão que também mexe no layout por desempenho: fica para uma versão própria,
+começando pelo `Mapa` folha → páginas (sem colunas, nada muda).
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
@@ -790,8 +929,13 @@ painel de revisões (2000 itens): 51 ms, em cache pela revisão do documento. Te
 - 0.1.11: abrir no Word, sem reparo, o arquivo que não salvava até a 0.1.10, gravado pela 0.1.11.
 - 0.1.12: abrir no Word, sem reparo, um arquivo de três seções (uma paisagem, cabeçalhos
   herdados, página ímpar) gravado pelo EditDoc, e um com quebra de seção inserida e apagada.
-- 0.1.12: digitação no arquivo real de duas seções a 1/3 (48,6 ms já na 0.1.11): o `insertText`
-  do Qt (27 ms) e os números das listas (11 ms).
+- 0.1.12/0.1.14: digitação no arquivo real de duas seções a 1/3: a parte do EditDoc foi cortada
+  na 0.1.14 (87 → 50 ms no roteiro da janela de 1400 × 950); o resto é o `insertText` do Qt, que
+  refaz todas as tabelas abaixo do ponto (26 a 28 ms). Caminhos: um documento por trecho entre
+  tabelas, ou layout próprio das tabelas de baixo (reescritas grandes).
+- 0.1.14: abrir no Word, sem reparo, um arquivo com linha e coluna excluídas com o controle ligado,
+  um movimento (recortar e colar) e as rejeições de tabela, célula e seção.
+- 0.1.14: colunas de texto na tela e no PDF (spike feito, adiado: ver "0.1.14").
 - 0.1.13: abrir no Word, sem reparo, um arquivo com alterações controladas gravado pelo EditDoc
   (digitar, apagar, formatar e Enter com o controle ligado, dois autores; aceitar e rejeitar
   parte delas) e conferir que o Word mostra as mesmas revisões, autores e datas.

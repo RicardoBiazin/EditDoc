@@ -76,6 +76,12 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   autor**; **Anterior** e **Próxima**; também no menu de contexto. O painel lateral
   **Comentários e revisões** tem a lista das alterações (tipo, autor, data e o trecho): clique
   para ir até ela; Aceitar e Rejeitar valem para a escolhida. Ctrl+Z desfaz cada comando.
+  Desde a 0.1.14 também se **rejeitam** as alterações de propriedades da tabela, da grade, da
+  linha, da célula e da seção (volta o que era antes: largura, alinhamento, altura, sombreamento,
+  papel, margens...), a numeração posta com o controle ligado e a célula inserida ou excluída
+  quando a coluna (ou a linha) inteira tem a mesma marca; **excluir linha ou coluna** de tabela
+  com o controle ligado fica marcado (como no Word), e **recortar e colar** o mesmo trecho dentro
+  do documento vira **movido** (origem e destino em verde, ligados).
   Copiar leva o texto como se lê (em Toda a marcação, o final, como o Word), Localizar não acha
   o que está escondido e a contagem de palavras conta o texto final. **Imprimir marcações**
   (ligado por padrão) imprime e exporta o PDF como a tela mostra, com os **comentários na
@@ -237,7 +243,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.13-win64.zip` da página
+1. Baixe `EditDoc-0.1.14-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -356,10 +362,13 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   largura da mais larga. Copiar e colar não leva a quebra de seção (o texto vai). Desfazer não
   desfaz a troca de papel, orientação e margens (como antes da 0.1.12), nem "Vincular ao
   anterior".
-- Controle de alterações (0.1.13): a alteração de célula, de propriedades da tabela, da seção e
-  da numeração só pode ser **aceita** (rejeitar não é feito; a mensagem diz quantas ficaram);
-  excluir linha ou coluna de tabela com o controle ligado não fica marcado; recortar e colar
-  vira exclusão e inserção (não "movido"). Em **Sem marcação**, o parágrafo cuja marca foi
+- Controle de alterações (0.1.13; 0.1.14): rejeitar não desfaz a **mescla** de células
+  (w:cellMerge), nem a célula inserida sozinha numa linha (a grade ficaria torta), nem a
+  numeração antiga gravada só como texto (w:numberingChange): elas ficam, e a mensagem diz
+  quantas; as bordas que vinham do estilo da tabela antes da alteração não voltam (as declaradas
+  na tabela, sim); desfazer a rejeição da seção da última página não desfaz o papel e as
+  margens (como na 0.1.12). Recortar e colar vira **movido** só dentro de um parágrafo, fora de
+  tabela e sem marcadores no trecho; o resto continua exclusão e inserção. Em **Sem marcação**, o parágrafo cuja marca foi
   excluída e que ainda tem texto continua numa linha própria (o Word junta com o de baixo), uma
   tabulação ou quebra de linha dentro do texto excluído continua ocupando espaço, e a imagem
   excluída continua aparecendo; em **Original** a formatação de parágrafo de antes não aparece.
@@ -446,7 +455,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.13-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.14-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

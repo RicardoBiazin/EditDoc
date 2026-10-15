@@ -44,7 +44,8 @@ NOMES_DOS_TIPOS = {"ins": "Inserção", "del": "Exclusão", "moveFrom": "Movido 
                    "paragrafo": "Formatação de parágrafo", "marca_ins": "Parágrafo inserido",
                    "marca_del": "Parágrafo excluído", "linha_ins": "Linha inserida",
                    "linha_del": "Linha excluída", "tabela": "Propriedades da tabela",
-                   "secao": "Propriedades da seção", "numeracao": "Numeração"}
+                   "secao": "Propriedades da seção", "numeracao": "Numeração",
+                   "linha_prop": "Propriedades da linha", "celula": "Célula"}
 
 
 def eh_insercao(rev: Revisao | None) -> bool:

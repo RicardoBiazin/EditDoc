@@ -424,6 +424,43 @@ def _preenchimentos(painter, bloco, ap) -> None:
         painter.drawText(QPointF(origem.x() + x, y), simbolo * n)
 
 
+def _cache_de_blocos(doc: QTextDocument) -> dict:
+    """O que cada bloco tem para pintar, por numero do bloco, enquanto o documento nao muda
+    (0.1.14: cada tile lia e interpretava os extras de cada bloco e de cada fragmento)."""
+    guardado = getattr(doc, "_cache_pintura_props", None)
+    if guardado is None or guardado[0] != doc.revision() or guardado[1] != doc.blockCount():
+        guardado = (doc.revision(), doc.blockCount(), {})
+        try:
+            doc._cache_pintura_props = guardado
+        except (AttributeError, RuntimeError):
+            pass
+    return guardado[2]
+
+
+def _info_do_bloco(cache: dict, bloco) -> tuple:
+    """(aparencia com bordas ou tabulacoes, ou None; algum trecho com borda; esta' em tabela)."""
+    n = bloco.blockNumber()
+    info = cache.get(n)
+    if info is None:
+        extras = extras_de_ppr(bloco.blockFormat())
+        ap = aparencia_paragrafo(extras) if extras else None
+        if ap is not None and not ap.bordas and not ap.tabulacoes:
+            ap = None
+        com_borda = False
+        it = bloco.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            it += 1
+            if frag.isValid():
+                ex = extras_de_rpr(frag.charFormat())
+                if ex and aparencia_run(ex).borda is not None:
+                    com_borda = True
+                    break
+        info = (ap, com_borda, QTextCursor(bloco).currentTable() is not None)
+        cache[n] = info
+    return info
+
+
 def desenhar(painter, doc: QTextDocument, recorte: QRectF | None) -> None:
     """Bordas de paragrafo e de trecho e preenchimento das tabulacoes, nos blocos que cruzam o
     recorte (coordenadas do documento, painter ja' transformado). A mesma funcao para a tela,
@@ -434,24 +471,32 @@ def desenhar(painter, doc: QTextDocument, recorte: QRectF | None) -> None:
         bloco = bloco.previous() if bloco.previous().isValid() else bloco
     else:
         bloco = doc.firstBlock()
+    cache = _cache_de_blocos(doc)
     painter.save()
     try:
         while bloco.isValid():
+            ap, com_borda, em_tabela = _info_do_bloco(cache, bloco)
+            if ap is None and not com_borda:
+                if recorte is not None and not em_tabela:
+                    # Bloco sem nada para pintar: so' conta para saber se ja' passou do recorte.
+                    if dl.blockBoundingRect(bloco).top() > recorte.bottom() + 2000:
+                        break
+                bloco = bloco.next()
+                continue
             r = dl.blockBoundingRect(bloco)
             if recorte is not None and r.top() > recorte.bottom() + 2000:
-                if QTextCursor(bloco).currentTable() is None:
+                if not em_tabela:
                     break
             if recorte is None or r.adjusted(-2000, -2000, 2000, 2000).intersects(recorte):
-                extras = extras_de_ppr(bloco.blockFormat())
-                if extras:
-                    ap = aparencia_paragrafo(extras)
+                if ap is not None:
                     if ap.bordas:
                         _bordas_do_bloco(painter, bloco, dl, ap,
                                          _bordas_iguais(bloco.previous(), bloco),
                                          _bordas_iguais(bloco, bloco.next()))
                     if ap.tabulacoes:
                         _preenchimentos(painter, bloco, ap)
-                _trechos_com_borda(painter, bloco)
+                if com_borda:
+                    _trechos_com_borda(painter, bloco)
             bloco = bloco.next()
     except RuntimeError as erro:  # pintura nunca derruba a janela
         log.warning("bordas e tabulacoes nao pintadas: %s", erro)

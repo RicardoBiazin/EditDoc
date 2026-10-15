@@ -183,11 +183,109 @@ def inserir_coluna(editor, direita: bool) -> bool:
     return True
 
 
+def _controle(editor) -> bool:
+    from editdoc.edicao import revisoes as ed_revisoes
+    try:
+        return ed_revisoes.controle_ligado(editor)
+    except (AttributeError, RuntimeError):
+        return False
+
+
+def _marcar_celula(editor, tabela: QTextTable, r: int, c: int, chave: str, recipiente: str,
+                   tipo: str) -> None:
+    """Poe a marca `tipo` (w:del da linha ou w:cellDel da celula) no JSON da celula (chave
+    "extras_linha" ou "extras") e marca o texto dela como excluido (0.1.14)."""
+    import json
+    from editdoc.edicao import revisoes as ed_revisoes
+    from editdoc.formato_docx import revisoes as fx_revisoes
+    celula = tabela.cellAt(r, c)
+    fmt = celula.format().toTableCellFormat()
+    dado = para_qt.ler_json(fmt, para_qt.PROP_CELULA)
+    atual = dado.get(chave) if isinstance(dado.get(chave), str) else None
+    dado[chave] = fx_revisoes.com_marca(atual, recipiente, ed_revisoes.nova(editor, tipo))
+    fmt.setProperty(para_qt.PROP_CELULA, json.dumps(dado, sort_keys=True))
+    celula.setFormat(fmt)
+    from editdoc.ponte_qt import revisoes as pq_revisoes
+    pq_revisoes.marcar_revisado(tabela.document())
+    tabela.document()._lista_revisoes = None
+    a = celula.firstCursorPosition().position()
+    b = celula.lastCursorPosition().position()
+    if b > a:
+        ed_revisoes.apagar_intervalo(editor, tabela.document(), a, b)
+
+
+def _inserida_pelo_autor(editor, extras: str | None, nome: str) -> bool:
+    """A linha (w:ins no trPr) ou a celula (w:cellIns) foi inserida pelo proprio autor, com o
+    controle ligado, e ainda nao aceita: excluir a remove de verdade (como o texto)."""
+    from editdoc.edicao import revisoes as ed_revisoes
+    from editdoc.formato_docx import revisoes as fx_revisoes
+    from editdoc.formato_docx.nomes import q
+    el = fx_revisoes.elemento_canonico(extras)
+    marca = el.find(q(nome)) if el is not None else None
+    return marca is not None and (marca.get(q("author")) or "") == ed_revisoes.autor(editor)
+
+
+def _excluir_linhas_rastreando(editor, tabela: QTextTable, r: int, n_r: int,
+                               cursor: QTextCursor) -> bool:
+    """Excluir linha com o controle ligado (0.1.14): a linha fica, com w:del no w:trPr e o texto
+    das celulas excluido, como no Word. A linha que o proprio autor inseriu sai de verdade."""
+    cursor.beginEditBlock()
+    try:
+        for linha in reversed(range(r, r + n_r)):
+            dado = para_qt.ler_json(tabela.cellAt(linha, 0).format(), para_qt.PROP_CELULA)
+            extras = dado.get("extras_linha") if isinstance(dado.get("extras_linha"), str) else None
+            if _inserida_pelo_autor(editor, extras, "ins"):
+                if tabela.rows() > 1:
+                    tabela.removeRows(linha, 1)
+                continue
+            for c in range(tabela.columns()):
+                cel = tabela.cellAt(linha, c)
+                if cel.row() == linha and cel.column() == c:
+                    _marcar_celula(editor, tabela, linha, c, "extras_linha", "trPr", "del")
+        para_qt.aplicar_formatos_das_celulas(tabela)
+    finally:
+        cursor.endEditBlock()
+    editor.setTextCursor(tabela.cellAt(min(r, tabela.rows() - 1), 0).firstCursorPosition())
+    return True
+
+
+def _excluir_colunas_rastreando(editor, tabela: QTextTable, c: int, n_c: int,
+                                linha_atual: int, cursor: QTextCursor) -> bool:
+    """Excluir coluna com o controle ligado (0.1.14): as celulas ficam, com w:cellDel no w:tcPr
+    e o texto excluido. A coluna que o proprio autor inseriu (todas as celulas com w:cellIns
+    dele) sai de verdade."""
+    larguras = _larguras_tw(tabela)
+    cursor.beginEditBlock()
+    try:
+        for col in reversed(range(c, c + n_c)):
+            todas_dele = all(_inserida_pelo_autor(
+                editor, para_qt.ler_json(tabela.cellAt(x, col).format(),
+                                         para_qt.PROP_CELULA).get("extras"), "cellIns")
+                for x in range(tabela.rows()))
+            if todas_dele and tabela.columns() > 1:
+                tabela.removeColumns(col, 1)
+                del larguras[col]
+                _definir_larguras(tabela, larguras)
+                continue
+            for x in range(tabela.rows()):
+                cel = tabela.cellAt(x, col)
+                if cel.row() == x and cel.column() == col:
+                    _marcar_celula(editor, tabela, x, col, "extras", "tcPr", "cellDel")
+        para_qt.aplicar_formatos_das_celulas(tabela)
+    finally:
+        cursor.endEditBlock()
+    editor.setTextCursor(tabela.cellAt(linha_atual, min(c, tabela.columns() - 1))
+                         .firstCursorPosition())
+    return True
+
+
 def excluir_linhas(editor) -> bool:
     tabela, celula, cursor = _celula_atual(editor)
     if tabela is None:
         return False
     r, n_r, _c, _n = _faixa_selecionada(cursor, tabela, celula)
+    if _controle(editor):
+        return _excluir_linhas_rastreando(editor, tabela, r, n_r, cursor)
     if n_r >= tabela.rows():
         return excluir_tabela(editor)
     cursor.beginEditBlock()
@@ -203,6 +301,8 @@ def excluir_colunas(editor) -> bool:
     if tabela is None:
         return False
     _r, _n, c, n_c = _faixa_selecionada(cursor, tabela, celula)
+    if _controle(editor):
+        return _excluir_colunas_rastreando(editor, tabela, c, n_c, celula.row(), cursor)
     if n_c >= tabela.columns():
         return excluir_tabela(editor)
     linha_atual = celula.row()  # a QTextTableCell fica invalida depois de mexer na grade

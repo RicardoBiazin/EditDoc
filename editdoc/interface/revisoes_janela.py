@@ -188,8 +188,9 @@ class ControleDeRevisoes(QObject):
             partes.append(f"{n} alteraç{'ão' if n == 1 else 'ões'} "
                           f"{verbo}{'' if n == 1 else 's'}.")
         if res.so_aceitar:
-            partes.append(f"{res.so_aceitar} alteração(ões) de tabela, de seção ou de numeração "
-                          "só podem ser aceitas no EditDoc e ficaram como estavam.")
+            partes.append(f"{res.so_aceitar} alteração(ões) não puderam ser resolvidas no EditDoc "
+                          "(célula sozinha inserida ou excluída, mescla de células ou numeração "
+                          "antiga) e ficaram como estavam.")
         if not partes:
             partes.append("Nenhuma alteração para resolver.")
         self._mensagem(" ".join(partes))

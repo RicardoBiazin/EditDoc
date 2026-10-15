@@ -170,7 +170,37 @@ class Numerador:
         #: depois de um ajuste feito na hora, ao abrir, nao percorre o documento de novo)
         self.versao = 0
         self.versao_ajustada = -1
+        #: geracao do layout (0.1.14): sobe a cada `update` do layout do documento. As faixas
+        #: verticais dos itens (`faixas`) valem enquanto ela e os rotulos nao mudam: a pintura
+        #: de cada tile olhava todos os itens (blockBoundingRect de cada um, por tile).
+        self.geracao_layout = 0
+        self._faixas: tuple | None = None
+        self._serie_rotulos = 0
         doc.contentsChange.connect(self._mudou)
+        doc.documentLayout().update.connect(self._layout_mudou)
+
+    def _layout_mudou(self, *_args) -> None:
+        self.geracao_layout += 1
+
+    def faixas(self, doc: QTextDocument) -> list[tuple[float, float, int]]:
+        """(topo, base, numero do bloco) de cada item com layout, na ordem do documento."""
+        rotulos = self.rotulos()
+        dl = doc.documentLayout()
+        chave = (self.geracao_layout, self._serie_rotulos, doc.revision(), id(dl))
+        if self._faixas is not None and self._faixas[0] == chave:
+            return self._faixas[1]
+        lista = []
+        for numero in rotulos:
+            bloco = doc.findBlockByNumber(numero)
+            if not bloco.isValid() or bloco.layout() is None or bloco.layout().lineCount() == 0:
+                continue
+            r = dl.blockBoundingRect(bloco)
+            lista.append((r.top(), r.bottom(), numero))
+        # O blockBoundingRect pode ter completado um layout preguicoso (sobe a geracao): a chave
+        # e' a de depois.
+        chave = (self.geracao_layout, self._serie_rotulos, doc.revision(), id(dl))
+        self._faixas = (chave, lista)
+        return lista
 
     def _mudou(self, _pos: int, removidos: int, adicionados: int) -> None:
         doc = self._doc()
@@ -247,6 +277,7 @@ class Numerador:
         mudou = desenho != self._chave_desenho
         self._chave_desenho = desenho
         self._rotulos = novos
+        self._serie_rotulos += 1
         return mudou
 
     def imagem(self, ident: int | None) -> QImage | None:
@@ -468,10 +499,17 @@ def desenhar_rotulos(painter, doc: QTextDocument, recorte: QRectF | None) -> Non
         return
     cat = catalogo(doc)
     dl = doc.documentLayout()
+    # 0.1.14: so' os itens cuja faixa vertical cruza o recorte (as faixas ficam em cache ate' o
+    # layout mudar); ate' a 0.1.13 cada tile pedia o retangulo de todos os itens.
+    faixas = numerador.faixas(doc)
+    if recorte is not None:
+        r0, r1 = recorte.top(), recorte.bottom()
+        faixas = [f for f in faixas if f[0] < r1 and f[1] > r0]
     painter.save()
     try:
-        for numero, rotulo in rotulos.items():
-            if rotulo.nivel.oculto:
+        for _topo, _base, numero in faixas:
+            rotulo = rotulos.get(numero)
+            if rotulo is None or rotulo.nivel.oculto:
                 continue
             bloco = doc.findBlockByNumber(numero)
             if not bloco.isValid() or bloco.layout() is None or bloco.layout().lineCount() == 0:

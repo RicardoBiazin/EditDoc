@@ -34,7 +34,7 @@ from dataclasses import astuple
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QAbstractTextDocumentLayout, QColor, QPainter, QPalette,
-                           QPen, QPixmap, QTextCharFormat, QTextCursor, QTextFormat,
+                           QPen, QPixmap, QTextCharFormat, QTextCursor, QTextFormat, QTextTable,
                            QTransform)
 from PySide6.QtWidgets import QAbstractScrollArea
 
@@ -450,7 +450,7 @@ class VistaPaginas(QAbstractScrollArea):
         self._cache: OrderedDict = OrderedDict()
         self._bytes_no_cache = 0
         self._altura_doc_anterior: float | None = None
-        self._pendencias: list[tuple[int, int]] = []
+        self._pendencias: list[tuple] = []
         #: Objetos flutuantes (0.1.7): onde estavam (se algum muda, o cache sai inteiro) e se
         #: os tiles tem fundo transparente (ha' objeto no cabecalho ou rodape, pintado antes).
         self._assinatura_flutuantes: tuple | None = None
@@ -605,9 +605,13 @@ class VistaPaginas(QAbstractScrollArea):
         self._bytes_faixas = 0
         self._pendencias = []
 
-    def _invalidar_faixa(self, y0: float, y1: float) -> None:
-        for chave in [k for k, v in self._cache.items() if v[2] > y0 and v[1] < y1]:
-            _, _, _, nbytes = self._cache.pop(chave)
+    def _invalidar_faixa(self, y0: float, y1: float, x0: float = -math.inf,
+                         x1: float = math.inf) -> None:
+        """Tira do cache os tiles que mostram a faixa [y0, y1) do documento (twips) e, desde a
+        0.1.14, so' os que cruzam [x0, x1) na horizontal (a celula editada)."""
+        for chave in [k for k, v in self._cache.items()
+                      if v[2] > y0 and v[1] < y1 and v[5] > x0 and v[4] < x1]:
+            nbytes = self._cache.pop(chave)[3]
             self._bytes_no_cache -= nbytes
 
     def _mudou_texto(self, pos: int, removido: int, adicionado: int) -> None:
@@ -619,9 +623,30 @@ class VistaPaginas(QAbstractScrollArea):
         # A base do bloco ANTES da mudanca (o layout ainda e' o velho aqui): uma linha que sai do
         # bloco deixa tinta abaixo da base nova, e a faixa invalidada tem de chegar ate' la'.
         doc = self.layout_pag.doc
-        base_antiga = doc.documentLayout().blockBoundingRect(doc.findBlock(pos)).bottom()
-        self._pendencias.append((pos, adicionado, base_antiga))
+        dl = doc.documentLayout()
+        r = dl.blockBoundingRect(doc.findBlock(pos))
+        base_antiga = r.bottom()
+        # Dentro de tabela (0.1.14): o retangulo da tabela e do bloco ANTES da mudanca. Se os dois
+        # nao mudam, so' a linha da tabela (ou so' as linhas do texto) sai do cache.
+        tabela = self._tabela_externa(pos)
+        antes = None
+        if tabela is not None:
+            rt = dl.frameBoundingRect(tabela)
+            antes = (rt.top(), rt.bottom(), r.top(), r.bottom())
+        self._pendencias.append((pos, adicionado, base_antiga, antes))
         self.viewport().update()
+
+    def _tabela_externa(self, pos: int):
+        """O quadro de primeiro nivel (a tabela de fora, se aninhada) que contem `pos`, ou None."""
+        doc = self.layout_pag.doc
+        cursor = QTextCursor(doc)
+        cursor.setPosition(min(max(pos, 0), doc.characterCount() - 1))
+        quadro = cursor.currentFrame()
+        externo = None
+        while quadro is not None and quadro.parentFrame() is not None:
+            externo = quadro
+            quadro = quadro.parentFrame()
+        return externo
 
     def _aplicar_pendencias(self) -> None:
         """Invalida os tiles afetados pelas mudancas anotadas, com o layout ja refeito.
@@ -645,7 +670,21 @@ class VistaPaginas(QAbstractScrollArea):
             topo = min(self._faixa_de(p[0], p[0])[0] for p in pendencias)
             self._invalidar_faixa(topo, math.inf)
             return
-        pos, adicionado, base_antiga = pendencias[0]
+        pos, adicionado, base_antiga, antes = pendencias[0]
+        if antes is not None:
+            faixa = self._faixa_na_tabela(pos, adicionado, antes)
+            if faixa is not None:
+                xs = self._colunas_da_celula(pos)
+                if faixa == "linhas":
+                    linhas = self._linhas_da_mudanca(pos, na_tabela=True)
+                    if linhas is not None:
+                        topo, base = self._faixa_do_bloco(pos, pos + adicionado)
+                        self._invalidar_linhas(linhas, topo, max(base, base_antiga), xs)
+                        return
+                faixa = self._faixa_da_linha_da_tabela(pos)
+                if faixa is not None:
+                    self._invalidar_faixa(*faixa, *xs)
+                    return
         topo, base = self._faixa_de(pos, pos + adicionado)
         # So' as linhas que podem ter mudado (0.1.8): da linha anterior a' da mudanca (apagar
         # pode puxar uma palavra para cima) ate' a base do bloco, a de antes ou a de agora. Num
@@ -655,20 +694,109 @@ class VistaPaginas(QAbstractScrollArea):
         if linhas is None:
             self._invalidar_faixa(topo, max(base, base_antiga))
             return
+        self._invalidar_linhas(linhas, topo, max(base, base_antiga))
+
+    def _invalidar_linhas(self, linhas, topo: float, base: float,
+                          xs: tuple = ()) -> None:
         anterior, atual = linhas
         if anterior is not None:
-            self._invalidar_faixa(max(topo, anterior[0]), anterior[1])
-        self._invalidar_faixa(max(topo, atual), max(base, base_antiga))
+            self._invalidar_faixa(max(topo, anterior[0]), anterior[1], *xs)
+        self._invalidar_faixa(max(topo, atual), base, *xs)
 
-    def _linhas_da_mudanca(self, pos: int):
+    #: Folga horizontal (twips) em volta do texto da celula: acolchoamento, borda e a tinta da
+    #: letra que passa da caixa (italico).
+    FOLGA_DA_CELULA_TW = 400.0
+
+    def _colunas_da_celula(self, pos: int) -> tuple[float, float]:
+        """(x0, x1) da celula da tabela de fora que contem `pos`, com folga; sem limite se a
+        celula nao e' achada."""
+        doc = self.layout_pag.doc
+        dl = doc.documentLayout()
+        tabela = self._tabela_externa(pos)
+        if not isinstance(tabela, QTextTable):
+            return -math.inf, math.inf
+        celula = tabela.cellAt(pos)
+        if not celula.isValid():
+            return -math.inf, math.inf
+        a = dl.blockBoundingRect(doc.findBlock(celula.firstPosition()))
+        b = dl.blockBoundingRect(doc.findBlock(celula.lastPosition()))
+        folga = self.FOLGA_DA_CELULA_TW
+        return min(a.left(), b.left()) - folga, max(a.right(), b.right()) + folga
+
+    def _faixa_do_bloco(self, inicio: int, fim: int) -> tuple[float, float]:
+        doc = self.layout_pag.doc
+        dl = doc.documentLayout()
+        return (dl.blockBoundingRect(doc.findBlock(inicio)).top(),
+                dl.blockBoundingRect(doc.findBlock(fim)).bottom())
+
+    def _faixa_na_tabela(self, pos: int, adicionado: int, antes):
+        """Digitar numa celula (0.1.14). Ate' a 0.1.13 a tabela inteira saia do cache a cada
+        tecla (numa tabela que atravessa paginas, a tela toda). Se a tabela tem o mesmo retangulo
+        de antes, as outras linhas da tabela nao se moveram: "linhas" quando o bloco editado
+        tambem tem o mesmo retangulo (so' as linhas do texto mudam), True quando so' a linha da
+        tabela pode ter mudado, None para o caso conservador (a tabela inteira)."""
+        doc = self.layout_pag.doc
+        dl = doc.documentLayout()
+        tabela = self._tabela_externa(pos)
+        if tabela is None:
+            return None
+        rt = dl.frameBoundingRect(tabela)
+        t0, t1, b0, b1 = antes
+        if abs(rt.top() - t0) >= 0.5 or abs(rt.bottom() - t1) >= 0.5:
+            return None
+        fim = doc.findBlock(pos + adicionado)
+        if fim != doc.findBlock(pos):
+            return True
+        r = dl.blockBoundingRect(fim)
+        if abs(r.top() - b0) < 0.5 and abs(r.bottom() - b1) < 0.5:
+            return "linhas"
+        return True
+
+    def _faixa_da_linha_da_tabela(self, pos: int):
+        """(topo, base) da linha da tabela da celula de `pos` (a da tabela de fora, se
+        aninhada), com as bordas: da base do texto da linha de cima ao topo do texto da linha de
+        baixo (ou a borda da tabela). None se a celula nao e' achada."""
+        doc = self.layout_pag.doc
+        dl = doc.documentLayout()
+        tabela = self._tabela_externa(pos)
+        if not isinstance(tabela, QTextTable):
+            return None
+        celula = tabela.cellAt(pos)
+        if not celula.isValid():
+            return None
+        r0 = celula.row()
+        r1 = r0 + celula.rowSpan() - 1
+        rt = dl.frameBoundingRect(tabela)
+
+        def blocos_da_linha(r: int):
+            for c in range(tabela.columns()):
+                cel = tabela.cellAt(r, c)
+                if cel.isValid():
+                    yield (doc.findBlock(cel.firstPosition()), doc.findBlock(cel.lastPosition()))
+
+        if r0 == 0:
+            topo = rt.top()
+        else:
+            topo = max(dl.blockBoundingRect(b).bottom() for _a, b in blocos_da_linha(r0 - 1))
+            topo = min(topo, min(dl.blockBoundingRect(a).top() for a, _b in blocos_da_linha(r0)))
+        if r1 >= tabela.rows() - 1:
+            base = rt.bottom()
+        else:
+            base = min(dl.blockBoundingRect(a).top() for a, _b in blocos_da_linha(r1 + 1))
+            base = max(base, max(dl.blockBoundingRect(b).bottom() for _a, b in blocos_da_linha(r1)))
+        return topo, base
+
+    def _linhas_da_mudanca(self, pos: int, na_tabela: bool = False):
         """((topo, base) da linha anterior, topo da linha de `pos`), em twips do documento, ou
         None dentro de tabela ou sem layout (vale o bloco inteiro). A linha anterior vai a' parte:
         entre ela e a da mudanca pode haver uma pagina inteira (a linha que desceu para baixo de
-        um objeto), e nada ali muda."""
+        um objeto), e nada ali muda. `na_tabela` (0.1.14): quem chama ja' conferiu que a tabela
+        e o bloco tem o mesmo retangulo de antes da mudanca."""
         doc = self.layout_pag.doc
         bloco = doc.findBlock(pos)
         lay = bloco.layout()
-        if lay is None or lay.lineCount() == 0 or QTextCursor(bloco).currentTable() is not None:
+        if lay is None or lay.lineCount() == 0 or (
+                not na_tabela and QTextCursor(bloco).currentTable() is not None):
             return None
         linha = lay.lineForTextPosition(max(0, pos - bloco.position()))
         if not linha.isValid():
@@ -742,7 +870,9 @@ class VistaPaginas(QAbstractScrollArea):
         dy1 = min(dy0 + tw, (n + 1) * hb)
         dy0 = max(dy0, n * hb)
         nbytes = lado * lado * 4
-        self._cache[chave] = (pm, dy0, dy1, nbytes)
+        # Faixa horizontal do documento que o tile mostra (0.1.14), contada da margem esquerda.
+        dx0 = i * tw - cfg.margem_esq_tw
+        self._cache[chave] = (pm, dy0, dy1, nbytes, dx0, dx0 + tw)
         self._bytes_no_cache += nbytes
         while self._bytes_no_cache > LIMITE_DO_CACHE_BYTES and self._cache:
             _, valor = self._cache.popitem(last=False)

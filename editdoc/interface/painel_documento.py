@@ -355,6 +355,8 @@ class PainelDocumento(VistaPaginas):
     def cut(self) -> None:
         self.copy()
         if self._cursor.hasSelection():
+            # 0.1.14: com o controle ligado, colar o recortado no mesmo documento vira movimento.
+            ed_revisoes.lembrar_recorte(self, self._cursor)
             self._remover_selecao()
             self._depois_de_mover()
 
@@ -421,6 +423,9 @@ class PainelDocumento(VistaPaginas):
                                         self._cursor.position())
         # Alteracoes controladas (0.1.13): o colado e' insercao do autor.
         ed_revisoes.marcar_colado(self, self.document(), inicio_colado, self._cursor.position())
+        if ed_revisoes.colar_como_movimento(self, self.document(), inicio_colado,
+                                            self._cursor.position()):
+            self.mensagem.emit("Texto movido (marcado como movimento).")
         self._cursor.endEditBlock()
         self._depois_de_mover()
         if md.hasFormat(MIME_OPACOS_OMITIDOS):

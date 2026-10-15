@@ -57,7 +57,10 @@ causou defeito.
   `ponte_qt/revisoes.py` (propriedades, `RealceRevisoes` dos modos, barra na margem),
   `edicao/revisoes.py` (edicao rastreada, aceitar/rejeitar, lista, navegar),
   `interface/revisoes_janela.py` (ganchos da aba Revisao, modo da janela) e
-  `interface/painel_revisoes.py`.
+  `interface/painel_revisoes.py`. Rejeitar o estado de antes (0.1.14): `formato_docx/revisoes`
+  (`tabela_da_mudanca`, `linha_da_mudanca`, `celula_da_mudanca`, `secao_da_mudanca`, `com_marca`);
+  excluir linha/coluna rastreado em `edicao/tabelas.py`; mover (recortar e colar) em
+  `edicao/revisoes.lembrar_recorte`/`colar_como_movimento`.
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -262,3 +265,10 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | `sectPr` dentro do `w:sectPrChange` (0.1.13) | E' a secao de antes, nao uma secao: o validador de secoes reprovava ("sectPr fora do lugar") ate' pular o filho de `w:sectPrChange`. |
 | revisoes no estilo (0.1.13) | O `ORDEM_RPR` passou a conhecer `w:ins`, `w:del`, `w:moveFrom`, `w:moveTo` (no comeco, a marca de paragrafo) e `w:rPrChange` (no fim). O saneamento do styles.xml continua tirando as revisoes de dentro de um estilo (`estilos._REVISOES_NO_ESTILO`, aviso FORMATACAO), como antes. |
 | duas revisoes no mesmo trecho (0.1.13) | A linha de tabela inserida e o texto inserido nela tem o mesmo intervalo: o "item do cursor" e' o do texto. O painel guarda a linha escolhida (`_escolhendo`) para o cursor que muda nao destacar a outra; os testes aceitam e rejeitam pelo painel. |
+| tabelas depois do ponto editado (0.1.14) | Num documento paginado, o `QTextDocumentLayout` do Qt 6.11 refaz TODAS as tabelas depois do ponto editado a cada tecla (`layoutFlow`: `if (document->pageSize().height() > 0.0f) cd->sizeDirty = true;`), e cada celula duas vezes, do zero (`layoutCell`: `fullLayout = true`, uma passada na largura infinita para a largura minima). Medido no arquivo real de 16 tabelas: 32 ms digitando no comeco, 2 ms no fim. Nao ha' como desligar de fora (o layout preguicoso so' vale no layout inteiro). Nao "otimizar" o EditDoc procurando esses milissegundos: ver docs/SPIKES.md, 0.1.14. |
+| perfil com cProfile (0.1.14) | O `tottime` de `insertText` e' so' o C++ (os slots Python do `contentsChange` aparecem a parte). Mas o p95 da pintura sob o perfil fica 3 a 5 vezes maior: tempo de verdade so' sem o perfil, e com a maquina parada (jogos abertos dobram tudo). |
+| cache de tiles (0.1.14) | A entrada e' `(pixmap, dy0, dy1, bytes, dx0, dx1)`: a faixa horizontal do documento entra para a celula editada tirar so' os tiles da coluna dela. Sabotagem em teste que troca `_invalidar_faixa` aceita `*args` (a chamada da celula passa x0, x1). |
+| moveFrom e w:t (0.1.14) | Dentro de `w:moveFrom` o texto e' `w:t` (o `w:delText` e' so' do `w:del`). |
+| realce e imagem (0.1.14) | O formato adicional do `QSyntaxHighlighter` nao muda o tamanho de um objeto de imagem (medido: `ImageWidth`/`ImageHeight` de 0,01 no realce, a imagem fica 200 x 100). A imagem excluida nao some em "Sem marcacao" por ai; exigiria um manipulador de imagem proprio. |
+| `python3 -`, `cat >` sem entrada (0.1.14) | No Bash da ferramenta, `python3` e o `.venv\Scripts\python.exe -` sem heredoc abrem o REPL e esperam (um encheu 64 MB de saida em loop de erro); `cat > arquivo` sem heredoc espera para sempre. Patch vai num .py escrito com a ferramenta Write e rodado com `< /dev/null`. `str.replace` troca TODAS as ocorrencias: conferir `count == 1` antes. |
+| propriedade de usuario (0.1.14) | Nenhuma nova. Os proximos livres continuam UserProperty + 45 e UserObject + 7. |
