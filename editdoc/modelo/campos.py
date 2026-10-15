@@ -1,4 +1,4 @@
-"""Campos de numero de pagina (M5): PAGE e NUMPAGES. Sem Qt e sem lxml.
+"""Campos de numero de pagina (M5): PAGE, NUMPAGES e (0.1.12) SECTIONPAGES. Sem Qt e sem lxml.
 
 O campo guarda a instrucao do .docx, normalizada ("PAGE", "NUMPAGES \\* roman").
 O valor que aparece depende da pagina: a tela calcula com `valor_do_campo`, e o
@@ -19,8 +19,8 @@ import re
 
 from editdoc.modelo.pagina import Pagina
 
-#: Campos que o EditDoc entende e recalcula.
-TIPOS_CAMPO = ("PAGE", "NUMPAGES")
+#: Campos que o EditDoc entende e recalcula. SECTIONPAGES (0.1.12): paginas da secao.
+TIPOS_CAMPO = ("PAGE", "NUMPAGES", "SECTIONPAGES")
 #: Formatos de numero (w:pgNumType w:fmt) que o EditDoc mostra e grava.
 FORMATOS_NUMERO = ("decimal", "lowerRoman", "upperRoman", "lowerLetter", "upperLetter")
 #: Instrucao mais longa aceita. Instrucao maior e' arquivo estranho: vira texto, com aviso.
@@ -94,14 +94,21 @@ def numero_da_pagina(indice: int, pagina: Pagina) -> int:
     return inicio + indice
 
 
-def valor_do_campo(instrucao: str, indice: int, total: int, pagina: Pagina) -> str:
-    """Texto que o campo mostra na pagina `indice` de um documento com `total` paginas."""
+def valor_do_campo(instrucao: str, indice: int, total: int, pagina: Pagina,
+                   total_secao: int | None = None) -> str:
+    """Texto que o campo mostra na pagina `indice` de um documento com `total` paginas.
+
+    Com secoes (0.1.12) `indice` e' o da pagina dentro da secao, `pagina` a da secao (com o
+    numero da primeira pagina dela) e `total_secao` as paginas da secao (SECTIONPAGES)."""
     tipo = tipo_do_campo(instrucao)
     pedido = formato_da_instrucao(instrucao)
     if tipo == "PAGE":
         return formatar_numero(numero_da_pagina(indice, pagina), pedido or pagina.formato_numero)
     if tipo == "NUMPAGES":
         return formatar_numero(max(1, total), pedido or "decimal")
+    if tipo == "SECTIONPAGES":
+        return formatar_numero(max(1, total_secao if total_secao is not None else total),
+                               pedido or "decimal")
     return ""
 
 

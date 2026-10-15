@@ -14,10 +14,17 @@ continua o mesmo: so' muda onde cada folha aparece na tela.
 O teto de zoom depende da tela (ver `teto_de_zoom`): o Qt pinta texto por
 caminho, e muito mais devagar, quando a escala total passa do limite de
 ESCALA_DISPOSITIVO_MAXIMA. Medido no Gate do M3 (docs/SPIKES.md).
+
+Secoes (0.1.12): cada folha pode ter o seu papel (`folhas`: n -> a pagina efetiva da folha, com
+papel, margens e topo do corpo). A pagina do documento continua sendo a faixa [n*hb, (n+1)*hb),
+com hb a maior altura de corpo (`hb_documento`). Folhas de tamanhos diferentes ficam uma
+embaixo da outra, cada uma centrada; lado a lado, a linha tem a altura da maior folha dela.
+Sem `folhas`, as contas sao as de sempre (todas iguais a `pagina`).
 """
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -93,11 +100,18 @@ class Mapa:
     #: Topo do corpo na folha n, em twips (0.1.8): o cabecalho de cada pagina empurra o corpo
     #: dela. None = o `margem_sup_tw` da pagina, igual em todas.
     topo_da_pagina: Callable[[int], float] | None = None
+    #: Secoes (0.1.12): n -> pagina efetiva da folha n (papel e margens); None = todas `pagina`.
+    folhas: Callable[[int], Pagina] | None = None
+    #: Altura de uma pagina do documento (a maior entre as secoes); None = a do corpo de `pagina`.
+    hb_documento: float | None = None
 
     def topo(self, n: int) -> float:
         if self.topo_da_pagina is not None:
             return float(self.topo_da_pagina(n))
         return float(self.pagina.margem_sup_tw)
+
+    def pagina_da(self, n: int) -> Pagina:
+        return self.folhas(n) if self.folhas is not None else self.pagina
 
     @property
     def escala(self) -> float:
@@ -105,8 +119,48 @@ class Mapa:
 
     @property
     def hb(self) -> float:
-        """Altura de uma pagina de corpo, em twips."""
+        """Altura de uma pagina do documento, em twips."""
+        if self.hb_documento is not None:
+            return float(self.hb_documento)
         return float(self.pagina.corpo_altura_tw())
+
+    # -- folhas de tamanhos diferentes (0.1.12) -------------------------------------------------
+    def _disposicao(self, paginas: int):
+        """(x relativo a' esquerda do conteudo, y) de cada folha, as alturas das linhas e a largura
+        do conteudo, para `paginas` folhas. Guardado no proprio mapa."""
+        guardado = getattr(self, "_disp", None)
+        if guardado is not None and guardado[0] == paginas:
+            return guardado[1]
+        colunas = max(1, int(self.colunas))
+        e = self.escala
+        tamanhos = [(self.pagina_da(n).largura_tw * e, self.pagina_da(n).altura_tw * e)
+                    for n in range(max(paginas, 1))]
+        linhas = [tamanhos[i:i + colunas] for i in range(0, len(tamanhos), colunas)]
+        larguras = [sum(w for w, _h in linha) + (len(linha) - 1) * self.vao for linha in linhas]
+        conteudo = max(larguras, default=self.largura_folha)
+        ys, alturas = [], []
+        y = self.vao
+        posicoes = []
+        for linha, largura in zip(linhas, larguras):
+            altura = max(h for _w, h in linha)
+            ys.append(y)
+            alturas.append(altura)
+            x = (conteudo - largura) / 2.0
+            for w, _h in linha:
+                posicoes.append((x, y))
+                x += w + self.vao
+            y += altura + self.vao
+        disp = (posicoes, ys, alturas, conteudo, tamanhos, y)
+        self._disp = (paginas, disp)
+        return disp
+
+    def _paginas_dispostas(self) -> int:
+        return getattr(self, "_paginas_conhecidas", 1)
+
+    def preparar(self, paginas: int) -> "Mapa":
+        """Diz quantas folhas o documento tem (com `folhas`, as contas precisam)."""
+        self._paginas_conhecidas = max(1, int(paginas))
+        return self
 
     @property
     def vao(self) -> float:
@@ -133,6 +187,8 @@ class Mapa:
     @property
     def largura_conteudo(self) -> float:
         """Largura das folhas de uma linha, com os vaos entre elas."""
+        if self.folhas is not None:
+            return self._disposicao(self._paginas_dispostas())[3]
         n = max(1, int(self.colunas))
         return n * self.largura_folha + (n - 1) * self.vao
 
@@ -147,6 +203,18 @@ class Mapa:
 
     def pagina_no_ponto(self, x_tela: float, y_tela: float, paginas: int) -> int:
         """Pagina cuja faixa (linha e coluna) contem o ponto da tela, limitada ao documento."""
+        if self.folhas is not None:
+            posicoes, ys, alturas, _c, tamanhos, _fim = self._disposicao(paginas)
+            cy = y_tela + self.origem_y
+            linha = max(0, bisect.bisect_right(ys, cy + self.vao / 2.0) - 1)
+            colunas = max(1, int(self.colunas))
+            cx = x_tela + self.origem_x - self.esquerda_folha
+            primeira = linha * colunas
+            melhor = primeira
+            for n in range(primeira, min(primeira + colunas, len(posicoes))):
+                if cx >= posicoes[n][0] - self.vao / 2.0:
+                    melhor = n
+            return min(max(melhor, 0), max(paginas - 1, 0))
         cy = y_tela + self.origem_y
         linha = max(0, int(math.floor((cy - self.vao) / self.passo_vertical)))
         colunas = max(1, int(self.colunas))
@@ -158,6 +226,11 @@ class Mapa:
     def paginas_visiveis(self, paginas: int) -> tuple[int, int]:
         """(primeira, ultima) pagina que pode aparecer no viewport."""
         colunas = max(1, int(self.colunas))
+        if self.folhas is not None:
+            _p, ys, alturas, _c, _t, _fim = self._disposicao(paginas)
+            l0 = max(0, bisect.bisect_right(ys, self.origem_y) - 1)
+            l1 = max(0, bisect.bisect_right(ys, self.origem_y + self.altura_viewport) - 1)
+            return l0 * colunas, min(paginas - 1, (l1 + 1) * colunas - 1)
         l0 = max(0, math.floor((self.origem_y - self.vao) / self.passo_vertical))
         l1 = math.floor((self.origem_y + self.altura_viewport - self.vao) / self.passo_vertical) + 1
         return l0 * colunas, min(paginas - 1, (l1 + 1) * colunas - 1)
@@ -169,6 +242,13 @@ class Mapa:
 
     def folha_na_tela(self, n: int) -> tuple[float, float, float, float]:
         """(x, y, largura, altura) da folha n em px logicos do viewport."""
+        if self.folhas is not None:
+            disp = self._disposicao(max(self._paginas_dispostas(), int(n) + 1))
+            posicoes, tamanhos = disp[0], disp[4]
+            n = min(max(int(n), 0), len(posicoes) - 1)
+            x, y = posicoes[n]
+            w, h = tamanhos[n]
+            return self.esquerda_folha + x - self.origem_x, y - self.origem_y, w, h
         linha, coluna = self._linha_coluna(n)
         return (self.esquerda_folha + coluna * self.passo_horizontal - self.origem_x,
                 self.vao + linha * self.passo_vertical - self.origem_y,
@@ -176,7 +256,7 @@ class Mapa:
 
     def doc_para_tela(self, x_doc: float, y_doc: float, paginas: int) -> tuple[float, float]:
         n = self.pagina_de_y(y_doc, paginas)
-        cfg = self.pagina
+        cfg = self.pagina_da(n)
         tx = x_doc + cfg.margem_esq_tw
         ty = y_doc - n * self.hb + self.topo(n)
         x0, y0, _l, _a = self.folha_na_tela(n)
@@ -184,13 +264,22 @@ class Mapa:
 
     def tela_para_doc(self, x_tela: float, y_tela: float, paginas: int) -> tuple[float, float]:
         """Inversa de `doc_para_tela` para um ponto dentro da faixa da pagina."""
-        cfg = self.pagina
         n = self.pagina_no_ponto(x_tela, y_tela, paginas)
+        cfg = self.pagina_da(n)
         x0, y0, _l, _a = self.folha_na_tela(n)
         tx = (x_tela - x0) / self.escala
         ty = (y_tela - y0) / self.escala
         return tx - cfg.margem_esq_tw, ty - self.topo(n) + n * self.hb
 
     def altura_total(self, paginas: int) -> float:
+        if self.folhas is not None:
+            return self._disposicao(paginas)[5]
         linhas = math.ceil(max(paginas, 0) / max(1, int(self.colunas)))
         return self.vao + linhas * self.passo_vertical
+
+    def y_da_linha(self, linha: int) -> float:
+        """Topo da linha de folhas (sem rolagem), em px logicos."""
+        if self.folhas is not None:
+            ys = self._disposicao(self._paginas_dispostas())[1]
+            return ys[min(max(0, linha), len(ys) - 1)] if ys else self.vao
+        return self.vao + linha * self.passo_vertical

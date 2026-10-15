@@ -30,7 +30,7 @@ from editdoc import log_interno
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.campos import tipo_do_campo
 from editdoc.modelo.documento import (CARACTERE_OBJETO, Celula, Documento, Imagem, Linha,
-                                      Paragrafo, Run, Tabela)
+                                      MarcaQuebra, Paragrafo, Run, Tabela)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
 from editdoc.modelo.unidades import EMU_POR_PX, twips_de_px
 from editdoc.modelo.numeracao import tipos_dos_paragrafos
@@ -39,6 +39,7 @@ from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
+from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt.para_qt import (LINHA_SEPARADORA, PROP_CELULA, PROP_ESTRUTURAL,
                                       PROP_TABELA, bordas_da_celula_em, bordas_da_tabela_em,
                                       ler_json)
@@ -161,7 +162,9 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
     if nivel != base.get("nivel"):
         p.nivel = NIVEL_CORPO if nivel is None else nivel
     # O espacador da area das notas (0.1.10) nao e' quebra do usuario: nao volta ao arquivo.
-    p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)         and not pq_notas.eh_espacador(bf)
+    # A quebra derivada da secao (0.1.12) tambem nao e' do usuario.
+    p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore) \
+        and not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)
     p.extras = pq_props.extras_de_ppr(bf)
     lista = bloco.textList()
     if lista is not None and p.lista is None:
@@ -196,6 +199,20 @@ def _paragrafo(bloco, res, em_celula: bool = False) -> Paragrafo:
                     run.marca = marca
                     run.link = link
                     p.runs.append(run)
+            elif pq_secoes.eh_quebra(cf):
+                # Quebra de secao ou de coluna (0.1.12). A secao vale so' no corpo, fora de
+                # tabela: o paragrafo termina a secao, onde quer que o caractere esteja nele.
+                for caractere in frag.text():
+                    if caractere != CARACTERE_OBJETO:
+                        continue
+                    if pq_secoes.eh_coluna(cf):
+                        run = _run_direto("", cf, p.estilo, res)
+                        run.marca = MarcaQuebra("coluna")
+                        p.runs.append(run)
+                    elif not em_celula:
+                        secao = pq_secoes.secao_do_formato(doc, cf)
+                        if secao is not None:
+                            p.secao = pq_secoes.sem_conteudo(secao)
             elif marcas.eh_marca(cf):
                 # Campo ou marcador (0.1.3): uma marca por caractere, sem texto.
                 marca = marcas.marca_de(cf)
@@ -262,6 +279,7 @@ def _blocos(iterador, largura_corpo_tw: int, em_celula: bool = False, res=None) 
                 paragrafo = _paragrafo(bloco, res, em_celula)
                 if em_celula:
                     paragrafo.quebra_antes = False
+                    paragrafo.secao = None
                 saida.append(paragrafo)
         it += 1
     return saida
@@ -374,6 +392,10 @@ def extrair(documento_qt: QTextDocument) -> Documento:
     paragrafos = _blocos(documento_qt.rootFrame().begin(), largura_corpo,
                          res=pq_estilos.Resolvedor(estilos))
     doc = Documento(paragrafos=paragrafos, estilos=estilos, numeracao=listas.catalogo(documento_qt))
+    # Secoes (0.1.12): a ultima (tipo, extras, chaves dos cabecalhos); o papel dela e os
+    # cabecalhos de todas sao do layout (a janela completa).
+    doc.secao = pq_secoes.sem_conteudo(pq_secoes.secao_final(documento_qt))
+    doc.secao.pagina = Documento().pagina
     # Comentarios (0.1.6): o catalogo vigente (as ancoras ja' vieram como marcas).
     cat = pq_comentarios.catalogo(documento_qt)
     doc.comentarios = cat if cat.itens or cat.xml_comentarios is not None else None

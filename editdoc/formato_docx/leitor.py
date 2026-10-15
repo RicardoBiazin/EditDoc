@@ -42,6 +42,7 @@ proximo (aviso LISTA_NIVEL).
 
 from __future__ import annotations
 
+import copy
 import io
 import os
 import posixpath
@@ -57,6 +58,7 @@ from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos
 from editdoc.formato_docx import pacote as fx_pacote
+from editdoc.formato_docx import secoes as fx_secoes
 from editdoc.formato_docx import propriedades as fx_props
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
@@ -71,11 +73,13 @@ from editdoc.modelo import comentarios as mod_comentarios
 from editdoc.modelo import notas as mod_notas
 from editdoc.modelo.documento import (Bloco, Borda, BordasCelula, BordasTabela, Campo, Celula,
                                       Documento, Imagem, Linha, Link, MarcaCampo,
-                                      MarcaComentario, MarcaConteudo, Marcador, MarcaNota,
+                                      MarcaComentario, MarcaConteudo, Marcador, MarcaNota, MarcaQuebra,
                                       Paragrafo, Run, Tabela, colunas_da_linha, normalizar,
                                       paragrafos_de, run_de_imagem, run_de_objeto)
 from editdoc.modelo.estilos import Estilos, catalogo_padrao
 from editdoc.modelo import numeracao as mod_numeracao
+from editdoc.modelo import secoes as mod_secoes
+from editdoc.modelo.secoes import Secao
 from editdoc.modelo.pagina import PAPEL_MAXIMO_TW, Pagina
 from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
@@ -220,10 +224,10 @@ class _Contexto:
         self.coletor = coletor
         #: catalogo de numeracao (0.1.4), ou None se o arquivo nao tem (ou nao pode ser lido)
         self.numeracao = numeracao
-        #: sectPr contados: os de dentro de paragrafo mais o do fim do corpo
+        #: secoes que terminam em paragrafo (0.1.12): quantas, e (secao, referencias) de cada
+        #: uma, cujos cabecalhos sao lidos depois do corpo
         self.secoes = 0
-        #: pagina do sectPr final, ja validada; None se nao for representavel
-        self.pagina_final: Pagina | None = None
+        self.secoes_pendentes: list[tuple] = []
         self.lim = {**LIMITES_PADRAO, **(lim or {})}
         #: relacoes do documento principal: rId -> (tipo, alvo resolvido, externo)
         self.relacoes: dict[str, tuple[str, str, bool]] = {}
@@ -241,10 +245,6 @@ class _Contexto:
         self.estilos: Estilos = catalogo_padrao()
         #: campos complexos abertos (w:fldChar begin sem end), do de fora para o de dentro
         self.campos: list[dict] = []
-        #: cabecalho e rodape herdados das secoes anteriores: (onde, tipo) -> rId
-        self.faixas_herdadas: dict[tuple[str, str], str] = {}
-        #: referencias de cada secao anterior, para saber se diferem das da ultima
-        self.faixas_das_secoes: list[dict[tuple[str, str], str]] = []
         #: objetos opacos (0.1.2): quem captura, e o mc:Ignorable da parte que se le
         self.capturador: opacos.Capturador | None = None
         self.ignoraveis: tuple = ()
@@ -364,9 +364,16 @@ def _ler_ppr(ppr, ctx: _Contexto) -> dict:
             if nivel is not None and 0 <= nivel <= 9:
                 out["nivel"] = nivel
         elif loc == "sectPr":
-            c.somar("SECAO")
+            # Quebra de secao (0.1.12): a secao que termina neste paragrafo. So' no corpo, fora de
+            # tabela; acima do limite (arquivo hostil) a secao se junta a' seguinte, com aviso.
+            if (ctx.historia != "corpo" or ctx.nivel_tabela > 0
+                    or ctx.secoes >= mod_secoes.SECOES_MAXIMAS):
+                c.somar("SECAO")
+                continue
             ctx.secoes += 1
-            _faixas_da_secao(f, ctx, final=False)
+            secao, refs = fx_secoes.ler(f, c)
+            ctx.secoes_pendentes.append((secao, refs))
+            out["secao"] = secao
         elif loc == "pageBreakBefore":
             out["quebra_antes"] = _onoff(f)
     extras = fx_props.ler_extras_ppr(ppr, ctx.estilo_existe, c)
@@ -468,6 +475,11 @@ class _Pedacos:
         self.ctx.coletor.somar("CAMPO")  # objeto dentro do codigo de um campo
         return False
 
+    def quebra_de_coluna(self) -> None:
+        self.descarregar()
+        if self._no_fluxo():
+            self.saida.append(replace(self.base, texto="", marca=MarcaQuebra("coluna")))
+
     def imagem(self, imagem: Imagem) -> None:
         self.descarregar()
         if self._no_fluxo():
@@ -532,6 +544,9 @@ def _ler_item_run(f, partes: _Pedacos, ctx: _Contexto) -> None:
             # Sentinela: _paragrafos transforma cada \f em quebra de pagina.
             # XML 1.0 nao aceita \f em w:t, entao ele so' vem daqui.
             partes.append("\f")
+        elif tipo == "column":
+            # Quebra de coluna (0.1.12): marca no fluxo, volta ao arquivo.
+            partes.quebra_de_coluna()
         else:
             c.somar("QUEBRA_DE_PAGINA")
     elif loc == "cr":
@@ -1056,6 +1071,7 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
             for r in runs:
                 if not r.eh_objeto() and "\f" in r.texto:
                     r.texto = r.texto.replace("\f", "\n")  # no lugar: a marca de campo e' o mesmo objeto
+    secao = props.pop("secao", None)
     saida = [Paragrafo(runs=[], **props)]
     for run in runs:
         if run.eh_objeto() or run.campo is not None or run.marca is not None:
@@ -1073,6 +1089,9 @@ def _paragrafos(p, ctx: _Contexto) -> list[Paragrafo]:
                     atual.quebra_antes = True
             if pedaco:
                 saida[-1].runs.append(Run(**{**run.__dict__, "texto": pedaco}))
+    if secao is not None:
+        # A secao termina no fim do w:p: no ultimo dos paragrafos em que ele se partiu.
+        saida[-1].secao = secao
     return saida
 
 
@@ -1550,34 +1569,6 @@ def _celula(tc, ctx: _Contexto) -> Celula | None:
     return celula
 
 
-def _faixas_da_secao(sect, ctx: _Contexto, final: bool) -> dict[tuple[str, str], str]:
-    """Referencias de cabecalho e rodape de uma secao: (onde, tipo) -> rId.
-
-    Como no Word, a secao herda o que nao declara. A secao que nao e' a ultima so'
-    acumula a heranca; a ultima devolve o que vale para o documento.
-    """
-    refs: dict[tuple[str, str], str] = {}
-    for x in sect:
-        ns, loc = _local(x)
-        if ns != W or loc not in ("headerReference", "footerReference"):
-            continue
-        tipo = _TIPO_FAIXA.get(_atr(x, "type") or "default")
-        rid = x.get(q("id", R_NS))
-        if tipo is None or not rid:
-            ctx.coletor.somar("CABECALHO_RODAPE")
-            continue
-        refs[("cabecalho" if loc == "headerReference" else "rodape", tipo)] = rid
-    if not final:
-        ctx.faixas_das_secoes.append(dict(refs))
-        ctx.faixas_herdadas.update(refs)
-        return refs
-    efetivas = {**ctx.faixas_herdadas, **refs}
-    if any(efetivas.get(k) != v for anteriores in ctx.faixas_das_secoes
-           for k, v in anteriores.items()):
-        ctx.coletor.somar("CABECALHO_SECAO")
-    return efetivas
-
-
 def _propriedades_das_notas(notas, sect, config: dict, coletor: Coletor):
     """footnotePr e endnotePr do sectPr final e do settings.xml (0.1.10). Valor fora do esquema
     sai, com aviso FORMATACAO. Sem notas no arquivo, o catalogo so' existe se ha' propriedade."""
@@ -1601,31 +1592,6 @@ def _propriedades_das_notas(notas, sect, config: dict, coletor: Coletor):
     notas.secao_xml = secao_xml
     notas.configuracao = dict(config)
     return notas
-
-
-def _numeracao_da_secao(sect, pagina: Pagina, ctx: _Contexto) -> Pagina:
-    """Primeira pagina diferente (w:titlePg) e numeracao (w:pgNumType) do sectPr."""
-    titulo = sect.find(q("titlePg"))
-    if titulo is not None:
-        pagina = replace(pagina, primeira_diferente=_onoff(titulo))
-    num = sect.find(q("pgNumType"))
-    if num is not None:
-        formato = _atr(num, "fmt")
-        if formato is not None:
-            if formato in FORMATOS_NUMERO:
-                pagina = replace(pagina, formato_numero=formato)
-            else:
-                ctx.coletor.somar("NUMERO_PAGINA")  # chicago, ordinal, cardinalText...
-        inicio = _atr(num, "start")
-        if inicio is not None:
-            valor = _inteiro(inicio)
-            if valor is not None and 0 <= valor <= NUMERO_INICIAL_MAXIMO:
-                pagina = replace(pagina, numero_inicial=valor)
-            else:
-                ctx.coletor.somar("NUMERO_PAGINA")
-        if any(_atr(num, a) is not None for a in ("chapStyle", "chapSep")):
-            ctx.coletor.somar("NUMERO_PAGINA")
-    return pagina
 
 
 def _ler_faixa(rid: str, onde: str, ctx: _Contexto, tamanho_de, relacoes_de) -> list[Bloco] | None:
@@ -1677,32 +1643,6 @@ def _fechar_campos(ctx: _Contexto) -> None:
         if campo["run"] is None:
             ctx.coletor.somar("CAMPO")
     ctx.campos = []
-
-
-#: Atributos do w:pgMar e o campo de Pagina que cada um preenche.
-_MARGENS_XML = (("top", "margem_sup_tw"), ("bottom", "margem_inf_tw"),
-                ("left", "margem_esq_tw"), ("right", "margem_dir_tw"),
-                ("header", "cabecalho_tw"), ("footer", "rodape_tw"),
-                ("gutter", "medianiz_tw"))
-
-
-def _pagina_de(sect) -> Pagina | None:
-    """Papel, orientacao e margens do sectPr. None se nao houver pagina util."""
-    pagina = Pagina()
-    pg = sect.find(q("pgSz"))
-    if pg is not None:
-        largura, altura = _inteiro(_atr(pg, "w")), _inteiro(_atr(pg, "h"))
-        if largura is None or altura is None:
-            return None
-        pagina.largura_tw, pagina.altura_tw = largura, altura
-        pagina.paisagem = _atr(pg, "orient") == "landscape"
-    mar = sect.find(q("pgMar"))
-    if mar is not None:
-        for nome_xml, campo in _MARGENS_XML:
-            valor = _inteiro(_atr(mar, nome_xml))
-            if valor is not None:
-                setattr(pagina, campo, valor)
-    return pagina if pagina.valida() else None
 
 
 def _numeracao(dados: bytes, nome: str, ctx_lim: dict, coletor: Coletor, relacoes: dict,
@@ -2307,29 +2247,43 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
         _blocos(corpo, paras, ctx)
         _fechar_historia(paras, ctx)
         sect_final = corpo.find(q("sectPr"))
-        refs_finais = dict(ctx.faixas_herdadas)
+        # A ultima secao (0.1.12: as outras ja' vieram nos paragrafos). Papel ou margem que nao
+        # cabe numa pagina util: A4 com as margens padrao, com o aviso PAPEL_INVALIDO.
         if sect_final is not None:
-            refs_finais = _faixas_da_secao(sect_final, ctx, final=True)
-            ctx.pagina_final = _pagina_de(sect_final)
-            if ctx.pagina_final is None:
-                # Papel ou margem que nao cabe numa pagina util: o EditDoc
-                # grava A4 com as margens padrao, e o aviso diz isso.
-                coletor.somar("PAPEL_INVALIDO")
-        pagina = ctx.pagina_final if ctx.pagina_final is not None else Pagina()
-        if sect_final is not None:
-            pagina = _numeracao_da_secao(sect_final, pagina, ctx)
+            final, refs_finais = fx_secoes.ler(sect_final, coletor, final=True)
+        else:
+            final, refs_finais = Secao(), {}
+        pagina = final.pagina
         notas = _propriedades_das_notas(notas, sect_final, notas_config, coletor)
         pagina = replace(pagina, pares_impares=pares_impares)
-        cabecalhos: dict[str, list[Bloco]] = {}
-        rodapes: dict[str, list[Bloco]] = {}
-        for (onde, tipo), rid in sorted(refs_finais.items()):
-            blocos = _ler_faixa(rid, onde, ctx, tamanho_de, relacoes_de)
-            if blocos is not None:
-                (cabecalhos if onde == "cabecalho" else rodapes)[tipo] = blocos
-        total_secoes = ctx.secoes + (1 if sect_final is not None else 0)
-        if total_secoes > 1:
-            # Cada secao tem o seu papel e as suas margens; o EditDoc tem um so'.
-            coletor.somar("PAGINA")
+        # Cabecalhos e rodapes de cada secao: so' os que ela declara (a que falta vem da
+        # anterior, como no Word). A mesma parte citada por duas secoes e' lida uma vez.
+        lidas: dict[tuple, list[Bloco] | None] = {}
+
+        def faixas_de(refs: dict, secao: Secao) -> tuple[dict, dict]:
+            cabecalhos_s: dict[str, list[Bloco]] = {}
+            rodapes_s: dict[str, list[Bloco]] = {}
+            for (onde, tipo), rid in sorted(refs.items()):
+                # A chave e' a parte (dois rIds podem citar a mesma), e o lado (uma parte de
+                # cabecalho citada como rodape continua sendo erro de _ler_faixa).
+                relacao = ctx.relacoes.get(rid)
+                chave = (onde, relacao[1] if relacao is not None and not relacao[2] else rid)
+                if chave not in lidas:
+                    lidas[chave] = _ler_faixa(rid, onde, ctx, tamanho_de, relacoes_de)
+                    blocos = lidas[chave]
+                else:
+                    blocos = copy.deepcopy(lidas[chave]) if lidas[chave] is not None else None
+                    if lidas[chave] is None:
+                        coletor.somar("CABECALHO_RODAPE")
+                if blocos is not None:
+                    (cabecalhos_s if onde == "cabecalho" else rodapes_s)[tipo] = blocos
+                    secao.chaves[(onde, tipo)] = chave[1]
+            return cabecalhos_s, rodapes_s
+
+        for secao, refs in ctx.secoes_pendentes:
+            secao.cabecalhos, secao.rodapes = faixas_de(refs, secao)
+            secao.pagina = replace(secao.pagina, pares_impares=pares_impares)
+        cabecalhos, rodapes = faixas_de(refs_finais, final)
 
         meta = {"titulo": "", "autor": "", "criado_em": None, "modificado_em": None}
         if alvo_core and alvo_core in nomes:
@@ -2355,7 +2309,10 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
     notas = _notas_ancoradas(notas, paras, coletor)
     doc = normalizar(Documento(paragrafos=paras, pagina=pagina, cabecalhos=cabecalhos,
                                rodapes=rodapes, estilos=ctx.estilos, pacote=pacote,
-                               numeracao=ctx.numeracao, comentarios=comentarios, **meta))
+                               numeracao=ctx.numeracao, comentarios=comentarios,
+                               secao=Secao(tipo=final.tipo, extras=final.extras,
+                                           original=final.original, chaves=final.chaves,
+                                           colunas=final.colunas), **meta))
     doc.notas = notas
     mod_numeracao.tipos_dos_paragrafos(doc)
     return doc, coletor.avisos()

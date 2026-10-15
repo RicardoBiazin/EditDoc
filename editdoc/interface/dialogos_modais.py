@@ -209,6 +209,14 @@ def pedir_tamanho_imagem(pai: QWidget | None, largura_cm: float,
 
 def pedir_margens(pai: QWidget | None, atual: Pagina) -> Pagina | None:
     """Margens em centimetros, para a pagina `atual`. None se cancelar ou se nao couber texto."""
+    pedido = pedir_configurar_pagina(pai, atual, varias_secoes=False)
+    return None if pedido is None else pedido[0]
+
+
+def pedir_configurar_pagina(pai: QWidget | None, atual: Pagina,
+                            varias_secoes: bool = False) -> tuple[Pagina, bool] | None:
+    """Margens em centimetros (e, com secoes, 0.1.12, "Aplicar a: Esta seção / Documento
+    inteiro"). (pagina, documento inteiro) ou None se cancelar ou se nao couber texto."""
     dialogo = QDialog(pai)
     dialogo.setWindowTitle(f"Margens personalizadas - {APP}")
     grade = QFormLayout(dialogo)
@@ -224,6 +232,14 @@ def pedir_margens(pai: QWidget | None, atual: Pagina) -> Pagina | None:
         spin.setValue(round(twips / TWIPS_POR_CM, 2))
         grade.addRow(f"{rotulo}:", spin)
         campos[rotulo] = spin
+    aplicar = None
+    if varias_secoes:
+        from PySide6.QtWidgets import QComboBox
+        aplicar = QComboBox()
+        aplicar.addItems(["Esta seção", "Documento inteiro"])
+        aplicar.setAccessibleName("Aplicar a")
+        grade.addRow("Aplicar a:", aplicar)
+    dialogo._aplicar = aplicar  # o teste escolhe "Documento inteiro" por aqui
     botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                               | QDialogButtonBox.StandardButton.Cancel)
     botoes.accepted.connect(dialogo.accept)
@@ -242,7 +258,7 @@ def pedir_margens(pai: QWidget | None, atual: Pagina) -> Pagina | None:
                f"O corpo precisa ter pelo menos {CORPO_MINIMO_TW / TWIPS_POR_CM:.0f} cm "
                "de largura e de altura.")
         return None
-    return novo
+    return novo, aplicar is not None and aplicar.currentIndex() == 1
 
 
 def pedir_numero_inicial(pai: QWidget | None, atual: int | None,
@@ -397,6 +413,21 @@ def mostrar_recuperacao(dialogo) -> None:
     dialogo.show()
     dialogo.raise_()
     dialogo.activateWindow()
+
+
+# -- secoes (0.1.12) -------------------------------------------------------------------
+
+def confirmar_vincular_anterior(pai: QWidget | None) -> bool:
+    """Vincular ao anterior apaga o cabecalho (ou rodape) proprio da secao, como no Word."""
+    caixa = _caixa(pai, "Vincular ao anterior",
+                   "Esta seção tem cabeçalho (ou rodapé) próprio. Vincular ao anterior apaga "
+                   "o desta seção e passa a usar o da seção anterior. Continuar?",
+                   QMessageBox.Icon.Question)
+    sim = caixa.addButton("Vincular", QMessageBox.ButtonRole.YesRole)
+    nao = caixa.addButton("Cancelar", QMessageBox.ButtonRole.NoRole)
+    caixa.setDefaultButton(nao)
+    caixa.exec()
+    return caixa.clickedButton() is sim
 
 
 # -- hiperlinks (0.1.3) ----------------------------------------------------------------

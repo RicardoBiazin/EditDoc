@@ -42,6 +42,10 @@ PROP_NOTA = _USUARIO + 31
 PROP_NOTAS = _USUARIO + 32
 #: Bloco (ou tabela): espacador da area das notas (ver o topo do modulo).
 PROP_QUEBRA_NOTA = _USUARIO + 33
+#: Celula (0.1.12): a linha da tabela tem acolchoamento de baixo a mais para a linha seguinte
+#: descer para a pagina seguinte, numa secao mais baixa que a pagina do documento: "original;extra"
+#: em px96. Nao e' do usuario (o de_qt nao le o acolchoamento).
+PROP_LINHA_EMPURRADA = _USUARIO + 39
 #: Propriedades que nao podem passar para o texto digitado depois da marca.
 PROPS_DE_NOTA = (QTextFormat.Property.ObjectType, PROP_NOTA)
 #: O numero sobrescrito ocupa esta fracao do corpo da letra.
@@ -351,5 +355,14 @@ def sem_espacador(fmt):
     novo = type(fmt)(fmt)
     if novo.property(PROP_QUEBRA_NOTA):
         novo.clearProperty(PROP_QUEBRA_NOTA)
-        novo.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_Auto)
+        # A quebra derivada da secao (0.1.12) fica: so' a do espacador sai.
+        from editdoc.ponte_qt.secoes import PROP_QUEBRA_SECAO
+        bits = novo.property(PROP_QUEBRA_SECAO)
+        bits = bits if isinstance(bits, int) and not isinstance(bits, bool) else 0
+        politica = QTextFormat.PageBreakFlag.PageBreak_Auto
+        if bits & 1:
+            politica |= QTextFormat.PageBreakFlag.PageBreak_AlwaysAfter
+        if bits & 2:
+            politica |= QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore
+        novo.setPageBreakPolicy(politica)
     return novo

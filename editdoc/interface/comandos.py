@@ -104,6 +104,15 @@ DEFINICOES = (
     Definicao("espaco_2", "2,0", ("Ctrl+2",), True, "Espaçamento 2,0"),
     Definicao("quebra_pagina", "Quebra de página", ("Ctrl+Return", "Ctrl+Enter"),
               dica="Quebra de página"),
+    # Secoes (0.1.12): Layout > Quebras > Quebra de secao.
+    Definicao("quebra_secao_proxima", "Próxima página", (),
+              dica="Quebra de seção: a nova seção começa na próxima página"),
+    Definicao("quebra_secao_continua", "Contínua", (),
+              dica="Quebra de seção contínua: a nova seção começa na mesma página"),
+    Definicao("quebra_secao_par", "Página par", (),
+              dica="Quebra de seção: a nova seção começa na próxima página par"),
+    Definicao("quebra_secao_impar", "Página ímpar", (),
+              dica="Quebra de seção: a nova seção começa na próxima página ímpar"),
     Definicao("ampliar", "Ampliar", (), dica="Ampliar o zoom"),
     Definicao("reduzir", "Reduzir", (), dica="Reduzir o zoom"),
     Definicao("papel_a4", "A4", (), True, "Papel A4"),
@@ -187,6 +196,8 @@ DEFINICOES = (
               "Cabeçalho e rodapé próprios na primeira página"),
     Definicao("pares_impares", "Páginas pares e ímpares diferentes", (), True,
               "Cabeçalho e rodapé próprios nas páginas pares"),
+    Definicao("vincular_anterior", "Vincular ao anterior", (), True,
+              "Usar o cabeçalho (ou rodapé) da seção anterior nesta seção"),
     Definicao("ir_cabecalho", "Ir para o cabeçalho", (), dica="Ir para o cabeçalho"),
     Definicao("ir_rodape", "Ir para o rodapé", (), dica="Ir para o rodapé"),
     Definicao("fechar_cabecalho", "Fechar cabeçalho e rodapé", (),
@@ -311,6 +322,10 @@ GALERIA_DAS_ACOES = {
     "multinivel_titulos": ("aplicar_multinivel", "titulos"),
 }
 
+#: Quebra de secao (0.1.12): id da acao -> w:type da secao que comeca depois da quebra.
+QUEBRA_DE_SECAO_DAS_ACOES = {"quebra_secao_proxima": "nextPage",
+                             "quebra_secao_continua": "continuous",
+                             "quebra_secao_par": "evenPage", "quebra_secao_impar": "oddPage"}
 #: Papel: id da acao -> nome do papel em editdoc/modelo/pagina.py (PAPEIS).
 PAPEL_DAS_ACOES = {"papel_a4": "A4", "papel_carta": "Carta", "papel_oficio": "Ofício"}
 #: Margens: id da acao -> predefinicao. "personalizadas" abre o dialogo.
@@ -416,6 +431,9 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
         "retrato": lambda: _chamar(layout, "orientacao", False),
         "paisagem": lambda: _chamar(layout, "orientacao", True),
     }
+    for id_, tipo in QUEBRA_DE_SECAO_DAS_ACOES.items():
+        executores_layout[id_] = lambda t=tipo: editor.inserir_quebra_de_secao(t)
+    executores_inserir["vincular_anterior"] = lambda: _chamar(layout, "vincular_anterior")
     for id_, nome in PAPEL_DAS_ACOES.items():
         executores_layout[id_] = lambda n=nome: _chamar(layout, "papel", n)
     for id_, nome in MARGENS_DAS_ACOES.items():

@@ -66,7 +66,7 @@ def testar_sectpr() -> None:
 
 
 def testar_secoes_e_pagina_invalida() -> None:
-    secao("mais de uma secao avisa; papel que nao cabe avisa e sai com A4")
+    secao("mais de uma secao (0.1.12: sem aviso, cada uma com o seu papel); papel que nao cabe avisa e sai com A4")
     sectpr_meio = ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
                    '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" '
                    'w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:pPr>'
@@ -74,10 +74,11 @@ def testar_secoes_e_pagina_invalida() -> None:
     dados = _xml_com_corpo(sectpr_meio + '<w:p><w:r><w:t>segunda</w:t></w:r></w:p>')
     lido, avisos = ler(dados)
     codigos = _codigos(avisos)
-    checa("PAGINA" in codigos and "SECAO" in codigos,
-          f"duas secoes: aviso PAGINA e SECAO (avisos: {codigos})")
-    contagem = next((a.contagem for a in avisos if a.codigo == "PAGINA"), None)
-    checa_igual(contagem, 1, "o aviso PAGINA aparece uma vez")
+    # 0.1.12: as secoes voltam ao arquivo; os avisos PAGINA e SECAO (perda) eram da 0.1.11.
+    checa(not codigos and lido.paragrafos[0].secao is not None,
+          f"duas secoes: sem aviso, a primeira termina no seu paragrafo (avisos: {codigos})")
+    checa_igual(lido.paragrafos[0].secao.pagina, Pagina(),
+                "a primeira secao fica com o papel e as margens do seu sectPr")
     unica = _xml_com_corpo('<w:p><w:r><w:t>so uma</w:t></w:r></w:p>')
     _, avisos_unica = ler(unica)
     checa("PAGINA" not in _codigos(avisos_unica),

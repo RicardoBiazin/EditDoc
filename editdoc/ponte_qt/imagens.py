@@ -180,6 +180,9 @@ class DocumentoQt(QTextDocument):
         # Marcas de nota de rodape e de fim (0.1.10).
         from editdoc.ponte_qt import notas
         self._manipulador_notas = notas.registrar_manipulador(self)
+        # Quebras de secao e de coluna (0.1.12).
+        from editdoc.ponte_qt import secoes
+        self._manipulador_quebras = secoes.registrar_manipulador(self)
         self._chave_fonte: str | None = None
         #: Numero de serie (0.1.8): chave de cache que nao confia em id() (reusado pelo coletor).
         self.serie = next(_SERIE_DOCUMENTOS)

@@ -279,9 +279,9 @@ def preparar(doc):
     from editdoc.modelo.documento import MarcaNota, TIPOS_DE_FAIXA
     cat = doc.notas
     refs = referencias_do_corpo(doc.paragrafos)
-    faixas_com = any(isinstance(r.marca, MarcaNota) for faixas in (doc.cabecalhos, doc.rodapes)
-                     for t in TIPOS_DE_FAIXA if t in faixas
-                     for p in _paragrafos(faixas[t]) for r in p.runs)
+    from editdoc.modelo.documento import historias_de_faixa
+    faixas_com = any(isinstance(r.marca, MarcaNota) for blocos in historias_de_faixa(doc)
+                     for p in _paragrafos(blocos) for r in p.runs)
     if cat is None and not refs and not faixas_com:
         return doc
     saida = copy.copy(doc)
@@ -289,10 +289,8 @@ def preparar(doc):
     if faixas_com:
         saida.cabecalhos = copy.deepcopy(doc.cabecalhos)
         saida.rodapes = copy.deepcopy(doc.rodapes)
-        for faixas in (saida.cabecalhos, saida.rodapes):
-            for t in TIPOS_DE_FAIXA:
-                if t in faixas:
-                    _sem_referencias(faixas[t])
+        for blocos in historias_de_faixa(saida):
+            _sem_referencias(blocos)
     refs = referencias_do_corpo(saida.paragrafos)
     if cat is None:
         cat = Notas()

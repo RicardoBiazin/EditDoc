@@ -155,8 +155,9 @@ Implementados no M5 (0.0.8).
   tabela, imagem, busca) funcionam sem mudança. O corpo é sempre `documento_corpo()`: é ele que
   a janela grava e que diz se há alteração.
 
-Limites: uma seção só (de várias seções, valem os cabeçalhos da última, com a herança do Word,
-e o aviso CABECALHO_SECAO); parte de cabeçalho acima de 4 MB não é lida (aviso); campo
+Limites: até a 0.1.11, uma seção só (de várias seções, valiam os cabeçalhos da última, com o
+aviso CABECALHO_SECAO); desde a 0.1.12 cada seção tem os seus (ver "Seções"); parte de
+cabeçalho acima de 4 MB não é lida (aviso); campo
 aninhado mais de 8 níveis não é interpretado. Copiar e colar um campo leva só o texto ao
 redor (o HTML do Qt não carrega o objeto).
 
@@ -217,8 +218,8 @@ Implementados no M7 (0.0.10), em `editdoc/interface/impressao.py`.
 - PDF: montado na memória (`QBuffer`) e gravado com a troca atômica, com conferência do
   arquivo relido (começa com `%PDF-`, termina com `%%EOF`, tem o número de páginas
   pedido). Cancelar no meio não grava nada. Papel e orientação vêm da página do
-  documento, folha a folha (`pagina_da_folha`): com uma seção, todas iguais; o laço já
-  troca o papel quando a folha seguinte for diferente. Metadados: título e autor do
+  documento, folha a folha (`pagina_da_folha`, desde a 0.1.12 a da seção da folha): o laço
+  troca o papel quando a folha seguinte é diferente (no PDF e, desde a 0.1.12, na impressora). Metadados: título e autor do
   `docProps/core.xml` (sem título, o nome do arquivo) e criador "EditDoc x.y.z".
 - Impressora: `QPrintDialog` com intervalo, página atual, cópias e agrupar; papel e
   orientação do documento com `setFullPage` (a origem é o canto do papel). Se a
@@ -789,13 +790,110 @@ continuação; formatos de número fora de decimal, letras, romanos e chicago ap
 flutuante perto do pé não contorna a área de notas; desfazer no corpo depois de editar uma nota
 cujo ajuste caiu fora da sessão pode perder o refazer (o ajuste novo trunca a pilha).
 
+## Seções (0.1.12)
+
+Até a 0.1.11 só a última seção valia: os `w:sectPr` dos parágrafos eram achatados, com os avisos
+SECAO, PAGINA e CABECALHO_SECAO (perda).
+
+- Modelo (`modelo/secoes.py`): `Secao` (página, tipo `w:type`, os cabeçalhos e rodapés que ela
+  declara, `extras`, `original`, `chaves`). A seção que termina num parágrafo é
+  `Paragrafo.secao`; a última são os campos de sempre do `Documento` (`pagina`, `cabecalhos`,
+  `rodapes`) mais `Documento.secao` (tipo, extras, XML de origem). `secoes_de(doc)` dá a lista;
+  `faixa_efetiva` faz a herança do Word (a seção que não declara um tipo usa o da anterior).
+  `historias_de_faixa` (modelo/documento.py) junta os cabeçalhos de todas as seções para quem
+  percorre as histórias (marcas, listas, notas).
+- Arquivo (`formato_docx/secoes.py`): `ler` representa as referências, `w:type`, `w:pgSz`
+  (w, h, orient), `w:pgMar`, `w:titlePg` e o `w:pgNumType` (formato que o EditDoc desenha, início
+  válido); o resto (colunas, numeração de linhas, vAlign, bordas de página, grade, proteção,
+  direção, bidi, rtlGutter, paperSrc, printerSettings, o footnotePr das seções do meio,
+  chapStyle, o `w:code` do papel, os rsids) fica em `extras` (c14n) e volta igual. `escrever`
+  parte do `original` (a ordem e os atributos que o arquivo tinha) e só troca o que o modelo
+  mudou, com os atributos na ordem do Word; sem mudança, a forma canônica sai igual (conferido
+  nos `.docx` reais). As referências de cabeçalho entram depois que as partes são gravadas; duas
+  seções que citavam a mesma parte com o mesmo conteúdo continuam citando uma parte só (a
+  chave). Revisão (`w:sectPrChange`) sai com REVISAO; filho fora do esquema, com FORMATACAO.
+  Limites contra arquivo hostil: 2000 quebras de seção (as que passam se juntam à seguinte,
+  aviso SECAO) e 45 colunas. Formato de número que a tela não desenha passou a ser preservado
+  (NUMERO_PAGINA sem perda). O leitor lê o `w:sectPr` do parágrafo só no corpo e fora de tabela
+  (SECAO no resto), e os cabeçalhos de cada seção depois do corpo (cada parte uma vez só).
+- Validador e conferência: `secoes.validar` (o `w:sectPr` é o último filho do `w:body` ou do
+  `w:pPr` de um parágrafo do corpo, as referências têm tipo válido, um por tipo, e resolvem para
+  uma parte de cabeçalho/rodapé; limites); a conferência compara onde cada seção termina, a
+  página, o tipo, os extras e os cabeçalhos que cada uma declara.
+- Qt (`ponte_qt/secoes.py`): a quebra de seção é um caractere de objeto (`TIPO_QUEBRA` =
+  UserObject + 6, o JSON em `PROP_QUEBRA` = UserProperty + 35) no FIM do último parágrafo da
+  seção, com o id da seção num registro do documento (fora do desfazer). Como no Word, ele É a
+  marca do parágrafo: Backspace no começo do parágrafo seguinte, ou Delete antes dele, apagam a
+  quebra e fundem os dois parágrafos; o texto de cima passa à seção de baixo, que continua com
+  as propriedades dela; o caret nunca fica depois dele. O desfazer é o do texto. Inserir a
+  quebra (Layout > Quebras) cria uma seção (cópia da do cursor, com os mesmos cabeçalhos) para a
+  parte de cima e muda o tipo da de baixo trocando o id do caractere dela (ou, na última, o id
+  no quadro raiz, `PROP_SECAO_FINAL` = + 38): as duas trocas entram no passo de desfazer. A
+  quebra de coluna é o mesmo objeto, sem largura. Papel, orientação e margens de uma seção
+  mudam o registro (fora do desfazer, como a página da 0.1.11).
+- Cabeçalhos (`interface/cabecalhos.py`): cada variante tem um id; as seções apontam para os ids
+  que declaram (`Secao.chaves`). A mesma variante pode valer em várias seções (editar uma edita
+  a outra, como o "Vincular ao anterior" do Word) e é medida e pintada com a largura do corpo da
+  seção da folha. Vincular ao anterior tira a declaração da seção (com confirmação se ela tem
+  texto); desvincular copia a da anterior.
+
+### Paginação por seção
+
+Decidida pelo spike da 0.1.12 (docs/SPIKES.md). O `QTextDocument` pagina com um `pageSize` só,
+e nem a margem de um `QTextFrame` filho nem a de uma tabela valem por página (medido: só a do
+quadro raiz, igual em todas). Um quadro por seção daria a largura, mas a seleção do Qt que
+atravessa um quadro pega o quadro inteiro, e mover texto entre quadros (apagar a quebra entre
+seções de papéis diferentes) seria copiar fragmento com objetos. Escolhido, com o menor risco: o
+documento continua um só (cursor, seleção, desfazer e localizar atravessam as seções como
+antes) e (`interface/secoes.py`):
+
+- a página n do documento continua sendo a faixa [n*H, (n+1)*H), com H a maior altura de corpo
+  entre as seções e a largura do documento a maior largura;
+- a seção mais estreita ganha, em cada parágrafo e tabela do primeiro nível, um recuo direito
+  escondido (`PROP_RECUO_SECAO` = + 37, "extra;total"): o texto reflui na largura dela. O recuo
+  do usuário é o total menos o extra enquanto o recuo do bloco continua o total aplicado
+  (`estilos.recuo_direito_real`); quem troca o recuo (formatação, estilo, régua) grava um valor
+  novo, que passa a ser do usuário, e o extra volta na conferência seguinte. O `de_qt`, a faixa e
+  o copiar não veem o extra;
+- a seção mais baixa usa o espaçador das notas (`interface/notas.py`, o corpo da página termina
+  em `n*H + altura da seção`): o bloco que não cabe desce inteiro; a tabela que não pode descer
+  inteira desce a partir da linha que não cabe, com acolchoamento de baixo na linha de cima
+  (`PROP_LINHA_EMPURRADA` = + 39 na célula), e a pintura fecha a linha de cima onde o texto dela
+  acaba (`fechar_linhas_empurradas`);
+- a quebra entre seções é a quebra de página do Qt, derivada (`PROP_QUEBRA_SECAO` = + 36):
+  `PageBreak_AlwaysAfter` no parágrafo da quebra quando a seção seguinte começa em página nova
+  (nextPage, evenPage, oddPage, nextColumn e a contínua com outro papel); a página em branco de
+  evenPage/oddPage é mais uma quebra, antes da unidade seguinte (medido: as duas seguidas deixam
+  uma página vazia). Ela segue a numeração que continua; com reinício, o número que a página
+  teria sem ele;
+- cada folha sabe a sua seção (`ConjuntoDeSecoes.secao_da_folha`, pelo topo da primeira unidade
+  de cada seção; a contínua que começa no meio da folha deixa a folha para a anterior): papel,
+  margens, topo e altura do corpo (`efetiva_da`), cabeçalhos com a herança (`faixa_da_folha`),
+  PAGE com o número da seção (reinício e formato), SECTIONPAGES e NUMPAGES
+  (`campos_da_folha`). O mapa da tela (`modelo/folhas.Mapa`, `folhas`) põe folhas de tamanhos
+  diferentes uma embaixo da outra, cada uma centrada; o PDF e a impressão trocam de papel na
+  folha; a régua usa a seção do cursor; os objetos flutuantes, a página e a margem da seção da
+  folha (`flutuantes.Contexto.folhas`); as notas, a altura da seção.
+
+Os formatos derivados entram no desfazer como o espaçador das notas: um passo anotado depois do
+passo do usuário (`ConjuntoDeNotas.ajustar`). A conferência só olha o trecho editado, a não ser
+que a estrutura mude. Documento de uma seção só: nada disso roda.
+
+Limites: colunas são preservadas e mostradas em uma coluna (aviso COLUNAS, sem perda); o
+parágrafo que não cabe numa seção mais baixa desce inteiro; o objeto flutuante à direita numa
+seção mais estreita fica na largura do documento; a altura do corpo de uma seção é a da sua
+variante de cabeçalho mais alta (como na 0.1.8); a área de notas usa a largura da seção mais
+estreita; copiar e colar não leva a quebra de seção; desfazer não desfaz a troca de papel e
+margens nem o "Vincular ao anterior".
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
 0.1.2; partes do pacote, campos, hiperlinks e marcadores, desde a 0.1.3; definições de
 numeração, desde a 0.1.4; formatação que o modelo não representa e controles de conteúdo de
 parágrafo e de bloco, desde a 0.1.5; comentários editáveis e referências de estilo sem
-definição, desde a 0.1.6; notas de rodapé e de fim, desde a 0.1.10) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
+definição, desde a 0.1.6; notas de rodapé e de fim, desde a 0.1.10; seções, com papel, cabeçalhos, numeração,
+colunas e o resto do `w:sectPr`, desde a 0.1.12) ou descartado com aviso. Listas são exatas desde a 0.1.4: LISTA e
 LISTA_NIVEL só para referência quebrada, nível fora de 0 a 8 ou numeração acima dos
 limites, e LISTA_EM_CAIXA só quando a numeração do arquivo não pôde ser lida. Se algo que se perderia ao salvar estiver presente, a primeira gravação pede
 confirmação e oferece "Salvar cópia". O que é preservado tem aviso sem perda (ou nenhum) e
@@ -837,6 +935,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Desempenho e cabeçalho por página | 0.1.8 (feito) | digitação ≤ 16 ms num manual pesado; topo do corpo pelo cabeçalho de cada página |
 | Mover e redimensionar | 0.1.9 (feito) | arrastar, alças, setas, quebra de texto, diálogo Posição e tamanho, cabeçalho |
 | Notas | 0.1.10 (feito) | footnotes.xml e endnotes.xml, numeração, área de notas na página, edição no lugar, aba Referências, PDF |
+| Seções | 0.1.12 (feito) | sectPr de cada seção sem perda, papel e cabeçalhos por folha, numeração por seção, quebras de seção, Vincular ao anterior |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em
@@ -846,7 +945,7 @@ modo contínuo, com paginação só na impressão.
 
 Revisão com controle de alterações (comentários desde a 0.1.6; notas de rodapé desde a 0.1.10), gerar e atualizar
 índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações e formas (preservadas sem
-edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas, seções múltiplas editáveis, ortografia (prevista para a
+edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas na tela (preservadas desde a 0.1.12; as seções se editam desde a 0.1.12), ortografia (prevista para a
 0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).
 
 ## Riscos abertos

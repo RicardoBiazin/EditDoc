@@ -168,7 +168,13 @@ def testar_leitura_do_word() -> None:
     corpo = ("<w:p><w:pPr><w:sectPr>" + _referencia("default", "rId70")
              + "</w:sectPr></w:pPr><w:r><w:t>secao 1</w:t></w:r></w:p><w:p><w:r><w:t>secao 2</w:t></w:r></w:p>")
     modelo, avisos = ler(fx.docx_com_xml(corpo, **base))
-    checa("padrao" in modelo.cabecalhos and "CABECALHO_SECAO" not in codigos(avisos),
+    # 0.1.12: cada secao guarda so' o que declara; a ultima herda pela regra do Word (antes o
+    # leitor copiava o herdado para a ultima secao, que era a unica do modelo).
+    from editdoc.modelo.secoes import faixa_efetiva, secoes_de
+    secoes = secoes_de(modelo)
+    herdado = faixa_efetiva(secoes, 1, "cabecalho", "padrao")
+    checa(len(secoes) == 2 and "padrao" in secoes[0].cabecalhos and not modelo.cabecalhos
+          and herdado is not None and herdado[0] == 0 and not codigos(avisos),
           "secao sem referencia herda o cabecalho da anterior, sem aviso de cabecalho")
     # Duas secoes com cabecalhos diferentes.
     outro = fx.parte_faixa("<w:p><w:r><w:t>Outro</w:t></w:r></w:p>")
@@ -177,7 +183,11 @@ def testar_leitura_do_word() -> None:
     base2["relacoes_extra"] = base["relacoes_extra"] + [("rId80", fx.RT_HEADER, "header8.xml")]
     base2["tipos_extra"] = base["tipos_extra"] + [("/word/header8.xml", fx.CT_HEADER)]
     modelo, avisos = ler(fx.docx_com_xml(corpo, _referencia("default", "rId80"), **base2))
-    checa("CABECALHO_SECAO" in codigos(avisos), "secoes com cabecalhos diferentes: aviso CABECALHO_SECAO")
+    # 0.1.12: o aviso CABECALHO_SECAO (so' os da ultima secao ficavam) deixou de existir: cada
+    # secao fica com o seu.
+    checa(not codigos(avisos) and texto_de(modelo.paragrafos[0].secao.cabecalhos["padrao"])
+          .startswith("Relatório"),
+          "secoes com cabecalhos diferentes: cada uma fica com o seu, sem aviso")
     checa_igual(texto_de(modelo.cabecalhos["padrao"]), "Outro", "fica o cabecalho da ultima secao")
 
     # Arquivo hostil: 400 secoes, cada uma com a sua referencia. So' a ultima e' lida.
@@ -191,10 +201,14 @@ def testar_leitura_do_word() -> None:
     inicio = time.perf_counter()
     modelo, avisos = ler(fx.docx_com_xml(corpo_muitas, _referencia("default", "rId70"), **muitas))
     gasto = time.perf_counter() - inicio
-    checa(gasto < 2.0 and "CABECALHO_SECAO" in codigos(avisos),
-          f"400 secoes com cabecalho: le' em {gasto:.2f} s (limite 2 s), com aviso")
-    checa_igual(sorted(modelo.cabecalhos), ["padrao", "primeira"],
-                "so' as variantes da ultima secao (com a heranca) sao lidas")
+    # 0.1.12: as 400 secoes ficam, cada uma com as suas referencias; a parte citada por
+    # todas e' lida uma vez so' (o tempo continua dentro do limite).
+    checa(gasto < 2.0 and not codigos(avisos),
+          f"400 secoes com cabecalho: le' em {gasto:.2f} s (limite 2 s), sem aviso")
+    meio = [b.secao for b in modelo.paragrafos if b.secao is not None]
+    checa(len(meio) == 400 and all(sorted(s.cabecalhos) == ["padrao", "primeira"] for s in meio)
+          and sorted(modelo.cabecalhos) == ["padrao"],
+          "cada secao fica com as variantes que declara (a ultima so' a padrao)")
 
     modelo, avisos = ler(fx.docx_com_xml("<w:p/>", _referencia("default", "rId99"), **base))
     checa(codigos(avisos).get("CABECALHO_RODAPE") == 1 and not modelo.cabecalhos,

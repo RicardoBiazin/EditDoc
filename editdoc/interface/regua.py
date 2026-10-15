@@ -66,7 +66,12 @@ class Regua(QWidget):
     def _x_do_corpo(self) -> float:
         """X, na regua, da margem esquerda (inicio do corpo)."""
         m = self._painel.mapa()
-        return m.esquerda_folha - m.origem_x + self._painel.configuracao_pagina().margem_esq_tw * m.escala
+        margem = self._painel.configuracao_pagina().margem_esq_tw * m.escala
+        if self._painel.layout_pag.secoes.multiplas():
+            # Secoes (0.1.12): a folha do cursor (papeis diferentes ficam em x diferentes).
+            x, _y, _w, _h = m.folha_na_tela(self._painel.pagina_atual())
+            return x + margem
+        return m.esquerda_folha - m.origem_x + margem
 
     def _x_de_tw(self, tw: float) -> float:
         return self._x_do_corpo() + tw * self._painel.mapa().escala

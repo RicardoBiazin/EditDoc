@@ -39,6 +39,10 @@ formatacao direta do modelo, e o id do estilo numa propriedade de usuario
 
 Comentarios (0.1.6): as ancoras sao marcas (`marcas.py`); o catalogo vai para o documento
 (`ponte_qt/comentarios.py`, `definir_base`).
+
+Secoes (0.1.12): o paragrafo que termina uma secao ganha, no fim, o caractere da quebra de secao
+(`ponte_qt/secoes.py`), e a secao vai para o registro do documento; a ultima secao tambem. A
+quebra de coluna vira o mesmo objeto, sem largura.
 """
 
 from __future__ import annotations
@@ -59,7 +63,8 @@ from editdoc.modelo.numeracao import materializado
 from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import notas as pq_notas
-from editdoc.modelo.documento import MarcaNota
+from editdoc.modelo.documento import MarcaNota, MarcaQuebra
+from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import propriedades as pq_props
 
@@ -361,6 +366,9 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
             # Nota de rodape ou de fim (0.1.10): a referencia, ou o numero da propria nota.
             pq_notas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res),
                                                              r.link))
+        elif isinstance(r.marca, MarcaQuebra):
+            # Quebra de coluna (0.1.12).
+            pq_secoes.inserir_coluna(cursor, _formato_do_run(r, p.estilo, res))
         elif r.marca is not None:
             # Campo ou marcador (0.1.3): a marca leva a formatacao do run (o codigo do campo
             # e o resultado recalculado pelo Word saem com ela).
@@ -374,6 +382,11 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
         elif r.texto:
             cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA),
                               links.com_link(_formato_do_run(r, p.estilo, res), r.link))
+    if p.secao is not None and cursor.currentTable() is None and \
+            getattr(cursor.document(), "_corpo_com_secoes", False):
+        # Quebra de secao (0.1.12): o ultimo caractere do paragrafo, com o formato do texto do
+        # fim (a linha vazia da quebra fica com a altura do paragrafo).
+        pq_secoes.inserir_secao(cursor, p.secao, QTextCharFormat(cursor.charFormat()))
 
 
 def _inserir_blocos(cursor: QTextCursor, blocos: list, res: pq_estilos.Resolvedor) -> None:
@@ -488,6 +501,12 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     """
     documento_qt.clear()
     _reiniciar_flutuantes(documento_qt, modelo.pagina)
+    # Secoes (0.1.12): registro novo; a ultima secao com o tipo, os extras e os cabecalhos dela.
+    pq_secoes.limpar(documento_qt)
+    final = pq_secoes.sem_conteudo(getattr(modelo, "secao", None) or pq_secoes.Secao())
+    final.pagina = modelo.pagina
+    documento_qt._secao_final = final
+    documento_qt._corpo_com_secoes = True
     # Lista dada so' pelo tipo (documento montado em codigo): os numIds do escritor (0.1.4).
     modelo = materializado(modelo)
     listas.definir_catalogo_base(documento_qt, modelo.numeracao)

@@ -143,16 +143,35 @@ class Contexto:
         self.indice = 0
         #: corpo (0.1.8): ((tipo de pagina, topo do corpo), ...), de `LayoutPaginado.topos()`.
         self.topos: tuple | None = None
+        #: corpo com secoes (0.1.12): folha -> (pagina do arquivo, efetiva) da secao da folha;
+        #: e a geracao da geometria das secoes (entra na chave)
+        self.folhas = None
+        self.geracao = 0
 
     def chave(self) -> tuple:
         p, e = self.pagina, self.efetiva
         return (self.historia, self.hb, self.origem, self.indice % 2,
                 p.largura_tw, p.altura_tw, p.margem_esq_tw, p.margem_dir_tw, p.margem_sup_tw,
                 p.margem_inf_tw, e.margem_sup_tw, e.margem_esq_tw, e.corpo_largura_tw(),
-                self.topos)
+                self.topos, self.geracao if self.folhas is not None else 0)
+
+    def pagina_da(self, n: int) -> Pagina:
+        return self.folhas(n)[0] if self.folhas is not None else self.pagina
+
+    def efetiva_da(self, n: int) -> Pagina:
+        return self.folhas(n)[1] if self.folhas is not None else self.efetiva
+
+    def pe_da(self, n: int) -> float:
+        """Onde o corpo da folha n termina, em y do documento (0.1.12: a secao pode ser mais
+        baixa que hb)."""
+        if self.folhas is not None:
+            return n * self.hb + float(self.efetiva_da(n).corpo_altura_tw())
+        return (n + 1) * self.hb
 
     def topo_da_pagina(self, n: int) -> float:
         """Topo do corpo na folha n (0.1.8): o do tipo da pagina (primeira, par, padrao)."""
+        if self.folhas is not None and self.historia == "corpo":
+            return float(self.efetiva_da(n).margem_sup_tw)
         if self.topos:
             from editdoc.modelo.campos import tipo_da_pagina
             topo = dict(self.topos).get(tipo_da_pagina(max(0, n), self.pagina))
@@ -160,14 +179,16 @@ class Contexto:
                 return float(topo)
         return float(self.efetiva.margem_sup_tw)
 
-    def corpo_largura(self) -> float:
+    def corpo_largura(self, n: int | None = None) -> float:
+        if n is not None and self.folhas is not None and self.hb:
+            return float(self.efetiva_da(n).corpo_largura_tw())
         return float(self.efetiva.corpo_largura_tw())
 
     def folha_de(self, y_doc: float) -> tuple[int, float, float]:
         """(pagina, dx, dy): somar (dx, dy) leva um ponto do documento para a folha."""
         if self.hb:
             n = max(0, math.floor(y_doc / self.hb))
-            return n, float(self.efetiva.margem_esq_tw), self.topo_da_pagina(n) - n * self.hb
+            return n, float(self.efetiva_da(n).margem_esq_tw), self.topo_da_pagina(n) - n * self.hb
         return self.indice, self.origem[0], self.origem[1]
 
 
@@ -350,7 +371,7 @@ class Gerente:
             # No meio do layout (intrinsicSize): so' a posicao que o Qt ja' deu ao bloco.
             lay0 = bloco.layout()
             x0 = lay0.position().x() if lay0 is not None else 0.0
-            r = QRectF(x0, topo_doc, ctx.corpo_largura(), 0.0)
+            r = QRectF(x0, topo_doc, ctx.corpo_largura(ctx.folha_de(topo_doc)[0]), 0.0)
         topo = r.top() if topo_doc is None else topo_doc
         n, dx, dy = ctx.folha_de(topo)
         if indice is not None and not ctx.hb:
@@ -367,8 +388,8 @@ class Gerente:
         if QTextCursor(bloco).currentTable() is not None:
             coluna_x, coluna_w = r.left() + dx, r.width()
         else:
-            coluna_x, coluna_w = float(ctx.efetiva.margem_esq_tw), ctx.corpo_largura()
-        ref = mf.Referencia(pagina=ctx.pagina, indice=n, paragrafo_y=topo + dy,
+            coluna_x, coluna_w = float(ctx.efetiva_da(n).margem_esq_tw), ctx.corpo_largura(n)
+        ref = mf.Referencia(pagina=ctx.pagina_da(n), indice=n, paragrafo_y=topo + dy,
                             linha_y=linha_y if linha_y is not None else topo + dy,
                             coluna_x=coluna_x, coluna_w=coluna_w, caractere_x=car_x)
         return n, ref, (dx, dy)
@@ -421,7 +442,14 @@ class Gerente:
         itens = self._flutuantes_do_bloco(bloco)
         if not itens:
             return {}
-        largura = ctx.corpo_largura() if ctx is not None else max(self.doc.textWidth(), 1.0)
+        if ctx is not None and ctx.folhas is not None:
+            # Secoes (0.1.12): o Qt poe o float na largura do documento (a da secao mais larga);
+            # a secao mais estreita tem o recuo escondido nos paragrafos, nao no float.
+            largura = float(self.doc.pageSize().width())
+        elif ctx is not None:
+            largura = ctx.corpo_largura()
+        else:
+            largura = max(self.doc.textWidth(), 1.0)
         direita = QTextFrameFormat.Position.FloatRight
         zero = {}
         for pos, cf, _fl, q in itens:
@@ -441,7 +469,7 @@ class Gerente:
             x0, y0, x1, y1 = mf.area_de_quebra(anc, mf.retangulo(anc, ref))
             x0, x1, y0, y1 = x0 - dx, x1 - dx, y0 - dy, y1 - dy
             if ctx.hb:
-                limite = (n + 1) * ctx.hb - 1
+                limite = ctx.pe_da(n) - 1
                 if y0 >= limite:
                     continue
                 y1 = min(y1, limite)
@@ -636,7 +664,10 @@ class Gerente:
             alcances[idx] = ate_novo
         if faixas:
             return faixas
-        largura = self.contexto.corpo_largura() if self.contexto else doc.textWidth()
+        if self.contexto is not None and self.contexto.folhas is not None:
+            largura = float(doc.pageSize().width())  # secoes (0.1.12): a largura do documento
+        else:
+            largura = self.contexto.corpo_largura() if self.contexto else doc.textWidth()
         vistos = set()
         self._linhas_falhas = {}
         self._alcances_conferidos = alcances

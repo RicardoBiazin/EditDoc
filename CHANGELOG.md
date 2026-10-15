@@ -1,3 +1,84 @@
+## 0.1.12 - 2026-10-15
+
+Várias seções no mesmo documento: cada uma com o seu papel, as suas margens, os seus cabeçalhos
+e a sua numeração, de volta ao arquivo sem perda.
+
+Defeito: até a 0.1.11 só a última seção valia. Os `w:sectPr` dos parágrafos eram achatados
+(avisos SECAO, PAGINA e CABECALHO_SECAO, com perda): o arquivo saía com uma seção só, os
+cabeçalhos das outras seções sumiam, a página paisagem no meio do documento virava retrato e a
+numeração que reiniciava passava a contínua. O que a última seção tinha e o modelo não
+representava (colunas, grade, numeração de linhas) também não voltava.
+
+- Arquivo (`formato_docx/secoes.py`, `modelo/secoes.py`): cada `w:sectPr` vira uma `Secao`
+  (`Paragrafo.secao` e, para a última, `Documento.secao`): tipo (`w:type`: nextPage, continuous,
+  evenPage, oddPage, nextColumn), papel e orientação, margens, primeira página diferente,
+  numeração (formato e início) e os cabeçalhos e rodapés que ela declara, com a herança do Word
+  (a seção que não declara usa os da anterior). Colunas (`w:cols` com `w:col`), numeração de
+  linhas, alinhamento vertical, bordas de página, grade, proteção de formulário, direção do
+  texto, bidi, rtlGutter, footnotePr/endnotePr das seções do meio, `w:code` do papel,
+  chapStyle e os rsids voltam iguais (c14n): o escritor parte do `w:sectPr` de origem e só muda
+  o que o modelo mudou. Duas seções que citam a mesma parte de cabeçalho continuam citando uma
+  só. A quebra de coluna (`w:br w:type="column"`), que saía do arquivo, volta (marca no fluxo).
+  Formato de número que a tela não desenha passa a ser preservado (NUMERO_PAGINA sem perda).
+- Validador e conferência: o `w:sectPr` como último filho do `w:pPr` (parágrafo do corpo, fora
+  de tabela) ou do `w:body`; referências com tipo válido, uma por tipo, que resolvem para parte
+  de cabeçalho/rodapé; limites contra arquivo hostil (2000 quebras de seção: as que passam se
+  juntam à seguinte, com SECAO; 45 colunas: acima, as colunas saem com FORMATACAO). A conferência
+  compara onde cada seção termina, a página, o tipo, os extras e os cabeçalhos de cada uma.
+- Tela (`interface/secoes.py`, decidido por spike, docs/SPIKES.md "0.1.12"): cada folha tem o
+  papel, a orientação, as margens, a altura do corpo, os cabeçalhos e rodapés (com a herança e a
+  primeira página da seção) e o número da sua seção (PAGE com reinício e formato; SECTIONPAGES
+  passa a ser calculado). O documento continua um só (cursor, seleção, desfazer e localizar
+  atravessam as seções): a seção mais estreita tem um recuo direito escondido nos parágrafos e
+  tabelas; na seção mais baixa o bloco que não cabe desce para a página seguinte (o espaçador das
+  notas) e a tabela longa desce a partir da linha que não cabe; a quebra entre seções é a quebra
+  de página do Qt, e evenPage/oddPage ganham a página em branco antes quando precisa. Folhas de
+  tamanhos diferentes na tela, uma embaixo da outra; PDF e impressão trocam de papel na folha;
+  régua da seção do cursor; objetos flutuantes relativos à página e à margem da seção; notas de
+  rodapé no pé do corpo da seção; barra de status "Seção 2 de 3".
+- Edição: **Layout > Quebras > Quebra de seção** (Próxima página, Contínua, Página par, Página
+  ímpar) parte o parágrafo no cursor; a parte de cima vira uma seção com as propriedades e os
+  cabeçalhos da do cursor, e a de baixo começa como o tipo pedido. Com as marcas de formatação, a
+  quebra aparece como no Word ("Quebra de seção (Próxima página)"). Backspace no começo do
+  parágrafo seguinte, ou Delete antes da quebra, apaga a quebra e funde os parágrafos: o texto de
+  cima passa a ter as propriedades da seção de baixo. Um passo de desfazer em cada caso. Papel,
+  orientação e margens da aba Layout valem para a seção do cursor; Margens > Personalizadas tem
+  "Aplicar a: Esta seção / Documento inteiro". Na edição do cabeçalho o rótulo diz a seção ("-
+  Seção 2 - Igual ao anterior") e **Vincular ao anterior** (aba Cabeçalho e Rodapé) desvincula
+  (copia o da anterior) ou vincula (apaga o próprio, com confirmação se ele tem texto).
+- Avisos: SECAO só para quebra de seção fora do corpo ou acima do limite; PAGINA e
+  CABECALHO_SECAO deixam de existir; COLUNAS (sem perda): as colunas são preservadas, mas
+  aparecem em uma coluna só.
+
+Validação com arquivos reais (cópias temporárias, fora do repositório): o arquivo de duas seções
+que na 0.1.11 abria com SECAO 1 e PAGINA 1 abre sem aviso (capa de 2 folhas, a segunda em branco
+como no Word, porque a capa termina numa quebra de página antes da quebra de seção; corpo de 11
+folhas com o cabeçalho e o rodapé dele, numeração continuando em 3); abrir, salvar como, reabrir
+e salvar: os `w:sectPr` voltam iguais em c14n, e a segunda gravação sai igual à primeira. Os 10
+`.docx` da pasta de amostras gravam, passam na conferência e no validador e regravam sem
+diferença c14n.
+
+Desempenho: gate de 16 ms em todos os pontos da tabela da 0.1.11 e na fixture de três seções
+(6,0 ms digitando na seção paisagem); o arquivo real de duas seções já passava do gate na 0.1.11
+(pendência, sem relação com as seções). docs/SPIKES.md "0.1.12".
+
+Testes: `teste_secoes.py` (novo: leitura, c14n de cada `w:sectPr`, referências com o mesmo
+conteúdo, idempotência, contínua com duas colunas e quebra de coluna, validador com sabotagens,
+arquivo hostil, mudança só no que mudou; folhas de cada seção, página em branco do oddPage,
+cabeçalho por folha com a herança, PAGE em romanos e com reinício, mapa da tela, rótulo da quebra,
+PDF com o MediaBox de cada folha, salvar e reabrir pela janela; inserir as quatro quebras,
+Backspace e Delete, desfazer e refazer, orientação só na seção, documento inteiro, Vincular ao
+anterior; notas e objeto flutuante na seção paisagem, tabela longa na paisagem, SECTIONPAGES,
+copiar sem o derivado; p95 na seção paisagem; com contraprovas). Checagens reescritas, com o
+motivo no teste: `teste_layout.py` (duas seções: era "aviso PAGINA e SECAO", agora sem aviso e a
+primeira seção com o papel dela), `teste_cabecalho_rodape.py` (herança: o cabeçalho herdado fica
+na seção que o declara e a última o herda; seções com cabeçalhos diferentes: era o aviso
+CABECALHO_SECAO, agora cada uma com o seu, sem aviso; 400 seções: era "só a última, com aviso",
+agora as 400 ficam, sem aviso, ainda abaixo de 2 s), `teste_quebras.py` (a quebra de coluna
+era a contraprova de "não representada"; agora volta ao arquivo, e a contraprova é a quebra de
+tipo desconhecido) e `teste_documento.py` (a perda usada na pergunta "salvar mesmo assim" era a
+quebra de coluna; passa a ser a quebra de tipo desconhecido). Nenhuma verificação foi retirada.
+
 ## 0.1.11 - 2026-10-14
 
 Correções: documento que não salvava, digitação lenta no começo de um manual com capa e teste de

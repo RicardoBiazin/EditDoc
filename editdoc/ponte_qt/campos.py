@@ -64,8 +64,17 @@ class ContextoDeCampos:
         self.indice_fixo: int | None = None
         #: corpo: altura de uma pagina de corpo, em twips (a pagina sai da posicao)
         self.hb: float | None = None
+        #: secoes (0.1.12): folha -> (indice na secao, pagina numerada da secao, paginas da
+        #: secao); None com uma secao so'
+        self.secoes = None
 
     def valor(self, instrucao: str, indice: int) -> str:
+        if self.secoes is not None:
+            try:
+                n, pagina, paginas = self.secoes(max(0, indice))
+            except (IndexError, ValueError):
+                n, pagina, paginas = max(0, indice), self.pagina, self.total
+            return valor_do_campo(instrucao, n, self.total, pagina, paginas)
         return valor_do_campo(instrucao, max(0, indice), self.total, self.pagina)
 
     def textos_para_largura(self, instrucao: str) -> list[str]:

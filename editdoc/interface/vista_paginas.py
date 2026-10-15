@@ -47,6 +47,9 @@ from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import propriedades as pq_props
+from editdoc.ponte_qt import secoes as pq_secoes
+from editdoc.ponte_qt import estilos as pq_estilos
+from editdoc.modelo.secoes import ROTULOS_TIPO
 from editdoc.modelo.folhas import (MARGEM_DO_PAINEL_PX, PASSO_DA_RODA_PX,
                                    VAO_ENTRE_FOLHAS_PX, Mapa, alinhar_ao_dispositivo,
                                    limitar_zoom, passo_de_zoom, teto_de_zoom)
@@ -120,12 +123,81 @@ def _fonte_da_marca(fontes: dict, cf, padrao) -> object:
     return fonte
 
 
+def rotulo_da_quebra(doc, pos: int, dado: dict) -> str:
+    """"Quebra de seção (Próxima página)" (0.1.12): o tipo e' o da secao que comeca depois da
+    quebra, como o Word mostra. Quebra de coluna: "Quebra de coluna"."""
+    if dado.get("coluna"):
+        return "Quebra de coluna"
+    quebras = pq_secoes.quebras_de_secao(doc)
+    reg = pq_secoes.registro(doc)
+    seguinte = None
+    for i, (p, _ident) in enumerate(quebras):
+        if p == pos:
+            seguinte = reg.get(quebras[i + 1][1]) if i + 1 < len(quebras) \
+                else pq_secoes.secao_final(doc)
+            break
+    tipo = (seguinte.tipo if seguinte is not None else None) or "nextPage"
+    return f"Quebra de seção ({ROTULOS_TIPO.get(tipo, ROTULOS_TIPO['nextPage'])})"
+
+
+def _marcas_de_quebra(painter, bloco, r: QRectF, fontes: dict, padrao) -> bool:
+    """A linha dupla pontilhada com o rotulo da quebra de secao (ou a simples da quebra de
+    coluna) no lugar do caractere, ate' a margem direita do corpo. True se o bloco tem quebra
+    de secao (o pilcrow nao aparece: a quebra e' a marca de paragrafo, como no Word)."""
+    lay = bloco.layout()
+    doc = bloco.document()
+    secao = False
+    it = bloco.begin()
+    while not it.atEnd():
+        frag = it.fragment()
+        if frag.isValid() and pq_secoes.eh_quebra(frag.charFormat()):
+            dado = pq_secoes.dado_de(frag.charFormat()) or {}
+            for i, c in enumerate(frag.text()):
+                if c != "￼":
+                    continue
+                pos = frag.position() + i
+                rel = pos - bloco.position()
+                linha = lay.lineForTextPosition(rel)
+                if not linha.isValid():
+                    continue
+                x0 = r.left() + linha.cursorToX(rel)[0] + 20
+                # Ate' a margem direita do corpo da secao (sem o recuo escondido da estreita).
+                escondido = pq_estilos.recuo_secao(bloco.blockFormat())
+                x1 = max(r.right() - (escondido[0] if escondido else 0.0), x0 + 600)
+                y = r.top() + linha.y() + linha.height() / 2.0
+                rotulo = rotulo_da_quebra(doc, pos, dado)
+                fonte = _fonte_da_marca(fontes, frag.charFormat(), padrao)
+                fonte = type(fonte)(fonte)
+                fonte.setPixelSize(max(1, round(fonte.pixelSize() * 0.75)))
+                painter.save()
+                painter.setFont(fonte)
+                metrica = painter.fontMetrics()
+                larg = metrica.horizontalAdvance(rotulo) + 80
+                meio = (x0 + x1) / 2.0
+                caneta = QPen(COR_MARCAS, 10, Qt.PenStyle.DotLine)
+                painter.setPen(caneta)
+                for dy in ((-18, 18) if not dado.get("coluna") else (0,)):
+                    painter.drawLine(QPointF(x0, y + dy), QPointF(meio - larg / 2, y + dy))
+                    painter.drawLine(QPointF(meio + larg / 2, y + dy), QPointF(x1, y + dy))
+                painter.setPen(COR_MARCAS)
+                painter.drawText(QRectF(meio - larg / 2, y - metrica.height() / 2, larg,
+                                        metrica.height()), Qt.AlignmentFlag.AlignCenter, rotulo)
+                painter.restore()
+                secao = secao or not dado.get("coluna")
+        it += 1
+    return secao
+
+
 def _marcas_do_bloco(painter, bloco, r: QRectF, fontes: dict) -> None:
     lay = bloco.layout()
     if lay is None or lay.lineCount() == 0:
         return
     padrao = bloco.document().defaultFont()
     texto = bloco.text()
+    if "￼" in texto and _marcas_de_quebra(painter, bloco, r, fontes, padrao):
+        texto_sem = None
+    else:
+        texto_sem = texto
     for i, caractere in enumerate(texto):
         marca = _MARCA_DO_CARACTERE.get(caractere)
         if marca is None:
@@ -142,6 +214,8 @@ def _marcas_do_bloco(painter, bloco, r: QRectF, fontes: dict) -> None:
         base = r.top() + linha.y() + linha.ascent()
         x = meio - larg / 2.0 if caractere != "\t" else min(x0, x1) + 20
         painter.drawText(QPointF(x, base), marca)
+    if texto_sem is None:
+        return  # a quebra de secao e' a marca do paragrafo
     linha = lay.lineAt(lay.lineCount() - 1)
     x, _ = linha.cursorToX(len(texto))
     cf = bloco.charFormat() if not texto else _formato_em(bloco, len(texto) - 1)
@@ -232,6 +306,10 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
     # Bordas de paragrafo e de trecho e preenchimento das tabulacoes (0.1.5).
     pq_props.desenhar(painter, layout.doc, ctx.clip)
+    if layout.secoes_baixas():
+        # Tabela partida numa secao mais baixa (0.1.12): a linha de cima fecha onde o texto acaba.
+        from editdoc.interface.notas import fechar_linhas_empurradas
+        fechar_linhas_empurradas(painter, layout.doc, ctx.clip)
     if marcas:
         desenhar_marcas(painter, layout.doc, ctx.clip)
     painter.restore()
@@ -265,15 +343,24 @@ def origem_da_faixa(pagina: Pagina, onde: str, altura_tw: float) -> tuple[float,
     return float(pagina.margem_esq_tw), float(pagina.altura_tw - pagina.rodape_tw - altura_tw)
 
 
-def rotulo_da_faixa(onde: str, indice: int, pagina: Pagina) -> str:
-    """O rotulo da area na edicao: "Cabeçalho", "Rodapé - Primeira página"..."""
+def rotulo_da_faixa(onde: str, indice: int, pagina: Pagina, layout=None) -> str:
+    """O rotulo da area na edicao: "Cabeçalho", "Rodapé - Primeira página"... Com secoes
+    (0.1.12): "Cabeçalho - Seção 2" e, se a secao usa o da anterior, "- Igual ao anterior"."""
     nome = "Cabeçalho" if onde == "cabecalho" else "Rodapé"
-    tipo = tipo_da_pagina(indice, pagina)
+    multiplas = layout is not None and layout.secoes.multiplas()
+    tipo = layout.tipo_da_folha(indice) if multiplas else tipo_da_pagina(indice, pagina)
     if tipo == "primeira":
-        return f"{nome} - Primeira página"
-    if pagina.pares_impares:
-        return f"{nome} - Página par" if tipo == "par" else f"{nome} - Página ímpar"
-    return nome
+        texto = f"{nome} - Primeira página"
+    elif pagina.pares_impares:
+        texto = f"{nome} - Página par" if tipo == "par" else f"{nome} - Página ímpar"
+    else:
+        texto = nome
+    if multiplas:
+        secao = layout.secao_da_folha(indice)
+        texto += f" - Seção {secao + 1}"
+        if secao > 0 and layout.vinculada(secao, onde, tipo):
+            texto += " - Igual ao anterior"
+    return texto
 
 
 def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform, total: int,
@@ -289,14 +376,14 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     texto do corpo: a impressao pinta "objetos", depois o corpo, depois "texto".
     `so` (0.1.8): "cabecalho" ou "rodape" pinta so' aquela faixa (o cache da tela).
     """
-    pagina = layout.pagina_arquivo
+    pagina = layout.pagina_da_folha(n)
     for onde in ("cabecalho", "rodape"):
         if so is not None and onde != so:
             continue
-        faixa = layout.faixas.da_pagina(onde, n, pagina)
+        faixa = layout.faixa_da_folha(onde, n)
         if faixa is None:
             continue
-        faixa.preparar(n, total, pagina)
+        layout.preparar_faixa(faixa, n, total)
         x, y = origem_da_faixa(pagina, onde, faixa.altura())
         # Objetos flutuantes da faixa (0.1.7): referencia na folha, e os de tras antes do texto.
         faixa.posicionar(pagina, layout.efetiva_da(n), n)
@@ -479,11 +566,16 @@ class VistaPaginas(QAbstractScrollArea):
 
     def _mapa(self) -> Mapa:
         vp = self.viewport()
-        return Mapa(pagina=self.layout_pag.pagina, zoom=self._zoom,
-                    largura_viewport=float(vp.width()), altura_viewport=float(vp.height()),
-                    origem_x=float(self.horizontalScrollBar().value()),
-                    origem_y=float(self.verticalScrollBar().value()),
-                    colunas=self._colunas, topo_da_pagina=self.layout_pag.topo_da_pagina)
+        lay = self.layout_pag
+        multiplas = lay.secoes.multiplas()
+        m = Mapa(pagina=lay.pagina, zoom=self._zoom,
+                 largura_viewport=float(vp.width()), altura_viewport=float(vp.height()),
+                 origem_x=float(self.horizontalScrollBar().value()),
+                 origem_y=float(self.verticalScrollBar().value()),
+                 colunas=self._colunas, topo_da_pagina=lay.topo_da_pagina,
+                 folhas=lay.efetiva_da if multiplas else None,
+                 hb_documento=lay.hb if multiplas else None)
+        return m.preparar(self._paginas()) if multiplas else m
 
     def _atualizar_geometria(self) -> None:
         vp = self.viewport()
@@ -734,7 +826,7 @@ class VistaPaginas(QAbstractScrollArea):
     def rolar_para_pagina(self, n: int, folga: float = 8) -> None:
         m = self.mapa()
         linha = max(0, int(n)) // max(1, m.colunas)
-        self.verticalScrollBar().setValue(int(m.vao + linha * m.passo_vertical - folga))
+        self.verticalScrollBar().setValue(int(m.y_da_linha(linha) - folga))
 
     # ----- pintura --------------------------------------------------------
     def preparar_para_impressao(self) -> None:
@@ -744,6 +836,9 @@ class VistaPaginas(QAbstractScrollArea):
         tela ficaria com o numero velho depois que a impressao refez o layout.
         """
         listas_mudaram = pq_listas.numerador_de(self.layout_pag.doc).atualizar()
+        if self.layout_pag.atualizar_secoes():
+            listas_mudaram = True
+            self._atualizar_geometria()
         if self.layout_pag.atualizar_notas():
             listas_mudaram = True
             self._atualizar_geometria()
@@ -764,6 +859,11 @@ class VistaPaginas(QAbstractScrollArea):
             self._limpar_cache()
             self._altura_doc_anterior = None
         paginas_antes = self._paginas()
+        if self.layout_pag.atualizar_secoes():
+            # Secoes (0.1.12): papel, quebras derivadas ou numeracao das folhas mudaram.
+            self._limpar_cache()
+            self._altura_doc_anterior = None
+            self._atualizar_geometria()
         if self.layout_pag.atualizar_notas():
             # Notas (0.1.10): numero de marca refeito (sem contentsChange) ou area diferente.
             self._limpar_cache()
@@ -804,8 +904,8 @@ class VistaPaginas(QAbstractScrollArea):
                 desenhar_folha(p, self.layout_pag, n, t, selecao=selecao, marcas=self._marcas,
                                comentarios=True, tela=True)
             else:
-                nx = math.ceil(m.largura_folha / TILE_PX)
-                ny = math.ceil(m.altura_folha / TILE_PX)
+                nx = math.ceil(w / TILE_PX)
+                ny = math.ceil(h / TILE_PX)
                 for j in range(ny):
                     for i in range(nx):
                         alvo = QRectF(x0 + i * TILE_PX, y0 + j * TILE_PX, TILE_PX, TILE_PX)
@@ -813,7 +913,7 @@ class VistaPaginas(QAbstractScrollArea):
                             p.drawPixmap(QPointF(alvo.x(), alvo.y()),
                                          self._tile(n, i, j, dpr, m))
             self._pintar_notas(p, m, n, x0, y0)
-            self._pintar_faixas(p, m, n, x0, y0, n_total)
+            self._pintar_faixas(p, m, n, x0, y0, n_total, w)
             p.restore()
         self._desenhar_quebras(p, m, i0, i1, n_total)
         self._desenhar_caret(p, m, dpr, n_total)
@@ -844,8 +944,8 @@ class VistaPaginas(QAbstractScrollArea):
         pagina (numero e total, para os campos), o papel, o topo do corpo, o zoom, o DPR, as
         marcas e a parte. A faixa grande demais (objeto de pagina inteira) e' pintada direto."""
         layout = self.layout_pag
-        pagina = layout.pagina_arquivo
-        faixa = layout.faixas.da_pagina(onde, n, pagina)
+        pagina = layout.pagina_da_folha(n)
+        faixa = layout.faixa_da_folha(onde, n)
         if faixa is None:
             return
         dpr = p.device().devicePixelRatioF() or 1.0
@@ -853,7 +953,7 @@ class VistaPaginas(QAbstractScrollArea):
         t = QTransform().translate(x0, y0).scale(e, e)
         chave = (onde, n, n_total, parte, self._zoom, dpr, self._marcas, faixa.serie,
                  faixa.doc.revision(), faixa.doc.chave_da_fonte(), astuple(pagina),
-                 layout.topo_da_pagina(n))
+                 layout.topo_da_pagina(n), layout.chave_de_campos_da_folha(n))
         guardado = self._faixas_pintadas.get(chave)
         if guardado is None:
             regiao = self._regiao_da_faixa(faixa, n, n_total, onde, parte)
@@ -890,8 +990,8 @@ class VistaPaginas(QAbstractScrollArea):
         """Retangulo (twips da folha) onde a faixa pinta: o texto (com folga para a tinta e os
         numeros de lista na margem) e os objetos flutuantes dela. None se nada a pintar."""
         layout = self.layout_pag
-        pagina = layout.pagina_arquivo
-        faixa.preparar(n, n_total, pagina)
+        pagina = layout.pagina_da_folha(n)
+        layout.preparar_faixa(faixa, n, n_total)
         folha = QRectF(0, 0, float(pagina.largura_tw), float(pagina.altura_tw))
         regiao = QRectF()
         if parte != "objetos":
@@ -992,7 +1092,7 @@ class VistaPaginas(QAbstractScrollArea):
         p.restore()
 
     def _pintar_faixas(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float,
-                       n_total: int) -> None:
+                       n_total: int, largura_folha: float | None = None) -> None:
         """Cabecalho e rodape da folha n, por cima dos tiles. Na edicao, o corpo esmaece."""
         editada = self._faixa_editada()
         t = QTransform().translate(x0, y0).scale(m.escala, m.escala)
@@ -1018,8 +1118,9 @@ class VistaPaginas(QAbstractScrollArea):
                            ("rodape", efetiva.altura_tw - efetiva.margem_inf_tw)):
             y = y0 + y_tw * m.escala
             p.setPen(QPen(COR_ROTULO_FAIXA, 1, Qt.PenStyle.DashLine))
-            p.drawLine(QPointF(x0, y), QPointF(x0 + m.largura_folha, y))
-            rotulo = rotulo_da_faixa(onde, n, self.layout_pag.pagina_arquivo)
+            p.drawLine(QPointF(x0, y), QPointF(x0 + (largura_folha or m.largura_folha), y))
+            rotulo = rotulo_da_faixa(onde, n, self.layout_pag.pagina_da_folha(n),
+                                     self.layout_pag)
             larg = metrica.horizontalAdvance(rotulo) + 10
             alto = metrica.height() + 2
             caixa = QRectF(x0 + 4, y if onde == "cabecalho" else y - alto, larg, alto)
@@ -1071,7 +1172,6 @@ class VistaPaginas(QAbstractScrollArea):
         topo = i0 * self.layout_pag.hb
         bloco = doc.findBlock(dl.hitTest(QPointF(0, topo), Qt.FuzzyHit))
         limite = (i1 + 1) * self.layout_pag.hb
-        corpo_w = float(self.layout_pag.pagina.corpo_largura_tw())
         fonte = p.font()
         fonte.setPointSizeF(8.0)
         p.save()
@@ -1079,9 +1179,14 @@ class VistaPaginas(QAbstractScrollArea):
         while bloco.isValid() and dl.blockBoundingRect(bloco).top() < limite:
             anterior = bloco.previous()
             # O espacador da area das notas (0.1.10) nao e' quebra do usuario: sem rotulo.
-            tem_quebra = bool(bloco.blockFormat().pageBreakPolicy() & _QUEBRA_ANTES) and                 not pq_notas.eh_espacador(bloco.blockFormat())
+            # Nem a quebra derivada da secao (0.1.12): a quebra de secao tem o seu rotulo.
+            bf = bloco.blockFormat()
+            tem_quebra = bool(bf.pageBreakPolicy() & _QUEBRA_ANTES) and \
+                not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)
             if tem_quebra and anterior.isValid():
                 y = dl.blockBoundingRect(anterior).bottom()
+                corpo_w = float(self.layout_pag.efetiva_da(
+                    self.layout_pag.pagina_de_y(max(0.0, y - 1.0))).corpo_largura_tw())
                 xa, ya = m.doc_para_tela(0.0, y, n_total)
                 xb, _ = m.doc_para_tela(corpo_w, y, n_total)
                 p.setPen(QPen(COR_QUEBRA, 1, Qt.PenStyle.DashLine))

@@ -63,17 +63,18 @@ def documento_simples() -> Documento:
 
 def docx_com_tabela_e_quebra() -> bytes:
     """Amostra com uma tabela (editada desde o M4, sem aviso) e com recursos que o
-    EditDoc avisa e nao edita: equacao e quebra de coluna.
+    EditDoc avisa e nao edita: equacao e quebra de tipo desconhecido.
 
     Quebra de pagina deixou de ser aviso no M3 (vira quebra_antes), e tabela deixou de
-    ser aviso no M4. Desde a 0.1.2 a equacao e' preservada (aviso sem perda): a perda que
-    a checagem usa e' a quebra de coluna, que continua saindo do arquivo.
+    ser aviso no M4. Desde a 0.1.2 a equacao e' preservada (aviso sem perda). Ate' a 0.1.11 a
+    perda que a checagem usava era a quebra de coluna; desde a 0.1.12 ela volta ao arquivo, e a
+    perda passa a ser a quebra de tipo fora do esquema (w:br w:type="estranho"), que sai.
     """
     base = fx.bytes_de(documento_simples())
     xml = fx.partes_de(base)["word/document.xml"]
     tabela = (b'<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>'
               b'<w:tr><w:tc><w:p><w:r><w:t>celula</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
-              b'<w:p><w:r><w:br w:type="column"/></w:r>'
+              b'<w:p><w:r><w:br w:type="estranho"/></w:r>'
               b'<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"/></w:p>')
     novo = xml.replace(b"<w:sectPr", tabela + b"<w:sectPr", 1)
     return fx.com_parte(base, "word/document.xml", novo)
@@ -248,7 +249,7 @@ def testar_barra_de_aviso(tmp: pathlib.Path) -> None:
     with dialogos(mostrar_detalhes=lambda _p, _t, texto: detalhes.append(texto)):
         janela.barra_aviso._mostrar_detalhes()
     checa(len(detalhes) == 1 and "quebra" in detalhes[0].lower(),
-          "Detalhes mostra a lista completa, com a quebra de coluna")
+          "Detalhes mostra a lista completa, com a quebra de tipo desconhecido")
     limpa = gerente.novo()
     checa(limpa.barra_aviso.isHidden(), "contraprova: documento sem aviso nao mostra a barra")
     janela_limpa(gerente)
@@ -272,9 +273,11 @@ def testar_perda_confirmada(tmp: pathlib.Path) -> None:
     with dialogos(pedir_perda=cancelar):
         checa(janela.salvar() is False, "cancelar a perda nao salva")
     checa(arquivo.read_bytes() == original, "o arquivo continua igual depois do cancelamento")
-    # 0.1.2: a equacao passou a ser preservada; a perda que sobra e' a quebra de coluna.
-    checa(len(perguntas) == 1 and any("quebra de coluna" in linha for linha in perguntas[0]),
-          "a pergunta lista a perda da quebra de coluna")
+    # 0.1.2: a equacao passou a ser preservada; 0.1.12: a quebra de coluna tambem. A perda que
+    # sobra e' a quebra de tipo desconhecido.
+    checa(len(perguntas) == 1 and any("quebra de tipo desconhecido" in linha
+                                      for linha in perguntas[0]),
+          "a pergunta lista a perda da quebra de tipo desconhecido")
     checa(len(perguntas) == 1 and not any("equação" in linha for linha in perguntas[0]),
           "contraprova: a equacao, preservada desde a 0.1.2, nao aparece como perda")
     checa(len(perguntas) == 1 and not any("tabela" in linha for linha in perguntas[0]),

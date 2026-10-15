@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFontComboBox, QFrame,
 
 from editdoc.edicao import formatacao, tabelas
 from editdoc.interface.comandos import (FORMATO_DAS_ACOES, MARGENS_DAS_ACOES, PAPEL_DAS_ACOES,
-                                        QUEBRA_DAS_ACOES, Comandos)
+                                        QUEBRA_DAS_ACOES, QUEBRA_DE_SECAO_DAS_ACOES, Comandos)
 from editdoc.interface.galeria_estilos import GaleriaEstilos, GrupoGaleria
 from editdoc.interface.planejamento import recolher_com_galeria, recolher_grupos
 from editdoc.interface.seletor_grade import SeletorDeGrade
@@ -376,6 +376,7 @@ class Faixa(QFrame):
             _menu_numero_de_pagina(c),
             _botao(c, "primeira_diferente"),
             _botao(c, "pares_impares"),
+            _botao(c, "vincular_anterior"),
             _botao(c, "ir_cabecalho"),
             _botao(c, "ir_rodape"),
             _botao(c, "fechar_cabecalho"),
@@ -524,9 +525,12 @@ class Faixa(QFrame):
             "Configurar Página", _duas_linhas(
                 [_menu("Margens", [c.acao(i) for i in MARGENS_DAS_ACOES]),
                  _menu("Orientação", [c.acao("retrato"), c.acao("paisagem")])],
-                [_menu("Tamanho", [c.acao(i) for i in PAPEL_DAS_ACOES]), _botao(c, "quebra_pagina")]),
+                [_menu("Tamanho", [c.acao(i) for i in PAPEL_DAS_ACOES]),
+                 _menu("Quebras", [c.acao(i) for i in ("quebra_pagina",
+                                                       *QUEBRA_DE_SECAO_DAS_ACOES)])]),
             _menu("Página", [c.acao(i) for i in (*MARGENS_DAS_ACOES, "retrato", "paisagem",
-                                                 *PAPEL_DAS_ACOES, "quebra_pagina")]))
+                                                 *PAPEL_DAS_ACOES, "quebra_pagina",
+                                                 *QUEBRA_DE_SECAO_DAS_ACOES)]))
         # Paragrafo: recuos (cm) e espacamento (pt) do paragrafo do cursor.
         self.recuo_esquerdo = _campo_medida(" cm", 20.0, 0.25, -5.0)
         self.recuo_direito = _campo_medida(" cm", 20.0, 0.25, -5.0)

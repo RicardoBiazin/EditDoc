@@ -173,6 +173,34 @@ def _alinhamento(bf: QTextBlockFormat) -> str | None:
     return None
 
 
+#: Bloco ou tabela (0.1.12): o recuo direito escondido de uma secao mais estreita que a mais larga
+#: (o QTextDocument tem uma largura so'), em JSON [extra, recuo total aplicado]. O recuo do
+#: usuario e' o total menos o extra, enquanto o recuo do bloco continuar o total aplicado; se
+#: alguem trocou o recuo (formatacao, estilo), o valor novo e' do usuario.
+PROP_RECUO_SECAO = QTextFormat.Property.UserProperty.value + 37
+
+
+def recuo_secao(fmt) -> tuple[float, float] | None:
+    """(extra, total aplicado) do recuo escondido da secao, ou None."""
+    valor = fmt.property(PROP_RECUO_SECAO)
+    if isinstance(valor, str) and valor:
+        try:
+            extra, total = (float(x) for x in valor.split(";"))
+            return extra, total
+        except ValueError:
+            return None
+    return None
+
+
+def recuo_direito_real(bf) -> float:
+    """O recuo direito do usuario: o do bloco sem o extra escondido da secao (0.1.12)."""
+    atual = bf.rightMargin()
+    escondido = recuo_secao(bf)
+    if escondido is not None and abs(atual - escondido[1]) < 0.5:
+        return atual - escondido[0]
+    return atual
+
+
 def props_de_bloco(bf: QTextBlockFormat) -> dict:
     """Formatacao de paragrafo efetiva (campos de Paragrafo) e o "nivel"."""
     out: dict = {}
@@ -182,7 +210,9 @@ def props_de_bloco(bf: QTextBlockFormat) -> dict:
     if bf.hasProperty(P.BlockLeftMargin):
         out["recuo_esquerdo_tw"] = round(bf.leftMargin())
     if bf.hasProperty(P.BlockRightMargin):
-        out["recuo_direito_tw"] = round(bf.rightMargin())
+        real = recuo_direito_real(bf)
+        if real != 0 or recuo_secao(bf) is None:
+            out["recuo_direito_tw"] = round(real)
     if bf.hasProperty(PROP_RECUO_REAL):
         # Item de lista (0.1.4): o textIndent e' o visual (texto depois do numero).
         real = bf.property(PROP_RECUO_REAL)

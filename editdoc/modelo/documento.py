@@ -67,6 +67,7 @@ from dataclasses import dataclass, field, fields
 from typing import Literal, Union
 
 from editdoc.modelo.pagina import Pagina
+from editdoc.modelo.secoes import Secao
 
 Alinhamento = Literal["esquerda", "centro", "direita", "justificado"]
 Numeracao = Literal["marcadores", "numeracao"]
@@ -268,6 +269,13 @@ class MarcaNota:
     simbolo: str | None = None
 
 
+@dataclass(frozen=True)
+class MarcaQuebra:
+    """Quebra de coluna no fluxo do texto (0.1.12, w:br w:type="column"). A tela mostra uma
+    coluna so': a quebra fica no lugar (marca sem largura) e volta ao arquivo."""
+    tipo: Literal["coluna"] = "coluna"
+
+
 @dataclass
 class Run:
     texto: str = ""
@@ -294,7 +302,7 @@ class Run:
     link: Link | None = None
     # Marca sem texto (0.1.3): inicio/fim de campo ou de marcador; desde a 0.1.5 tambem de
     # controle de conteudo (MarcaConteudo). texto == "".
-    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | MarcaNota | None = None
+    marca: MarcaCampo | Marcador | MarcaConteudo | MarcaComentario | MarcaNota | MarcaQuebra | None = None
     # Propriedades de run que o modelo nao representa (0.1.5): o XML original delas (um w:rPr
     # em forma canonica, `formato_docx/propriedades.py`). None = nenhuma.
     extras: str | None = None
@@ -347,6 +355,9 @@ class Paragrafo:
     # Propriedades de paragrafo que o modelo nao representa (0.1.5): tabulacoes, bordas,
     # sombreamento, quadro, controle de linhas... (um w:pPr em forma canonica). None = nenhuma.
     extras: str | None = None
+    # Secao que termina neste paragrafo (0.1.12, o w:sectPr do w:pPr; modelo/secoes.py). So'
+    # no corpo, fora de tabela. None = o paragrafo nao termina secao.
+    secao: Secao | None = None
 
 
 @dataclass
@@ -457,6 +468,9 @@ class Documento:
     # comparacao, como os comentarios: as referencias estao no fluxo (MarcaNota) e a
     # conferencia compara o conteudo das notas a parte.
     notas: object = field(default=None, compare=False, repr=False)
+    # A ultima secao (0.1.12): tipo, extras e XML de origem do w:sectPr do fim do corpo. O papel,
+    # os cabecalhos e os rodapes dela sao `pagina`, `cabecalhos` e `rodapes` (modelo/secoes.py).
+    secao: Secao = field(default_factory=Secao)
 
 
 @dataclass(frozen=True)
@@ -551,6 +565,25 @@ def normalizar(documento: Documento) -> Documento:
     for faixas in (saida.cabecalhos, saida.rodapes):
         for blocos in faixas.values():
             _normalizar_blocos(blocos, em_celula=True)
+    for _onde, _tipo, blocos in faixas_das_secoes(saida):
+        _normalizar_blocos(blocos, em_celula=True)
+    return saida
+
+
+def faixas_das_secoes(doc: "Documento"):
+    """(onde, tipo, blocos) dos cabecalhos e rodapes das secoes que terminam em paragrafo
+    (0.1.12). Os da ultima secao sao `doc.cabecalhos` e `doc.rodapes`."""
+    from editdoc.modelo import secoes
+    yield from secoes.faixas_das_secoes(doc)
+
+
+def historias_de_faixa(doc: "Documento") -> list:
+    """Os blocos de cada cabecalho e rodape: os da ultima secao (padrao, primeira, par) e,
+    desde a 0.1.12, os das outras secoes, na ordem do corpo."""
+    saida = []
+    for faixas in (doc.cabecalhos, doc.rodapes):
+        saida.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
+    saida.extend(blocos for _onde, _tipo, blocos in faixas_das_secoes(doc))
     return saida
 
 
@@ -568,9 +601,7 @@ def paragrafos_de(blocos: list[Bloco]):
 def objetos_de(doc: Documento):
     """Todos os objetos opacos do documento, na ordem em que o escritor os grava:
     corpo, depois cabecalhos e rodapes (padrao, primeira, par)."""
-    listas = [doc.paragrafos]
-    for faixas in (doc.cabecalhos, doc.rodapes):
-        listas.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
+    listas = [doc.paragrafos] + historias_de_faixa(doc)
     for blocos in listas:
         for p in paragrafos_de(blocos):
             for r in p.runs:

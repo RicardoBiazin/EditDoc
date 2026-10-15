@@ -1139,3 +1139,90 @@ def docx_com_notas(corpo_xml: str = CORPO_COM_NOTAS, notas_xml: str = NOTAS_RODA
     if not rels_notas:
         p.pop("word/media/nota1.png", None)
     return montar(p)
+
+
+# -- secoes (0.1.12) ----------------------------------------------------------------------------
+
+#: Textos dos cabecalhos da fixture de secoes.
+CAB_SECAO_1 = "Cabeçalho da seção 1"
+CAB_SECAO_2_PRIMEIRA = "Cabeçalho da primeira página da seção 2"
+CAB_SECAO_3 = "Cabeçalho da seção 3"
+TEXTO_SECAO = ("Texto corrido da seção, com palavras suficientes para quebrar linhas e encher "
+               "a página. ")
+#: sectPr da secao 1: retrato A4 (com o w:code do papel), rsids, numeracao de linhas, romanos
+#: comecando em i, colunas de uma, alinhamento vertical e grade, como o Word grava.
+SECT_1 = ('<w:sectPr w:rsidR="00AA11BB" w:rsidSect="00CC22DD">'
+          '<w:headerReference w:type="default" r:id="rId70"/>'
+          '<w:footerReference w:type="default" r:id="rId72"/>'
+          '<w:pgSz w:w="11906" w:h="16838" w:code="9"/>'
+          '<w:pgMar w:top="1417" w:right="1701" w:bottom="1417" w:left="1701" w:header="708" '
+          'w:footer="708" w:gutter="0"/>'
+          '<w:lnNumType w:countBy="1" w:restart="newSection"/>'
+          '<w:pgNumType w:fmt="lowerRoman" w:start="1"/>'
+          '<w:cols w:space="708"/><w:vAlign w:val="top"/><w:docGrid w:linePitch="360"/>'
+          '</w:sectPr>')
+#: sectPr da secao 2: paisagem, proxima pagina, primeira pagina diferente com cabecalho proprio
+#: (o padrao vem da secao 1), numeracao reiniciando em 1, bordas de pagina, notas, protecao,
+#: direcao do texto, bidi e rtlGutter.
+SECT_2 = ('<w:sectPr w:rsidR="00EE33FF">'
+          '<w:headerReference w:type="first" r:id="rId71"/>'
+          '<w:footnotePr><w:numFmt w:val="lowerLetter"/></w:footnotePr>'
+          '<w:type w:val="nextPage"/>'
+          '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>'
+          '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" '
+          'w:footer="567" w:gutter="0"/>'
+          '<w:pgBorders w:offsetFrom="page"><w:top w:val="single" w:sz="4" w:space="24" '
+          'w:color="auto"/></w:pgBorders>'
+          '<w:pgNumType w:start="1"/>'
+          '<w:cols w:space="708"/><w:formProt w:val="0"/><w:titlePg/>'
+          '<w:textDirection w:val="lrTb"/><w:bidi w:val="0"/><w:rtlGutter w:val="0"/>'
+          '<w:docGrid w:linePitch="360"/></w:sectPr>')
+#: Inicio do sectPr final (secao 3): cabecalho proprio e pagina impar.
+SECT_3_INICIO = ('<w:headerReference w:type="default" r:id="rId73"/><w:type w:val="oddPage"/>')
+
+
+def docx_com_secoes(paragrafos_1: int = 30, paragrafos_2: int = 4,
+                    paragrafos_3: int = 6) -> bytes:
+    """Tres secoes: retrato (romanos desde i), paisagem (primeira pagina diferente, reinicia
+    em 1, cabecalho padrao herdado da 1) e retrato que comeca em pagina impar (oddPage): com a
+    secao 2 numa pagina so', a 3 precisa de uma pagina em branco antes, como no Word. O rodape
+    da secao 1 tem o campo PAGE e vale para todas (heranca)."""
+    def paras(n: int, rotulo: str) -> str:
+        return "".join(f"<w:p><w:r><w:t>{rotulo} {i + 1}. {TEXTO_SECAO * 3}</w:t></w:r></w:p>"
+                       for i in range(n))
+
+    corpo = (paras(paragrafos_1 - 1, "Seção 1, parágrafo")
+             + f"<w:p><w:pPr>{SECT_1}</w:pPr><w:r><w:t>Fim da seção 1.</w:t></w:r></w:p>"
+             + paras(paragrafos_2 - 1, "Seção 2, parágrafo")
+             + f"<w:p><w:pPr>{SECT_2}</w:pPr><w:r><w:t>Fim da seção 2.</w:t></w:r></w:p>"
+             + paras(paragrafos_3, "Seção 3, parágrafo"))
+    cab = lambda texto: parte_faixa(f"<w:p><w:r><w:t>{texto}</w:t></w:r></w:p>")  # noqa: E731
+    rodape = parte_faixa('<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+                         + campo_complexo("PAGE", "1") + "</w:p>", "ftr")
+    partes = {"word/header70.xml": cab(CAB_SECAO_1),
+              "word/header71.xml": cab(CAB_SECAO_2_PRIMEIRA),
+              "word/header73.xml": cab(CAB_SECAO_3),
+              "word/footer72.xml": rodape}
+    relacoes = [("rId70", RT_HEADER, "header70.xml"), ("rId71", RT_HEADER, "header71.xml"),
+                ("rId73", RT_HEADER, "header73.xml"), ("rId72", RT_FOOTER, "footer72.xml")]
+    tipos = [(f"/word/{n}", CT_HEADER) for n in ("header70.xml", "header71.xml", "header73.xml")]
+    tipos.append(("/word/footer72.xml", CT_FOOTER))
+    return docx_com_xml(corpo, SECT_3_INICIO, partes, relacoes, tipos)
+
+
+def docx_com_secao_continua() -> bytes:
+    """Secao continua de duas colunas no meio da pagina, com uma quebra de coluna dentro."""
+    sect_1 = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" '
+              'w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" '
+              'w:gutter="0"/><w:cols w:space="720"/></w:sectPr>')
+    sect_2 = ('<w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/>'
+              '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" '
+              'w:header="720" w:footer="720" w:gutter="0"/>'
+              '<w:cols w:num="2" w:space="567"/></w:sectPr>')
+    corpo = ("<w:p><w:r><w:t>Antes das colunas.</w:t></w:r></w:p>"
+             f"<w:p><w:pPr>{sect_1}</w:pPr><w:r><w:t>Fim da seção de uma coluna.</w:t></w:r></w:p>"
+             "<w:p><w:r><w:t>Primeira coluna.</w:t></w:r><w:r><w:br w:type=\"column\"/></w:r>"
+             "<w:r><w:t>Segunda coluna.</w:t></w:r></w:p>"
+             f"<w:p><w:pPr>{sect_2}</w:pPr><w:r><w:t>Fim das colunas.</w:t></w:r></w:p>"
+             "<w:p><w:r><w:t>Depois das colunas, de novo uma coluna.</w:t></w:r></w:p>")
+    return docx_com_xml(corpo, '<w:type w:val="continuous"/>')

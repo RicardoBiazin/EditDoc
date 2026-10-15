@@ -12,6 +12,12 @@ efetiva (`modelo.pagina.pagina_efetiva`).
 
 Variante criada so' para editar (duplo clique num cabecalho que o arquivo nao tem) e
 deixada vazia nao vai para o arquivo. A que veio do arquivo volta, mesmo vazia.
+
+Secoes (0.1.12): cada variante tem um id (`FaixaQt.ident`) e as secoes apontam para os ids que
+declaram (`Secao.chaves`, no registro do corpo, `ponte_qt/secoes.py`). A secao que nao declara
+usa a da anterior (`ConjuntoDeSecoes.faixa_efetiva`), como no Word; duas secoes que citam a
+mesma parte do arquivo apontam para a mesma variante (editar uma edita a outra, "Vincular ao
+anterior"). A largura da variante e' a do corpo da secao da folha pintada.
 """
 
 from __future__ import annotations
@@ -37,12 +43,14 @@ class FaixaQt:
     """Uma variante de cabecalho ou rodape: o documento, o contexto dos campos e o dispositivo."""
 
     def __init__(self, onde: str, tipo: str, fonte: QFont, largura_tw: float,
-                 do_arquivo: bool) -> None:
+                 do_arquivo: bool, ident: str = "") -> None:
         # Import tardio: layout_paginado importa este modulo.
         from editdoc.interface.layout_paginado import criar_dispositivo_layout
         self.onde = onde
         self.tipo = tipo
         self.do_arquivo = do_arquivo
+        self.ident = ident
+        self._alturas: dict = {}
         self.serie = next(_SERIE)
         self._dispositivo = criar_dispositivo_layout()
         self.doc = DocumentoQt()
@@ -64,6 +72,7 @@ class FaixaQt:
     def _mudou(self, *_args) -> None:
         self._tem_campos = None
         self._preparado = None
+        self._alturas = {}
 
     def tem_campos(self) -> bool:
         if self._tem_campos is None:
@@ -80,7 +89,8 @@ class FaixaQt:
         ctx.indice_fixo = indice
         ctx.total = total
         ctx.pagina = pagina
-        chave = (indice, total, pagina.formato_numero, pagina.numero_inicial)
+        chave = (indice, total, pagina.formato_numero, pagina.numero_inicial,
+                 ctx.secoes(indice) if ctx.secoes is not None else None)
         if chave != self._preparado:
             self._preparado = chave
             if self.tem_campos():
@@ -99,6 +109,24 @@ class FaixaQt:
 
     def altura(self) -> float:
         return float(self.doc.documentLayout().documentSize().height())
+
+    def altura_na_largura(self, largura_tw: float) -> float:
+        """Altura com a largura do corpo de uma secao (0.1.12): a mesma variante pode valer em
+        secoes de larguras diferentes. Em cache pela revisao do documento."""
+        largura = float(largura_tw)
+        if abs(self.doc.textWidth() - largura) <= 0.5:
+            return self.altura()
+        chave = (self.doc.revision(), round(largura))
+        h = self._alturas.get(chave)
+        if h is None:
+            anterior = self.doc.textWidth()
+            self.doc.setTextWidth(largura)
+            h = self.altura()
+            self.doc.setTextWidth(anterior)
+            if len(self._alturas) > 16:
+                self._alturas.clear()
+            self._alturas[chave] = h
+        return h
 
     def vazia(self) -> bool:
         texto = self.doc.toPlainText()
@@ -134,19 +162,24 @@ class ConjuntoDeFaixas(QObject):
         super().__init__(pai)
         self._fonte = QFont(fonte)
         self._largura = float(largura_tw)
-        self._faixas: dict[tuple[str, str], FaixaQt] = {}
+        #: id -> variante (0.1.12; ate' a 0.1.11 a chave era (onde, tipo), uma secao so')
+        self._faixas: dict[str, FaixaQt] = {}
+        self._ids = itertools.count(1)
         self._carregando = False
         #: O documento do corpo: cabecalho e rodape usam o catalogo de estilos dele (M6).
         self.doc_estilos = None
+        #: O layout do corpo (0.1.12): as secoes dizem qual variante vale em cada folha.
+        self.layout = None
 
     def _nova(self, onde: str, tipo: str, do_arquivo: bool) -> FaixaQt:
-        faixa = FaixaQt(onde, tipo, self._fonte, self._largura, do_arquivo)
+        ident = f"f{next(self._ids)}"
+        faixa = FaixaQt(onde, tipo, self._fonte, self._largura, do_arquivo, ident)
         if self.doc_estilos is not None:
             faixa.doc._doc_estilos = self.doc_estilos
         # contentsChanged, e nao contentsChange: este vem antes do layout ser refeito, e a
         # altura lida nele seria a antiga (o corpo desceria uma tecla atrasado).
         faixa.doc.contentsChanged.connect(self._mudou_conteudo)
-        self._faixas[(onde, tipo)] = faixa
+        self._faixas[ident] = faixa
         self.criada.emit(faixa)
         return faixa
 
@@ -154,15 +187,41 @@ class ConjuntoDeFaixas(QObject):
         if not self._carregando:
             self.alterado.emit()
 
-    def obter(self, onde: str, tipo: str, criar: bool = False) -> FaixaQt | None:
-        faixa = self._faixas.get((onde, tipo))
-        if faixa is None and criar:
-            faixa = self._nova(onde, tipo, do_arquivo=False)
+    def por_id(self, ident: str | None) -> FaixaQt | None:
+        return self._faixas.get(ident) if ident else None
+
+    def _secoes(self) -> list:
+        if self.layout is None:
+            return []
+        return self.layout.secoes.secoes_atuais()
+
+    def obter(self, onde: str, tipo: str, criar: bool = False,
+              secao: int | None = None) -> FaixaQt | None:
+        """A variante (onde, tipo) que vale na secao `secao` (padrao: a ultima), com a heranca.
+
+        `criar`: se nenhuma secao ate' ali declara, cria e declara na primeira secao (como o
+        Word: com "Vincular ao anterior", o cabecalho novo e' o da primeira secao da cadeia)."""
+        secoes = self._secoes()
+        if not secoes:
+            achada = next((f for f in self._faixas.values()
+                           if f.onde == onde and f.tipo == tipo), None)
+            return achada if achada is not None or not criar else \
+                self._nova(onde, tipo, do_arquivo=False)
+        indice = len(secoes) - 1 if secao is None else min(max(0, secao), len(secoes) - 1)
+        achada = self.layout.secoes.faixa_efetiva(indice, onde, tipo, secoes)
+        if achada is not None:
+            return achada[1]
+        if not criar:
+            return None
+        faixa = self._nova(onde, tipo, do_arquivo=False)
+        secoes[0].chaves[(onde, tipo)] = faixa.ident
         return faixa
 
-    def da_pagina(self, onde: str, indice: int, pagina: Pagina) -> FaixaQt | None:
-        """A variante que aparece na pagina `indice`, ou None se a pagina nao tem."""
-        return self._faixas.get((onde, tipo_da_pagina(indice, pagina)))
+    def da_pagina(self, onde: str, indice: int, pagina: Pagina = None) -> FaixaQt | None:
+        """A variante que aparece na folha `indice`, ou None se a folha nao tem."""
+        if self.layout is not None:
+            return self.layout.faixa_da_folha(onde, indice)
+        return self.obter(onde, tipo_da_pagina(indice, pagina))
 
     def todas(self) -> list[FaixaQt]:
         return list(self._faixas.values())
@@ -176,11 +235,12 @@ class ConjuntoDeFaixas(QObject):
         return tipos
 
     def alturas(self, pagina: Pagina) -> tuple[float, float]:
-        """Maior altura de cabecalho e de rodape entre as variantes que aparecem."""
+        """Maior altura de cabecalho e de rodape entre as variantes que aparecem na ultima
+        secao."""
         saida = []
         for onde in ONDES:
             alturas = [f.altura() for t in self.tipos_ativos(pagina)
-                       if (f := self._faixas.get((onde, t))) is not None]
+                       if (f := self.obter(onde, t)) is not None]
             saida.append(max(alturas, default=0.0))
         return saida[0], saida[1]
 
@@ -201,27 +261,86 @@ class ConjuntoDeFaixas(QObject):
             faixa.fechar()
         self._faixas.clear()
 
-    def carregar(self, modelo: Documento) -> None:
-        """Troca todas as variantes pelas do modelo. Nao marca nada como alterado."""
+    def carregar(self, modelo: Documento, secoes_qt: list | None = None) -> None:
+        """Troca todas as variantes pelas do modelo. Nao marca nada como alterado.
+
+        `secoes_qt` (0.1.12): as secoes do registro do corpo, na ordem das do modelo (a ultima no
+        fim); recebem em `chaves` os ids das variantes que declaram. Duas secoes que citam a
+        mesma parte (a mesma chave do arquivo) com o mesmo conteudo ficam com a mesma variante."""
+        from editdoc.modelo.secoes import secoes_de
         self.limpar()
         self._carregando = True
+        feitas: list[tuple] = []  # (onde, chave do arquivo, blocos, id)
         try:
-            for onde, faixas in (("cabecalho", modelo.cabecalhos), ("rodape", modelo.rodapes)):
-                for tipo in TIPOS_DE_FAIXA:
-                    if tipo in faixas:
+            secoes = secoes_de(modelo)
+            for i, secao in enumerate(secoes):
+                destino = secoes_qt[i] if secoes_qt is not None and i < len(secoes_qt) else None
+                novas = {}
+                for onde, faixas in (("cabecalho", secao.cabecalhos), ("rodape", secao.rodapes)):
+                    for tipo in TIPOS_DE_FAIXA:
+                        if tipo not in faixas:
+                            continue
+                        chave = secao.chaves.get((onde, tipo))
+                        repetida = next((fid for o, c, b, fid in feitas if o == onde and
+                                         chave is not None and c == chave and b == faixas[tipo]),
+                                        None)
+                        if repetida is not None:
+                            novas[(onde, tipo)] = repetida
+                            continue
                         faixa = self._nova(onde, tipo, do_arquivo=True)
-                        faixa.doc._pagina_flutuantes = modelo.pagina
-                        faixa.posicionar(modelo.pagina, modelo.pagina, 0)
+                        faixa.doc._pagina_flutuantes = secao.pagina
+                        faixa.definir_largura(secao.pagina.corpo_largura_tw())
+                        faixa.posicionar(secao.pagina, secao.pagina, 0)
                         para_qt.preencher_blocos(faixa.doc, faixas[tipo])
+                        feitas.append((onde, chave, faixas[tipo], faixa.ident))
+                        novas[(onde, tipo)] = faixa.ident
+                if destino is not None:
+                    destino.chaves = novas
         finally:
             self._carregando = False
 
-    def extrair(self) -> tuple[dict, dict]:
-        """(cabecalhos, rodapes) para o modelo. Variante nova e vazia nao vai."""
-        saida: tuple[dict, dict] = ({}, {})
-        for (onde, tipo), faixa in self._faixas.items():
-            if not faixa.do_arquivo and faixa.vazia():
+    def blocos_de(self, ident: str):
+        """Os blocos da variante para o modelo; None se e' nova e ficou vazia (nao vai)."""
+        faixa = self._faixas.get(ident)
+        if faixa is None or (not faixa.do_arquivo and faixa.vazia()):
+            return None
+        return de_qt.extrair_blocos(faixa.doc, round(faixa.doc.textWidth() or self._largura))
+
+    def faixas_da_secao(self, chaves: dict) -> tuple[dict, dict, dict]:
+        """(cabecalhos, rodapes, chaves) que uma secao declara, para o modelo."""
+        cabecalhos: dict = {}
+        rodapes: dict = {}
+        saida_chaves: dict = {}
+        for (onde, tipo), fid in chaves.items():
+            blocos = self.blocos_de(fid)
+            if blocos is None:
                 continue
-            blocos = de_qt.extrair_blocos(faixa.doc, round(self._largura))
-            saida[ONDES.index(onde)][tipo] = blocos
+            (cabecalhos if onde == "cabecalho" else rodapes)[tipo] = blocos
+            saida_chaves[(onde, tipo)] = fid
+        return cabecalhos, rodapes, saida_chaves
+
+    def extrair(self) -> tuple[dict, dict]:
+        """(cabecalhos, rodapes) que a ultima secao declara (sem a heranca). Variante nova e
+        vazia nao vai."""
+        secoes = self._secoes()
+        if secoes:
+            cab, rod, _c = self.faixas_da_secao(secoes[-1].chaves)
+            return cab, rod
+        saida: tuple[dict, dict] = ({}, {})
+        for faixa in self._faixas.values():
+            blocos = self.blocos_de(faixa.ident)
+            if blocos is not None:
+                saida[ONDES.index(faixa.onde)][faixa.tipo] = blocos
         return saida
+
+    def copiar(self, faixa: FaixaQt, onde: str, tipo: str) -> FaixaQt:
+        """Variante nova com o conteudo de `faixa` (desvincular do anterior, como o Word)."""
+        nova = self._nova(onde, tipo, do_arquivo=False)
+        blocos = de_qt.extrair_blocos(faixa.doc, round(faixa.doc.textWidth() or self._largura))
+        self._carregando = True
+        try:
+            nova.definir_largura(faixa.doc.textWidth())
+            para_qt.preencher_blocos(nova.doc, blocos)
+        finally:
+            self._carregando = False
+        return nova

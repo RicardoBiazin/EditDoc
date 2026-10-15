@@ -661,6 +661,77 @@ ponto que passou do limite mede de novo (simples e ponto), até 2 rodadas. Medid
 carregada: capa 25,8, sumário 24,6, corpo 14,6 e antes da capa 39,9 ms, com o simples a 11,5
 (todos passam); parada, todos abaixo de 16. O teste leva cerca de 65 s (o teto da suíte é 180).
 
+## 0.1.12: várias seções, cada uma com o seu papel
+
+Feito em 14 e 15/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6
+6.11.2, offscreen, dispositivo de 1440 dpi). Scripts no rascunho da sessão, fora do repositório.
+
+### Caminhos considerados
+
+O `QTextDocument` pagina com um `pageSize` só. Para uma página paisagem no meio de um documento em
+retrato, o texto tem de refluir com a largura da seção e quebrar de página na altura dela.
+
+| Caminho | Medido | Situação |
+|---|---|---|
+| Um `QTextDocument` por seção | — | descartado: cursor, seleção, desfazer e localizar atravessando seções teriam de ser refeitos |
+| `QTextFrame` filho por seção, largura própria | a largura fixa vale (13000 twips num documento de 9000, o texto quebra em 13000); `PageBreak_AlwaysBefore/After` do quadro valem; a largura e as margens do quadro são px96 (× 15) | serve para a largura |
+| margem de baixo do quadro filho como reserva por página | não vale por página: as linhas do quadro vão até a altura da página do documento em todas as folhas (a margem só conta no fim do quadro) | **não serve** para a altura |
+| margem de baixo da tabela | também não vale por página | não serve |
+| `PageBreak_AlwaysBefore` no primeiro bloco das células de uma linha de tabela | cada célula quebra por conta própria (a linha fica partida em páginas diferentes; com as três células a linha pulou duas páginas) | não serve |
+| acolchoamento de baixo na linha anterior | a linha seguinte desce para a página seguinte (o Qt desce a linha que cruza a divisa) | serve, para a tabela |
+| `AlwaysAfter` num bloco e `AlwaysBefore` no seguinte | página vazia no meio (bloco B em 28000, páginas de 14000) | serve, para a página em branco |
+
+Escolhido, com o menor risco: o documento continua um só, na maior largura e na maior altura de
+corpo entre as seções. A seção mais estreita ganha um recuo direito escondido em cada bloco e
+tabela do primeiro nível (o quadro filho daria a largura, mas a seleção do Qt que atravessa um
+quadro pega o quadro inteiro, e apagar a quebra entre seções de papéis diferentes exigiria mover
+texto entre quadros); a seção mais baixa usa o espaçador das notas da 0.1.10 (bloco inteiro) e,
+para a tabela que não pode descer inteira, o acolchoamento da linha anterior; a quebra entre
+seções é a quebra de página do Qt, derivada. Detalhes em docs/ARQUITETURA.md, "Seções".
+
+Achados:
+
+- O topo do primeiro bloco depois de uma quebra de página fica ~160 twips abaixo do topo da folha:
+  decidir "seção contínua que começa no meio da folha" pelo topo marcava toda seção nova como
+  contínua. Vale o fim do parágrafo da quebra na mesma folha.
+- O espaçador oscilava na seção mais baixa (361 ajustes em 80 teclas, p95 de 17,5 ms): a volta
+  do bloco empurrado simulava só as linhas até o pé da seção, e o Qt põe linhas até o fim da
+  página do documento. Corrigido: simular até o fim da página; 6,0 ms.
+- `efetiva_da(n)` era pedida ~80 vezes por tecla e montava a página da seção a cada vez (1,7 ms
+  por tecla no perfil): em cache por folha até a geometria ou o mapa mudarem.
+
+### Tabela do gate (p95 em ms, 80 teclas com `viewport().grab()`, janela 1400 × 950, um processo por ponto, mediana de 3 rodadas)
+
+O roteiro da 0.1.11 (`gate.py`, `gate_todos.py`); a coluna 0.1.11 é o código do commit da 0.1.11
+extraído do git. As três últimas linhas são novas: a fixture de três seções (retrato, paisagem,
+retrato; `fixtures_docx.docx_com_secoes(60, 30, 60)`) e o arquivo real de duas seções.
+
+| Documento | Onde digita | 0.1.11 | 0.1.12 |
+|---|---|---|---|
+| manual real | parágrafo das âncoras (capa, fim) | 10,6 | 10,8 |
+| idem | ponto "sumário" da 0.1.10 (posição 0) | 7,8 | 7,5 |
+| idem | linha do sumário | 14,5 | 14,7 |
+| idem | corpo, 1/3 do documento | 5,2 | 6,0 |
+| idem | corpo, 2/3 do documento | 6,6 | 5,5 |
+| capítulo real de 4 páginas | capa | 3,7 | 3,8 |
+| idem | corpo | 4,8 | 6,2 |
+| 600 parágrafos, sem objetos | 1º parágrafo | 4,0 | 4,1 |
+| 600 parágrafos, DPR 1 a 300% | 1º parágrafo | 4,7 | 4,8 |
+| 600 parágrafos, DPR 2 a 150% | 1º parágrafo | 12,0 | 12,6 |
+| 300 parágrafos com 100 notas de rodapé | corpo, 1/3 do documento | 8,6 | 8,5 |
+| idem | digitando dentro de uma nota | 10,7 | 10,9 |
+| 3 seções (retrato, paisagem, retrato) | corpo, 1/3 do documento | 4,3 | 6,0 |
+| idem | na seção paisagem (a mais baixa) | 4,3 | 6,0 |
+| arquivo real de 2 seções (13 páginas) | corpo, 1/3 do documento | 48,6 | 51,6 |
+
+Gate (16 ms) passa em todos os pontos da tabela da 0.1.11 e na fixture de três seções. A 0.1.11
+lia a fixture como uma seção só (sem a paisagem), por isso o número dela é mais baixo. O arquivo
+real de duas seções já passava do gate na 0.1.11 (48,6 ms), sem relação com as seções: no perfil,
+o próprio `insertText` do Qt leva 27 ms por tecla e a pintura dos números de lista 11 ms; fica
+como pendência. Teste de regressão: `teste_secoes.testar_desempenho` mede o p95 na seção paisagem
+contra um documento de uma seção na mesma hora (16 ms ou até 2,5 vezes) e conta os ajustes do
+espaçador (no máximo 20 em 80 teclas).
+
 ## Pendências
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
@@ -668,6 +739,10 @@ carregada: capa 25,8, sumário 24,6, corpo 14,6 e antes da capa 39,9 ms, com o s
   editada, convertida, com marca personalizada). O ponto "sumário" de 95 ms foi medido e
   corrigido na 0.1.11 (era a posição 0, antes das âncoras da capa).
 - 0.1.11: abrir no Word, sem reparo, o arquivo que não salvava até a 0.1.10, gravado pela 0.1.11.
+- 0.1.12: abrir no Word, sem reparo, um arquivo de três seções (uma paisagem, cabeçalhos
+  herdados, página ímpar) gravado pelo EditDoc, e um com quebra de seção inserida e apagada.
+- 0.1.12: digitação no arquivo real de duas seções a 1/3 (48,6 ms já na 0.1.11): o `insertText`
+  do Qt (27 ms) e os números das listas (11 ms).
 - Abrir uma amostra `.docx` gerada pelo spike no Word, sem reparo. As amostras estão
   em `%TEMP%\claude\...\scratchpad\spike-docx`, fora do repositório.
 - Cache de página: medido no Gate do M3 (acima). Adotado com teto de zoom.

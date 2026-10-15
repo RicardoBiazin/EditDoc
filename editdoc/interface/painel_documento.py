@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import replace
 
 from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QDesktopServices, QImage, QKeyEvent, QKeySequence,
@@ -74,6 +75,13 @@ from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.folhas import escala_do_zoom
 from editdoc.modelo.pagina import Pagina
+
+
+def _com_geometria(base: Pagina, fonte: Pagina) -> Pagina:
+    """`base` com as margens de `fonte` (Aplicar a: Documento inteiro, no dialogo das margens;
+    o papel e a orientacao de cada secao ficam)."""
+    return base.com_margens(fonte.margem_sup_tw, fonte.margem_inf_tw, fonte.margem_esq_tw,
+                            fonte.margem_dir_tw)
 from editdoc.ponte_qt import campos as pq_campos
 from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import imagens as pq_imagens
@@ -81,6 +89,8 @@ from editdoc.ponte_qt import links as pq_links
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import marcas as pq_marcas
 from editdoc.ponte_qt import notas as pq_notas
+from editdoc.ponte_qt import secoes as pq_secoes
+from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import opacos as pq_opacos
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
@@ -415,13 +425,64 @@ class PainelDocumento(VistaPaginas):
         return ed_imagens.imagem_selecionada(self)
 
     # ----- pagina ---------------------------------------------------------
-    def configuracao_pagina(self) -> Pagina:
-        """A pagina do arquivo (sem o corpo empurrado pelo cabecalho)."""
-        return self.layout_pag.pagina_arquivo
+    def secao_atual(self) -> int:
+        """Indice da secao do cursor (0.1.12); na edicao do cabecalho, a da folha editada."""
+        lay = self.layout_pag
+        if not self._no_corpo():
+            return lay.secao_da_folha(self._pagina_edicao)
+        return lay.secoes.indice_da_posicao(self._cursor.position()) \
+            if len(lay.secoes.secoes_atuais()) > 1 else 0
 
-    def definir_configuracao_pagina(self, pagina: Pagina) -> None:
-        """Papel, orientacao, margens ou cabecalho. Refaz a paginacao; nao mexe no texto."""
+    def total_de_secoes(self) -> int:
+        return len(self.layout_pag.secoes.secoes_atuais())
+
+    def configuracao_pagina(self) -> Pagina:
+        """A pagina do arquivo (sem o corpo empurrado pelo cabecalho) da secao do cursor (0.1.12;
+        com uma secao so', a do documento)."""
+        lay = self.layout_pag
+        secoes = lay.secoes.secoes_atuais()
+        if len(secoes) <= 1:
+            return lay.pagina_arquivo
+        indice = self.secao_atual()
+        if indice >= len(secoes) - 1:
+            return lay.pagina_arquivo
+        return replace(secoes[indice].pagina, pares_impares=lay.pagina_arquivo.pares_impares)
+
+    def definir_pagina_final(self, pagina: Pagina) -> None:
+        """A pagina da ultima secao (ao abrir: a do w:sectPr do fim do corpo)."""
         self.layout_pag.definir_pagina(pagina)
+        self._depois_de_mudar_pagina()
+
+    def definir_configuracao_pagina(self, pagina: Pagina, documento_inteiro: bool = False) -> None:
+        """Papel, orientacao, margens ou cabecalho da secao do cursor (0.1.12; "Aplicar a: Esta
+        seção"). `documento_inteiro`: as margens em todas as secoes. Pares e
+        impares vale para o documento. Refaz a paginacao; nao mexe no texto."""
+        lay = self.layout_pag
+        secoes = lay.secoes.secoes_atuais()
+        if len(secoes) <= 1:
+            lay.definir_pagina(pagina)
+            self._depois_de_mudar_pagina()
+            return
+        final = lay.pagina_arquivo
+        if pagina.pares_impares != final.pares_impares:
+            final = replace(final, pares_impares=pagina.pares_impares)
+        if documento_inteiro:
+            for i, secao in enumerate(secoes[:-1]):
+                secao.pagina = _com_geometria(secao.pagina, pagina)
+            final = _com_geometria(final, pagina)
+            lay.definir_pagina(final)
+        else:
+            indice = self.secao_atual()
+            if indice >= len(secoes) - 1:
+                lay.definir_pagina(replace(pagina, pares_impares=final.pares_impares))
+            else:
+                if final != lay.pagina_arquivo:
+                    lay.definir_pagina(final)
+                lay.definir_pagina_da_secao(indice, pagina)
+        self._depois_de_mudar_pagina()
+
+    def _depois_de_mudar_pagina(self) -> None:
+        self.layout_pag.atualizar_secoes(forcar=True)
         self._limpar_cache()
         self._altura_doc_anterior = None
         self._atualizar_geometria()
@@ -448,14 +509,31 @@ class PainelDocumento(VistaPaginas):
         return self._edicao
 
     def carregar_faixas(self, modelo) -> None:
-        """Cabecalhos e rodapes do modelo (ao abrir). Sai da edicao antes."""
+        """Cabecalhos e rodapes do modelo (ao abrir). Sai da edicao antes. Com secoes (0.1.12),
+        cada secao do registro do corpo recebe os ids das variantes que declara."""
         self.sair_da_faixa()
-        self.layout_pag.faixas.carregar(modelo)
+        lay = self.layout_pag
+        lay.faixas.carregar(modelo, lay.secoes.secoes_atuais())
         self._recalcular_margens()
 
     def faixas_do_modelo(self) -> tuple[dict, dict]:
-        """(cabecalhos, rodapes) para gravar."""
+        """(cabecalhos, rodapes) da ultima secao para gravar."""
         return self.layout_pag.faixas.extrair()
+
+    def completar_secoes(self, modelo) -> None:
+        """Os cabecalhos e rodapes de cada secao no modelo extraido (0.1.12): o que cada uma
+        declara, pelas chaves que o `de_qt` trouxe do registro. A ultima secao vai em
+        `modelo.cabecalhos`/`modelo.rodapes`/`modelo.secao.chaves`."""
+        faixas = self.layout_pag.faixas
+        pares = self.layout_pag.pagina_arquivo.pares_impares
+        for bloco in modelo.paragrafos:
+            secao = getattr(bloco, "secao", None)
+            if secao is None:
+                continue
+            secao.cabecalhos, secao.rodapes, secao.chaves = faixas.faixas_da_secao(secao.chaves)
+            secao.pagina = replace(secao.pagina, pares_impares=pares)
+        modelo.cabecalhos, modelo.rodapes, modelo.secao.chaves = \
+            faixas.faixas_da_secao(modelo.secao.chaves)
 
     def entrar_na_faixa(self, onde: str, indice: int | None = None,
                         ponto: QPointF | None = None) -> None:
@@ -467,9 +545,58 @@ class PainelDocumento(VistaPaginas):
             self._cursor_corpo = QTextCursor(self._cursor)
         self._trocar_faixa(onde, indice, ponto)
 
+    def estado_do_vinculo(self) -> bool | None:
+        """Na edicao do cabecalho (ou rodape) de uma secao que tem anterior (0.1.12): True se ela
+        usa o da anterior ("Vincular ao anterior"); None fora disso."""
+        if self._edicao is None:
+            return None
+        lay = self.layout_pag
+        if not lay.secoes.multiplas():
+            return None
+        secao = lay.secao_da_folha(self._pagina_edicao)
+        if secao <= 0:
+            return None
+        return lay.vinculada(secao, self._edicao.onde, lay.tipo_da_folha(self._pagina_edicao))
+
+    def alternar_vinculo(self) -> bool:
+        """Liga ou desliga "Vincular ao anterior" no cabecalho (ou rodape) em edicao, como o
+        Word: desligar copia o da anterior para a secao; ligar apaga o proprio da secao (com
+        confirmacao, se ele tem texto) e passa a usar o da anterior. True se mudou."""
+        estado = self.estado_do_vinculo()
+        if estado is None:
+            return False
+        lay = self.layout_pag
+        n = self._pagina_edicao
+        onde = self._edicao.onde
+        tipo = lay.tipo_da_folha(n)
+        secao = lay.secao_da_folha(n)
+        secoes = lay.secoes.secoes_atuais()
+        if estado:
+            atual = lay.secoes.faixa_efetiva(secao, onde, tipo, secoes)
+            if atual is not None:
+                nova = lay.faixas.copiar(atual[1], onde, tipo)
+            else:
+                nova = lay.faixas.obter(onde, tipo, criar=False) or \
+                    lay.faixas._nova(onde, tipo, do_arquivo=False)
+            secoes[secao].chaves[(onde, tipo)] = nova.ident
+        else:
+            propria = lay.faixas.por_id(secoes[secao].chaves.get((onde, tipo)))
+            from editdoc.interface import dialogos_modais  # import tardio: so' quando se pergunta
+            if propria is not None and not propria.vazia() and not \
+                    dialogos_modais.confirmar_vincular_anterior(self):
+                return False
+            secoes[secao].chaves.pop((onde, tipo), None)
+        lay.secoes.calcular(forcar=True)
+        self._trocar_faixa(onde, n)
+        self._recalcular_margens()
+        self.modoFaixaAlterado.emit()
+        self._limpar_cache()
+        self.viewport().update()
+        return True
+
     def _trocar_faixa(self, onde: str, indice: int, ponto: QPointF | None = None) -> None:
-        pagina = self.layout_pag.pagina_arquivo
-        faixa = self.layout_pag.faixas.obter(onde, tipo_da_pagina(indice, pagina), criar=True)
+        self.layout_pag.atualizar_secoes()
+        faixa = self.layout_pag.faixa_da_folha(onde, indice, criar=True)
         mesma = faixa is self._edicao
         self._edicao = faixa
         self._pagina_edicao = indice
@@ -488,7 +615,10 @@ class PainelDocumento(VistaPaginas):
         """Documento recem-aberto (0.1.10): area de notas e espacadores feitos, desfazer zerado e
         documento sem alteracao."""
         doc = self.layout_pag.doc
+        # Secoes (0.1.12): quebras e recuos derivados antes de zerar o desfazer.
+        self.layout_pag.atualizar_secoes(forcar=True)
         self.layout_pag.atualizar_notas()
+        self.layout_pag.atualizar_secoes()
         doc.clearUndoRedoStacks()
         doc.setModified(False)
         self.layout_pag.notas.zerar_desfazer()
@@ -580,8 +710,8 @@ class PainelDocumento(VistaPaginas):
         """(x, y, escala): o ponto (0, 0) do documento da faixa na pagina n, na tela."""
         m = self._mapa()
         x, y, _w, _h = m.folha_na_tela(n)
-        faixa.preparar(n, self._paginas(), self.layout_pag.pagina_arquivo)
-        ox, oy = origem_da_faixa(self.layout_pag.pagina_arquivo, faixa.onde, faixa.altura())
+        self.layout_pag.preparar_faixa(faixa, n, self._paginas())
+        ox, oy = origem_da_faixa(self.layout_pag.pagina_da_folha(n), faixa.onde, faixa.altura())
         return x + ox * m.escala, y + oy * m.escala, m.escala
 
     def _posicao_na_faixa(self, faixa: FaixaQt, n: int, p: QPointF) -> int:
@@ -756,12 +886,14 @@ class PainelDocumento(VistaPaginas):
             limpo = ed_links_formato_antes_da_nota(self.document(), self._cursor.position())
             self._cursor.insertText(texto, limpo)
         elif formato.isImageFormat() or pq_campos.eh_campo(formato) or pq_opacos.eh_opaco(formato) \
-                or pq_marcas.eh_marca(formato):
+                or pq_marcas.eh_marca(formato) or pq_secoes.eh_quebra(formato):
             # Digitar logo depois de uma imagem, de um campo, de um objeto opaco ou de uma
-            # marca: o texto nao herda o formato de objeto (cada letra viraria outro objeto).
+            # marca (ou da quebra de secao, 0.1.12): o texto nao herda o formato de objeto
+            # (cada letra viraria outro objeto).
             limpo = QTextCharFormat(para_digitar)
             for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO,
-                                *pq_opacos.PROPS_DE_OPACO, *pq_marcas.PROPS_DE_MARCA):
+                                *pq_opacos.PROPS_DE_OPACO, *pq_marcas.PROPS_DE_MARCA,
+                                *pq_secoes.PROPS_DE_QUEBRA):
                 limpo.clearProperty(propriedade)
             self._cursor.insertText(texto, limpo)
         elif para_digitar is not formato:
@@ -818,6 +950,7 @@ class PainelDocumento(VistaPaginas):
         no_fim = self._cursor.atBlockEnd() and self._cursor.currentTable() is None
         bf = QTextBlockFormat(self._cursor.blockFormat())
         bf.clearProperty(pq_notas.PROP_QUEBRA_NOTA)  # o espacador das notas nao passa adiante
+        bf.clearProperty(pq_secoes.PROP_QUEBRA_SECAO)  # nem a quebra derivada da secao (0.1.12)
         bf.setPageBreakPolicy(_QUEBRA if quebra else _SEM_QUEBRA)
         bf.clearProperty(pq_listas.PROP_SAIU_DA_LISTA)  # a marca do Backspace nao passa adiante
         proximo = ed_estilos.formatos_do_proximo(self.document(), bf) if no_fim else None
@@ -878,7 +1011,8 @@ class PainelDocumento(VistaPaginas):
 
     def _mover_horizontal(self, direita: bool, modo) -> None:
         """Seta para os lados. A marca de marcador nao tem largura: o caret passa por ela
-        junto com o caractere vizinho, senao a tecla pareceria nao fazer nada."""
+        junto com o caractere vizinho, senao a tecla pareceria nao fazer nada. A quebra de
+        secao (0.1.12) e' a marca do paragrafo: o caret nunca fica depois dela."""
         op = M.Right if direita else M.Left
         self._cursor.movePosition(op, modo)
         for _ in range(256):
@@ -887,7 +1021,91 @@ class PainelDocumento(VistaPaginas):
                 break
             if not self._cursor.movePosition(op, modo):
                 break
+        if self._depois_da_quebra(self._cursor.position()):
+            self._cursor.movePosition(op, modo)
         self._depois_de_mover()
+
+    def _secao_em(self, pos: int) -> bool:
+        """O caractere em `pos` e' a quebra de secao (0.1.12), no corpo."""
+        if not self._no_corpo() or pos < 0 or pos >= self.document().characterCount() - 1:
+            return False
+        cf = pq_links.formato_em(self.document(), pos)
+        return cf is not None and pq_secoes.id_de(cf) is not None
+
+    def _depois_da_quebra(self, pos: int) -> bool:
+        """`pos` e' o fim do paragrafo logo depois da quebra de secao: lugar onde o caret nao
+        fica (seria depois da marca do paragrafo)."""
+        if not self._no_corpo() or pos <= 0:
+            return False
+        bloco = self.document().findBlock(pos)
+        return pos == bloco.position() + bloco.length() - 1 and self._secao_em(pos - 1)
+
+    def _antes_da_quebra(self) -> None:
+        """O caret (sem selecao) que caiu depois da quebra de secao volta para antes dela."""
+        if not self._cursor.hasSelection() and self._depois_da_quebra(self._cursor.position()):
+            self._cursor.setPosition(self._cursor.position() - 1)
+
+    def inserir_quebra_de_secao(self, tipo: str) -> bool:
+        """Layout > Quebras > Quebra de secao (0.1.12): o paragrafo se parte no cursor; a
+        primeira parte termina numa secao nova com as propriedades da secao do cursor (papel,
+        margens, cabecalhos: "Vincular ao anterior" ligado, como no Word), e o texto depois do
+        cursor comeca como `tipo` diz (nextPage, continuous, evenPage, oddPage). Um passo de
+        desfazer. Fora do corpo ou dentro de tabela nao ha' quebra de secao: False."""
+        if not self._no_corpo() or self._cursor.currentTable() is not None:
+            if hasattr(self, "mensagem"):
+                self.mensagem.emit("A quebra de seção só pode ficar no corpo do texto, "
+                                   "fora de tabela.")
+            return False
+        doc = self.layout_pag.doc
+        secoes = self.layout_pag.secoes
+        c = self._cursor
+        c.beginEditBlock()
+        if c.hasSelection():
+            self._remover_selecao()
+        self._limpar_estrutural()
+        # O cursor fica antes de uma quebra de secao que o paragrafo ja' termine.
+        fim_quebra = pq_secoes.posicao_da_quebra_no_bloco(c.block())
+        if fim_quebra is not None and c.position() > fim_quebra:
+            c.setPosition(fim_quebra)
+        quebras = pq_secoes.quebras_de_secao(doc, fresco=True)
+        indice = sum(1 for p, _i in quebras if p < c.position())
+        reg = pq_secoes.registro(doc)
+        atual = reg.get(quebras[indice][1]) if indice < len(quebras) else \
+            pq_secoes.secao_final(doc)
+        if indice >= len(quebras):
+            atual.pagina = self.layout_pag.pagina_arquivo
+        base = QTextCharFormat(c.charFormat())
+        for propriedade in (*_PROPS_IMAGEM, *pq_campos.PROPS_DE_CAMPO, *pq_opacos.PROPS_DE_OPACO,
+                            *pq_marcas.PROPS_DE_MARCA, *pq_secoes.PROPS_DE_QUEBRA):
+            base.clearProperty(propriedade)
+        bf = QTextBlockFormat(c.blockFormat())
+        for propriedade in (pq_notas.PROP_QUEBRA_NOTA, pq_secoes.PROP_QUEBRA_SECAO,
+                            pq_listas.PROP_SAIU_DA_LISTA):
+            bf.clearProperty(propriedade)
+        bf.setPageBreakPolicy(_SEM_QUEBRA)
+        c.insertBlock(bf)
+        novo_inicio = c.position()
+        c.setPosition(novo_inicio - 1)
+        # A secao de cima: copia da do cursor (mesmos cabecalhos, mesmo tipo de comeco).
+        pq_secoes.inserir_secao(c, pq_secoes.copia(atual), base)
+        # A de baixo continua a do cursor, mas comeca como o tipo pedido.
+        nova = pq_secoes.copia(atual, tipo=tipo)
+        quebras = pq_secoes.quebras_de_secao(doc, fresco=True)
+        depois = [p for p, _i in quebras if p > c.position() - 1]
+        if indice + 1 < len(quebras) and depois:
+            pq_secoes.trocar_secao_do_caractere(c, depois[0], nova)
+        else:
+            pq_secoes.trocar_final(doc, nova)
+        c.setPosition(min(c.position() + 1, doc.characterCount() - 1))
+        c.endEditBlock()
+        secoes.calcular(forcar=True)
+        self.layout_pag.atualizar_secoes(forcar=True)
+        self._limpar_cache()
+        self._altura_doc_anterior = None
+        self._atualizar_geometria()
+        self.paginaAlterada.emit()
+        self._depois_de_mover()
+        return True
 
     def _apagar(self, anterior: bool, palavra: bool = False) -> None:
         if self._cursor.hasSelection():
@@ -897,6 +1115,8 @@ class PainelDocumento(VistaPaginas):
             self._remover_selecao()
         elif anterior and ed_listas.backspace_no_inicio(self):
             # Lista (0.1.4): no inicio do item, tira o numero (e de novo o recuo).
+            pass
+        elif self._apagar_quebra_de_secao(anterior):
             pass
         elif anterior:
             # Backspace e Delete pulam a marca de marcador (invisivel) e apagam o caractere
@@ -923,6 +1143,47 @@ class PainelDocumento(VistaPaginas):
             else:
                 self._cursor.deleteChar()
         self._depois_de_mover()
+
+    def _apagar_quebra_de_secao(self, anterior: bool) -> bool:
+        """Backspace no comeco do paragrafo que segue a quebra de secao, ou Delete antes dela
+        (0.1.12): apaga a quebra e funde os dois paragrafos, como o Word (a quebra e' a marca do
+        paragrafo). O texto de cima passa a ser da secao de baixo. Um passo de desfazer."""
+        if not self._no_corpo():
+            return False
+        pos = self._cursor.position()
+        doc = self.document()
+        if anterior:
+            bloco = self._cursor.block()
+            if pos != bloco.position() or not bloco.previous().isValid():
+                if self._depois_da_quebra(pos):
+                    inicio, fim = pos - 1, pos
+                else:
+                    return False
+            else:
+                inicio, fim = pos - 2, pos
+                if not self._secao_em(inicio):
+                    return False
+        else:
+            if not self._secao_em(pos):
+                return False
+            bloco = doc.findBlock(pos)
+            fim_bloco = bloco.position() + bloco.length() - 1
+            if pos + 1 != fim_bloco:
+                return False
+            inicio, fim = pos, min(pos + 2, doc.characterCount() - 1)
+            if not bloco.next().isValid():
+                fim = pos + 1
+        self._cursor.beginEditBlock()
+        self._cursor.setPosition(inicio)
+        self._cursor.setPosition(fim, Selecionar)
+        self._remover_selecao()
+        self._cursor.endEditBlock()
+        self.layout_pag.atualizar_secoes(forcar=True)
+        self._limpar_cache()
+        self._altura_doc_anterior = None
+        self._atualizar_geometria()
+        self.paginaAlterada.emit()
+        return True
 
     def _pagina_do_teclado(self, anterior: bool, modo) -> None:
         """PageUp/PageDown: anda uma altura de tela, mantendo a coluna do caret."""
@@ -1037,6 +1298,7 @@ class PainelDocumento(VistaPaginas):
             self._depois_de_mover()
         elif k == Key.Key_End:
             self._cursor.movePosition(M.EndOfLine, modo)
+            self._antes_da_quebra()
             self._depois_de_mover()
         elif k in (Key.Key_PageUp, Key.Key_PageDown):
             self._pagina_do_teclado(anterior=(k == Key.Key_PageUp), modo=modo)
@@ -1062,6 +1324,8 @@ class PainelDocumento(VistaPaginas):
         pos = self.layout_pag.doc.documentLayout().hitTest(QPointF(xd, yd), Qt.FuzzyHit)
         if self.layout_pag.pagina_do_cursor(pos) != n:
             pos = self.layout_pag.ajustar_para_pagina(pos, n)
+        if self._depois_da_quebra(pos):
+            pos -= 1  # o caret fica antes da quebra de secao (0.1.12)
         return pos
 
     def flutuante_em(self, p: QPointF) -> int | None:
@@ -1130,8 +1394,8 @@ class PainelDocumento(VistaPaginas):
         return self.layout_pag.doc, self.layout_pag.flutuantes, self.layout_pag
 
     def _posicionar_faixa(self, faixa: FaixaQt, n: int) -> None:
-        pagina = self.layout_pag.pagina_arquivo
-        faixa.preparar(n, self._paginas(), pagina)
+        pagina = self.layout_pag.pagina_da_folha(n)
+        self.layout_pag.preparar_faixa(faixa, n, self._paginas())
         faixa.posicionar(pagina, self.layout_pag.efetiva_da(n), n)
         faixa.flutuantes.atualizar()
 
@@ -1442,8 +1706,7 @@ class PainelDocumento(VistaPaginas):
         """(faixa, posicao, pagina) do objeto do cabecalho ou do rodape sob o ponto (0.1.9), na
         edicao das faixas. A faixa em edicao primeiro; o objeto de tras so' fora do texto."""
         zona, n = self.zona_em(p)
-        pagina = self.layout_pag.pagina_arquivo
-        faixas = [self.layout_pag.faixas.da_pagina(onde, n, pagina) for onde in ("cabecalho", "rodape")]
+        faixas = [self.layout_pag.faixa_da_folha(onde, n) for onde in ("cabecalho", "rodape")]
         faixas = [f for f in faixas if f is not None]
         faixas.sort(key=lambda f: f is not self._edicao)
         sx, sy = self._ponto_na_folha(p, n)
@@ -1529,7 +1792,7 @@ class PainelDocumento(VistaPaginas):
             self._arrastando = False
             return
         estender = bool(ev.modifiers() & Shift)
-        alvo = self.layout_pag.faixas.obter(zona, tipo_da_pagina(n, self.layout_pag.pagina_arquivo))
+        alvo = self.layout_pag.faixa_da_folha(zona, n)
         if alvo is not self._edicao or n != self._pagina_edicao:
             self._trocar_faixa(zona, n, ev.position())
         else:
@@ -1906,15 +2169,22 @@ def ed_links_formato_antes_da_nota(doc, pos: int) -> QTextCharFormat:
 
 def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
     """O HTML do trecho copiado sem a quebra de pagina do espacador das notas (0.1.10): ela nao
-    e' do usuario, e colar a levaria como quebra de verdade."""
+    e' do usuario, e colar a levaria como quebra de verdade. Nem (0.1.12) a quebra derivada da
+    secao e o recuo direito escondido da secao estreita: colados, virariam do usuario."""
+    from editdoc.interface.secoes import ConjuntoDeSecoes
     from editdoc.ponte_qt.imagens import DocumentoQt
     tmp = DocumentoQt()
     QTextCursor(tmp).insertFragment(frag)
     tem = False
     bloco = tmp.begin()
     while bloco.isValid():
-        if pq_notas.eh_espacador(bloco.blockFormat()):
-            QTextCursor(bloco).setBlockFormat(pq_notas.sem_espacador(bloco.blockFormat()))
+        bf = bloco.blockFormat()
+        if pq_notas.eh_espacador(bf) or pq_secoes.eh_derivada(bf) or \
+                pq_estilos.recuo_secao(bf) is not None:
+            bf = pq_notas.sem_espacador(bf)
+            ConjuntoDeSecoes._aplicar_quebra(bf, 0, tabela=False)
+            ConjuntoDeSecoes._aplicar_recuo(bf, 0.0)
+            QTextCursor(bloco).setBlockFormat(bf)
             tem = True
         bloco = bloco.next()
     return tmp.toHtml() if tem else frag.toHtml()

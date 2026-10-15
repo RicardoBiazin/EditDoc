@@ -93,15 +93,15 @@ def transformacao(dpi_x: float, dpi_y: float) -> QTransform:
 
 
 def pagina_da_folha(layout: LayoutPaginado, n: int) -> Pagina:
-    """Papel da folha n. Hoje o documento tem uma secao: todas iguais. Fica por folha para
-    que o PDF ja' troque de papel no meio quando houver varias secoes."""
-    return layout.pagina_arquivo
+    """Papel da folha n: o da secao dela (0.1.12; o PDF troca de papel no meio)."""
+    return layout.pagina_da_folha(n)
 
 
 def preparar(layout: LayoutPaginado) -> bool:
     """Campos do corpo com o total de paginas atual e objetos flutuantes em dia (0.1.7).
     True se o layout mudou (limpar cache)."""
-    notas = layout.atualizar_notas()
+    secoes = layout.atualizar_secoes()
+    notas = layout.atualizar_notas() or secoes
     flutuantes = layout.atualizar_flutuantes()
     return layout.atualizar_campos() or flutuantes or notas
 
@@ -289,9 +289,21 @@ def imprimir(impressora, layout: LayoutPaginado, paginas: list[int],
     painter = QPainter()
     if not painter.begin(impressora):
         raise FalhaNaImpressao("a impressora nao pode ser aberta")
+    atual = {"pagina": pagina_da_folha(layout, sequencia[0])}
+
+    def nova_pagina(n: int) -> None:
+        # Secoes (0.1.12): a folha de outra secao pode ter outro papel ou orientacao; o QPrinter
+        # aplica o tamanho novo a partir da proxima folha. Com uma secao so', nada muda.
+        pagina = pagina_da_folha(layout, n)
+        anterior = atual["pagina"]
+        if (pagina.largura_tw, pagina.altura_tw) != (anterior.largura_tw, anterior.altura_tw):
+            impressora.setPageSize(tamanho_do_papel(pagina))
+            impressora.setPageOrientation(orientacao(pagina))
+            atual["pagina"] = pagina
+        impressora.newPage()
+
     try:
-        _pintar_sequencia(painter, lambda _n: impressora.newPage(), layout, sequencia,
-                          progresso)
+        _pintar_sequencia(painter, nova_pagina, layout, sequencia, progresso)
     except Cancelado:
         impressora.abort()
         raise

@@ -158,6 +158,7 @@ class JanelaPrincipal(QMainWindow):
                                      "pares_impares": self._alternar_pares_impares,
                                      "formato_numero": self._mudar_formato_numero,
                                      "numero_inicial": self._mudar_numero_inicial,
+                                     "vincular_anterior": self._alternar_vinculo,
                                  }, ao_inserir={
                                      "tabela": self._inserir_tabela,
                                      "imagem": self._inserir_imagem,
@@ -262,6 +263,11 @@ class JanelaPrincipal(QMainWindow):
 
         self._rotulo_pagina = QLabel()
         self.statusBar().addWidget(self._rotulo_pagina)
+        # Secoes (0.1.12): "Seção 2 de 3", so' com mais de uma secao.
+        self._rotulo_secao = QLabel()
+        self._rotulo_secao.setAccessibleName("Seção do cursor")
+        self.statusBar().addWidget(self._rotulo_secao)
+        self._rotulo_secao.hide()
         self._rotulo_palavras = QLabel()
         self.controle_zoom = ControleZoom(self.comandos, self.painel)
         self.statusBar().addPermanentWidget(self._rotulo_palavras)
@@ -378,7 +384,8 @@ class JanelaPrincipal(QMainWindow):
             self.painel_estilos.marcar(atual)
         bf = self.painel.textCursor().block().blockFormat()
         # Recuos em twips no bloco (0.1.4); espacos em px96.
-        self.faixa.mostrar_paragrafo(round(bf.leftMargin()), round(bf.rightMargin()),
+        # 0.1.12: sem o recuo escondido da secao estreita.
+        self.faixa.mostrar_paragrafo(round(bf.leftMargin()), round(pq_estilos.recuo_direito_real(bf)),
                                      round(bf.topMargin() * 15), round(bf.bottomMargin() * 15))
         c = self.comandos
         c.acao("marcas_formatacao").setChecked(self.painel.marcas_visiveis())
@@ -603,6 +610,12 @@ class JanelaPrincipal(QMainWindow):
         atual = self.painel.pagina_atual() + 1
         total = self.painel.total_de_paginas()
         self._rotulo_pagina.setText(f"Página {atual} de {total}")
+        secoes = self.painel.total_de_secoes()
+        if secoes > 1:
+            self._rotulo_secao.setText(f"Seção {self.painel.secao_atual() + 1} de {secoes}")
+            self._rotulo_secao.show()
+        elif not self._rotulo_secao.isHidden():
+            self._rotulo_secao.hide()
 
     def _alterar_pagina(self, nova: Pagina) -> None:
         """Mudanca feita pelo usuario: e' alteracao do documento, entao deixa o arquivo sujo."""
@@ -621,6 +634,19 @@ class JanelaPrincipal(QMainWindow):
     def _mudar_margens(self, nome: str) -> None:
         atual = self.painel.configuracao_pagina()
         if nome == "Personalizadas":
+            if self.painel.total_de_secoes() > 1:
+                # Secoes (0.1.12): "Aplicar a: Esta seção / Documento inteiro", como no Word.
+                pedido = dialogos_modais.pedir_configurar_pagina(self, atual, varias_secoes=True)
+                if pedido is None:
+                    self.comandos.atualizar_pagina(atual)
+                    return
+                nova, documento_inteiro = pedido
+                if documento_inteiro:
+                    self.painel.definir_configuracao_pagina(nova, documento_inteiro=True)
+                    self.painel.documento_corpo().setModified(True)
+                    return
+                self._alterar_pagina(nova)
+                return
             nova = dialogos_modais.pedir_margens(self, atual)
             if nova is None:
                 self.comandos.atualizar_pagina(atual)
@@ -636,6 +662,11 @@ class JanelaPrincipal(QMainWindow):
     def _alternar_primeira_diferente(self) -> None:
         atual = self.painel.configuracao_pagina()
         self._alterar_pagina(replace(atual, primeira_diferente=not atual.primeira_diferente))
+
+    def _alternar_vinculo(self) -> None:
+        """Vincular ao anterior (0.1.12), na edicao do cabecalho ou do rodape."""
+        if self.painel.alternar_vinculo():
+            self.painel.documento_corpo().setModified(True)
 
     def _alternar_pares_impares(self) -> None:
         atual = self.painel.configuracao_pagina()
@@ -832,7 +863,7 @@ class JanelaPrincipal(QMainWindow):
         self.painel.layout_pag.definir_fonte_padrao(familia, meio_pt / 2 if meio_pt
                                                     else self._fonte_cfg[1])
         self.painel.carregar_faixas(modelo)
-        self.painel.definir_configuracao_pagina(modelo.pagina)
+        self.painel.definir_pagina_final(modelo.pagina)
         # Listas (0.1.4): o texto depois do numero, medido com a fonte padrao ja' trocada.
         para_qt.concluir_listas(self.painel.documento_corpo())
         # Notas (0.1.10): a area de notas de cada pagina (os espacadores entram antes de zerar o
@@ -872,8 +903,9 @@ class JanelaPrincipal(QMainWindow):
         # Nota em edicao (0.1.10): o texto dela vai para o catalogo antes de gravar.
         self.painel.layout_pag.notas.concluir_sessao(sair=False)
         modelo = de_qt.extrair(self.painel.documento_corpo())
-        modelo.pagina = replace(self.painel.configuracao_pagina())
-        modelo.cabecalhos, modelo.rodapes = self.painel.faixas_do_modelo()
+        modelo.pagina = replace(self.painel.layout_pag.pagina_arquivo)
+        # Secoes (0.1.12): os cabecalhos e rodapes que cada secao declara, e os da ultima.
+        self.painel.completar_secoes(modelo)
         modelo.titulo = self._titulo
         modelo.autor = self._autor
         modelo.criado_em = self._criado_em
@@ -1106,7 +1138,7 @@ class JanelaPrincipal(QMainWindow):
         painel = self.painel
         painel.preparar_para_impressao()
         total, atual = painel.total_de_paginas(), painel.pagina_atual()
-        pagina = painel.layout_pag.pagina_arquivo
+        pagina = painel.layout_pag.pagina_da_folha(0)  # 0.1.12: o papel da primeira folha
         impressora = impressao.nova_impressora()
         impressao.configurar_impressora(impressora, pagina)
         if not dialogos_modais.pedir_impressao(self, impressora, total, atual):
@@ -1144,7 +1176,8 @@ class JanelaPrincipal(QMainWindow):
         painel = self.painel
         painel.preparar_para_impressao()
         impressora = impressao.nova_impressora(pdf=not impressao.impressoras())
-        impressao.configurar_impressora(impressora, painel.layout_pag.pagina_arquivo)
+        # O papel da primeira folha (0.1.12: com secoes, cada folha troca para o seu).
+        impressao.configurar_impressora(impressora, painel.layout_pag.pagina_da_folha(0))
 
         def progresso(total: int):
             return impressao.BarraDeProgresso(self, "Visualizar impressão",

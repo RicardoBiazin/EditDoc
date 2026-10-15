@@ -87,6 +87,7 @@ from editdoc.formato_docx import estilos as fx_estilos
 from editdoc.formato_docx import numeracao as fx_numeracao
 from editdoc.formato_docx import opacos, ordem
 from editdoc.formato_docx import pacote as fx_pacote
+from editdoc.formato_docx import secoes as fx_secoes
 from editdoc.formato_docx import propriedades as fx_props
 from editdoc.formato_docx.avisos import Aviso, Coletor
 from editdoc.formato_docx.erros import ErroDocx
@@ -102,7 +103,7 @@ from editdoc.modelo import notas as mod_notas
 from editdoc.formato_docx.nomes import W14_NS
 from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Bloco, Borda, Campo, Celula, Documento,
                                       Imagem, Link, MarcaCampo, MarcaComentario, MarcaConteudo,
-                                      Marcador, MarcaNota, Paragrafo, Run, Tabela, bordas_padrao, objetos_de,
+                                      Marcador, MarcaNota, MarcaQuebra, Paragrafo, Run, Tabela, bordas_padrao, objetos_de,
                                       paragrafos_de)
 from editdoc.modelo.estilos import catalogo_padrao
 from editdoc.modelo.numeracao import lista_efetiva, materializado, recuos_do_nivel
@@ -295,6 +296,10 @@ class _Ctx:
         self.estilo_par: str | None = None
         self.em_tabela = 0
         self._bases_car: dict = {}
+        #: secoes (0.1.12): gravando cabecalho ou rodape (paragrafo de la' nao termina secao), e
+        #: os w:sectPr dos paragrafos do corpo, que recebem as referencias depois das partes
+        self.em_faixa = False
+        self.secoes_gravadas: list = []
 
     def estilo_existe(self, sid: str | None, tipo: str) -> bool:
         return bool(sid) and self.tipos.get(sid) == tipo
@@ -379,6 +384,14 @@ def _paragrafo(body, p: Paragrafo, ctx: _Ctx) -> None:
     estilo = ctx.estilo_de_paragrafo(p.estilo)
     ctx.estilo_par = p.estilo
     ppr = fx_props.montar_ppr(p, estilo, ctx.bases_de_paragrafo(p), ctx.estilo_existe)
+    if p.secao is not None and not ctx.em_faixa and not ctx.em_tabela:
+        # Quebra de secao (0.1.12): o w:sectPr e' o ultimo filho do w:pPr. As referencias de
+        # cabecalho e rodape entram depois, quando as partes estiverem gravadas.
+        if ppr is None:
+            ppr = etree.Element(q("pPr"))
+        sect = fx_secoes.escrever(p.secao, p.secao.pagina)
+        ppr.append(sect)
+        ctx.secoes_gravadas.append((sect, p.secao))
     if ppr is not None:
         pe.append(ppr)
     if p.quebra_antes:
@@ -469,6 +482,14 @@ def _marca(destino, run: Run, proximo: Run | None, ctx: "_Ctx") -> None:
         return
     if isinstance(m, MarcaNota):
         _referencia_de_nota(destino, run, m, ctx)
+        return
+    if isinstance(m, MarcaQuebra):
+        # Quebra de coluna (0.1.12).
+        r = etree.SubElement(destino, q("r"))
+        rpr = _rpr(run, ctx.estilo_de_caractere(run.estilo), ctx)
+        if rpr is not None:
+            r.append(rpr)
+        etree.SubElement(r, q("br")).set(q("type"), "column")
         return
     if isinstance(m, Marcador):
         if m.tipo == "inicio":
@@ -779,55 +800,90 @@ class _Faixas:
         self.partes: list[tuple[str, bytes]] = []
         self.tipos: list[tuple[str, str]] = []  # (/word/headerN.xml, tipo de conteudo)
         self.referencias: list[tuple[str, str, str]] = []  # (elemento, w:type, rId)
+        #: referencias de cada secao que termina em paragrafo (0.1.12), na ordem do corpo
+        self.das_secoes: list[list[tuple[str, str, str]]] = []
+
+
+_FAIXAS = (("cabecalho", "hdr", "header", RT_CABECALHO, CT_CABECALHO, "headerReference"),
+           ("rodape", "ftr", "footer", RT_RODAPE, CT_RODAPE, "footerReference"))
 
 
 def _escrever_faixas(doc: Documento, ctx: _Ctx) -> _Faixas:
-    """Cada cabecalho e rodape do modelo vira uma parte, na ordem padrao, primeira, par.
+    """Cada cabecalho e rodape do modelo vira uma parte: os da ultima secao (padrao, primeira,
+    par) e, desde a 0.1.12, os que cada secao do meio declara.
 
     As relacoes da parte (imagens) sao proprias; a relacao do documento para a parte
-    entra nas relacoes do documento (ctx.relacoes), que ja' tem as imagens do corpo.
+    entra nas relacoes do documento (ctx.relacoes), que ja' tem as imagens do corpo. Duas
+    secoes que citam a mesma parte (a mesma chave, `Secao.chaves`) com o mesmo conteudo
+    continuam citando uma parte so'.
     """
     faixas = _Faixas()
     relacoes_doc = ctx.relacoes
-    for onde, modelo, raiz_nome, prefixo, rt, ct, elemento in (
-            ("cabecalho", doc.cabecalhos, "hdr", "header", RT_CABECALHO, CT_CABECALHO,
-             "headerReference"),
-            ("rodape", doc.rodapes, "ftr", "footer", RT_RODAPE, CT_RODAPE, "footerReference")):
-        n = 0
-        for tipo in TIPOS_DE_FAIXA:
-            if tipo not in modelo:
-                continue
-            n += 1
-            nome = f"{prefixo}{n}.xml"
-            ctx.relacoes = _Relacoes(1)
-            ctx.ids_marcadores = {}
-            raiz = _raiz_de_parte(raiz_nome, ctx)
-            _blocos(raiz, modelo[tipo], ctx, em_celula=True)  # termina em paragrafo
-            faixas.partes.append((f"word/{nome}", _xml(raiz)))
-            if ctx.relacoes.itens:
-                faixas.partes.append((f"word/_rels/{nome}.rels", _rels_xml(ctx.relacoes.itens)))
-            faixas.tipos.append((f"/word/{nome}", ct))
-            rid = relacoes_doc.adicionar(rt, nome)
-            faixas.referencias.append((elemento, _TIPO_FAIXA[tipo], rid))
-    ctx.relacoes = relacoes_doc
+    contagem = {"cabecalho": 0, "rodape": 0}
+    feitas: list[tuple] = []  # (onde, chave, blocos, rId)
+    ctx.em_faixa = True
+
+    def gravar(onde: str, blocos: list, chave) -> str:
+        if chave is not None:
+            for onde_f, chave_f, blocos_f, rid_f in feitas:
+                if onde_f == onde and chave_f == chave and blocos_f == blocos:
+                    return rid_f
+        _onde, raiz_nome, prefixo, rt, ct, _elemento = _FAIXAS[0 if onde == "cabecalho" else 1]
+        contagem[onde] += 1
+        nome = f"{prefixo}{contagem[onde]}.xml"
+        ctx.relacoes = _Relacoes(1)
+        ctx.ids_marcadores = {}
+        raiz = _raiz_de_parte(raiz_nome, ctx)
+        _blocos(raiz, blocos, ctx, em_celula=True)  # termina em paragrafo
+        faixas.partes.append((f"word/{nome}", _xml(raiz)))
+        if ctx.relacoes.itens:
+            faixas.partes.append((f"word/_rels/{nome}.rels", _rels_xml(ctx.relacoes.itens)))
+        faixas.tipos.append((f"/word/{nome}", ct))
+        ctx.relacoes = relacoes_doc
+        rid = relacoes_doc.adicionar(rt, nome)
+        feitas.append((onde, chave, blocos, rid))
+        return rid
+
+    def da_secao(cabecalhos: dict, rodapes: dict, chaves: dict) -> list:
+        refs = []
+        for onde, modelo in (("cabecalho", cabecalhos), ("rodape", rodapes)):
+            elemento = _FAIXAS[0 if onde == "cabecalho" else 1][5]
+            for tipo in TIPOS_DE_FAIXA:
+                if tipo in modelo:
+                    rid = gravar(onde, modelo[tipo], chaves.get((onde, tipo)))
+                    refs.append((elemento, _TIPO_FAIXA[tipo], rid))
+        return refs
+
+    try:
+        faixas.referencias = da_secao(doc.cabecalhos, doc.rodapes, doc.secao.chaves)
+        for bloco in doc.paragrafos:
+            secao = getattr(bloco, "secao", None)
+            if secao is not None:
+                faixas.das_secoes.append(da_secao(secao.cabecalhos, secao.rodapes, secao.chaves))
+    finally:
+        ctx.em_faixa = False
+        ctx.relacoes = relacoes_doc
     return faixas
 
 
 def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
     raiz = _raiz_de_parte("document", ctx)
     body = etree.SubElement(raiz, q("body"))
+    ctx.secoes_gravadas = []
     _blocos(body, doc.paragrafos, ctx, em_celula=False)
     if not doc.paragrafos:
         etree.SubElement(body, q("p"))  # o Word exige ao menos um paragrafo
     faixas = _escrever_faixas(doc, ctx)
+    # Secoes do meio (0.1.12): as referencias de cabecalho e rodape, agora que as partes existem.
+    for (sect_meio, _secao), refs in zip(ctx.secoes_gravadas, faixas.das_secoes):
+        for i, (elemento, tipo, rid) in enumerate(refs):
+            ref = etree.Element(q(elemento))
+            ref.set(q("type"), tipo)
+            ref.set("{%s}id" % R_NS, rid)
+            sect_meio.insert(i, ref)
     pagina = doc.pagina
-    sect = etree.SubElement(body, q("sectPr"))
-    # EG_HdrFtrReferences vem antes de pgSz no CT_SectPr.
-    for elemento, tipo, rid in faixas.referencias:
-        ref = etree.SubElement(sect, q(elemento))
-        ref.set(q("type"), tipo)
-        ref.set("{%s}id" % R_NS, rid)
-    # Notas (0.1.10): footnotePr e endnotePr, depois das referencias de cabecalho e rodape.
+    # Notas (0.1.10): footnotePr e endnotePr da ultima secao.
+    notas_sect = []
     cat = doc.notas
     if cat is not None:
         for tipo in mod_notas.TIPOS:
@@ -843,29 +899,9 @@ def _document_xml(doc: Documento, ctx: _Ctx) -> tuple[bytes, _Faixas]:
             if el is None:
                 el = fx_notas.elemento_de_propriedades(tipo, pr)
             if el is not None:
-                sect.append(el)
-    pg = etree.SubElement(sect, q("pgSz"))
-    pg.set(q("w"), str(pagina.largura_tw))
-    pg.set(q("h"), str(pagina.altura_tw))
-    if pagina.paisagem:
-        pg.set(q("orient"), "landscape")
-    mar = etree.SubElement(sect, q("pgMar"))
-    for nome, valor in (
-            ("top", pagina.margem_sup_tw), ("right", pagina.margem_dir_tw),
-            ("bottom", pagina.margem_inf_tw), ("left", pagina.margem_esq_tw),
-            ("header", pagina.cabecalho_tw), ("footer", pagina.rodape_tw),
-            ("gutter", pagina.medianiz_tw)):
-        mar.set(q(nome), str(valor))
-    if pagina.formato_numero != "decimal" or pagina.numero_inicial is not None:
-        if pagina.formato_numero not in FORMATOS_NUMERO:
-            raise ValueError(f"formato de numero invalido: {pagina.formato_numero!r}")
-        num = etree.SubElement(sect, q("pgNumType"))
-        if pagina.formato_numero != "decimal":
-            num.set(q("fmt"), pagina.formato_numero)
-        if pagina.numero_inicial is not None:
-            num.set(q("start"), str(min(max(int(pagina.numero_inicial), 0), NUMERO_INICIAL_MAXIMO)))
-    if pagina.primeira_diferente:
-        etree.SubElement(sect, q("titlePg"))
+                notas_sect.append(el)
+    # A ultima secao (0.1.12: o w:sectPr de origem com o que o modelo mudou).
+    body.append(fx_secoes.escrever(doc.secao, pagina, faixas.referencias, notas_sect))
     return _xml(raiz), faixas
 
 
@@ -1140,6 +1176,9 @@ def _extensoes_usadas(doc: Documento) -> dict[str, str]:
         listas += [list(c.paragrafos) for c in doc.comentarios.itens if c.original is None]
     if doc.notas is not None:
         listas += [list(n.paragrafos) for n in doc.notas.todas() if n.original is None]
+    secao_final = doc.secao.original or doc.secao.extras
+    if secao_final and "xmlns:" in secao_final.replace('xmlns:w="', ""):
+        saida.update(fx_props.namespaces_usados(secao_final))
     for blocos in listas:
         for p in paragrafos_de(blocos):
             textos = [p.extras] + [r.extras for r in p.runs]
@@ -1147,6 +1186,8 @@ def _extensoes_usadas(doc: Documento) -> dict[str, str]:
                        if isinstance(r.marca, MarcaConteudo) and r.marca.propriedades]
             textos += [x for r in p.runs if isinstance(r.marca, MarcaCampo) and r.marca.campo
                        for x in (r.marca.campo.rpr_codigo, r.marca.campo.rpr_separador) if x]
+            if p.secao is not None:
+                textos.append(p.secao.original or p.secao.extras)  # 0.1.12
             for texto in textos:
                 if texto and texto not in vistos and "xmlns:" in texto.replace('xmlns:w="', ""):
                     vistos.add(texto)

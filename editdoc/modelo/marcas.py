@@ -48,10 +48,8 @@ from editdoc.modelo.documento import (TIPOS_DE_FAIXA, Documento, MarcaCampo, Mar
 
 def historias(doc: Documento) -> list[list]:
     """Os blocos de cada historia: corpo, cabecalhos e rodapes."""
-    saida = [doc.paragrafos]
-    for faixas in (doc.cabecalhos, doc.rodapes):
-        saida.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
-    return saida
+    from editdoc.modelo.documento import historias_de_faixa
+    return [doc.paragrafos] + historias_de_faixa(doc)
 
 
 def _equilibrar_historia(blocos: list, contagem: dict) -> None:

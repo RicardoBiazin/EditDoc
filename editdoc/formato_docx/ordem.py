@@ -545,6 +545,8 @@ def validar(partes: dict[str, bytes], estilos_preservados=()) -> list[str]:
     from editdoc.formato_docx import numeracao  # import tardio: numeracao usa as ordens daqui
     from editdoc.formato_docx import comentarios  # 0.1.6
     from editdoc.formato_docx import notas  # 0.1.10
+    from editdoc.formato_docx import secoes  # 0.1.12
     return (validar_pacote(partes) + validar_partes_xml(partes)
             + validar_estilos(partes, estilos_preservados)
-            + numeracao.validar(partes) + comentarios.validar(partes) + notas.validar(partes))
+            + numeracao.validar(partes) + comentarios.validar(partes) + notas.validar(partes)
+            + secoes.validar(partes))

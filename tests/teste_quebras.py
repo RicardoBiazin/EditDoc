@@ -60,10 +60,18 @@ def testar_leitura_da_quebra() -> None:
         checa(not any(a.codigo == "QUEBRA_DE_PAGINA" for a in avisos),
               f"{nome}: a quebra de pagina nao gera aviso")
 
+    # 0.1.12: a quebra de coluna virou marca no fluxo e volta ao arquivo (ate' a 0.1.11 saia,
+    # com o aviso QUEBRA_DE_PAGINA). A contraprova passa a ser a quebra de tipo desconhecido.
+    from editdoc.modelo.documento import MarcaQuebra
     modelo, avisos = ler(_xml_com_corpo(
         '<w:p><w:r><w:br w:type="column"/><w:t>coluna</w:t></w:r></w:p>'))
+    checa(not any(a.codigo == "QUEBRA_DE_PAGINA" for a in avisos)
+          and any(isinstance(r.marca, MarcaQuebra) for r in modelo.paragrafos[0].runs),
+          "quebra de coluna vira marca no fluxo, sem aviso")
+    modelo, avisos = ler(_xml_com_corpo(
+        '<w:p><w:r><w:br w:type="estranho"/><w:t>x</w:t></w:r></w:p>'))
     checa(any(a.codigo == "QUEBRA_DE_PAGINA" for a in avisos),
-          "contraprova: quebra de COLUNA continua avisada, porque nao e' representada")
+          "contraprova: quebra de tipo desconhecido continua avisada")
 
 
 def testar_escrita_e_volta() -> None:

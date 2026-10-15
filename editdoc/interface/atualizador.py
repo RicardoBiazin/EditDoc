@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QComboBox, QFontComboBox, QTextEdit
 
 from editdoc.edicao import imagens, tabelas
 from editdoc.edicao.estado import ler
+from editdoc.interface.comandos import QUEBRA_DE_SECAO_DAS_ACOES  # 0.1.12
 from editdoc.interface.comandos import (ALINHAMENTOS, COMENTARIO, EDICAO_DE_FAIXA, ESPACAMENTOS,
                                         LINK, LISTA_NUMERADA, OBJETO, QUEBRA_DAS_ACOES, TABELA,
                                         Comandos)
@@ -101,6 +102,14 @@ class AtualizadorDeEstado(QObject):
         editando = getattr(self._editor, "editando_faixa", lambda: None)() is not None
         for id_ in EDICAO_DE_FAIXA:
             c.acao(id_).setEnabled(editando)
+        # Secoes (0.1.12): "Vincular ao anterior" so' na edicao da faixa de uma secao que tem
+        # anterior; marcado quando a secao usa a da anterior.
+        vinculo = getattr(self._editor, "estado_do_vinculo", lambda: None)()
+        c.acao("vincular_anterior").setEnabled(vinculo is not None)
+        c.acao("vincular_anterior").setChecked(bool(vinculo))
+        no_corpo_sem_tabela = not editando and cursor.currentTable() is None
+        for id_ in QUEBRA_DE_SECAO_DAS_ACOES:
+            c.acao(id_).setEnabled(no_corpo_sem_tabela)
         # Comentarios (0.1.6): no corpo; responder, editar, resolver e excluir so' num trecho
         # comentado. "Resolver" fica marcado na conversa resolvida.
         atual = None

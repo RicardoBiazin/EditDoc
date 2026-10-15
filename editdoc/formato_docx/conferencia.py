@@ -19,6 +19,8 @@ o conteudo (texto, estilos, links e marcas, paragrafo a paragrafo).
 Notas (0.1.10): as referencias de cada paragrafo (com as outras marcas) e, de cada nota, o
 tipo, o id e o conteudo (texto, estilos, links e marcas), depois de `notas.preparar`; e as
 propriedades efetivas (formato, inicio, reinicio, posicao).
+Secoes (0.1.12): onde cada uma termina, o papel, as margens, a numeracao, o tipo, os extras do
+w:sectPr e os cabecalhos e rodapes que cada uma declara.
 Um arquivo que nao confere nao substitui o original.
 
 Os dois lados passam por `normalizar`: o escritor completa a celula e o corpo
@@ -38,6 +40,7 @@ from editdoc.formato_docx.escritor import texto_gravavel
 from editdoc.modelo import marcas
 from editdoc.modelo import notas as mod_notas
 from editdoc.modelo.documento import CARACTERE_OBJETO, Documento, Tabela, normalizar
+from editdoc.modelo.secoes import secoes_de
 
 
 class FalhaDeConferencia(Exception):
@@ -113,7 +116,7 @@ def _itens(blocos, saida: list, onde: str) -> None:
                           bloco.quebra_antes, tuple(_imagens(bloco)), _campos(bloco),
                           bloco.estilo, _estilos(bloco),
                           _objetos(bloco), _links(bloco), _marcas(bloco),
-                          (bloco.lista, bloco.lista_nivel)))
+                          (bloco.lista, bloco.lista_nivel), bloco.secao is not None))
 
 
 def _comentarios(doc: Documento) -> tuple:
@@ -158,13 +161,24 @@ def conferir(dados: bytes, esperado: Documento) -> None:
     esperado_n, lido_n = normalizar(esperado), normalizar(lido)
     _itens(esperado_n.paragrafos, a, "")
     _itens(lido_n.paragrafos, b, "")
-    for nome, faixa_a, faixa_b in (("cabecalho", esperado_n.cabecalhos, lido_n.cabecalhos),
-                                   ("rodape", esperado_n.rodapes, lido_n.rodapes)):
-        if sorted(faixa_a) != sorted(faixa_b):
-            raise FalhaDeConferencia(f"{nome}: tipos diferentes ({sorted(faixa_a)} e {sorted(faixa_b)})")
-        for tipo in sorted(faixa_a):
-            _itens(faixa_a[tipo], a, f"{nome} {tipo}: ")
-            _itens(faixa_b[tipo], b, f"{nome} {tipo}: ")
+    secoes_a, secoes_b = secoes_de(esperado_n), secoes_de(lido_n)
+    if len(secoes_a) != len(secoes_b):
+        raise FalhaDeConferencia(f"secoes: esperado {len(secoes_a)}, gravado {len(secoes_b)}")
+    for i, (sa, sb) in enumerate(zip(secoes_a, secoes_b)):
+        rotulo = f"secao {i + 1}" if i < len(secoes_a) - 1 else "ultima secao"
+        if sa.pagina != sb.pagina:
+            raise FalhaDeConferencia(f"papel, margens ou numeracao diferentes na {rotulo}")
+        if (sa.tipo, sa.extras) != (sb.tipo, sb.extras):
+            raise FalhaDeConferencia(f"propriedades da {rotulo} diferentes")
+        prefixo = "" if i == len(secoes_a) - 1 else f"{rotulo}, "
+        for nome, faixa_a, faixa_b in (("cabecalho", sa.cabecalhos, sb.cabecalhos),
+                                       ("rodape", sa.rodapes, sb.rodapes)):
+            if sorted(faixa_a) != sorted(faixa_b):
+                raise FalhaDeConferencia(f"{prefixo}{nome}: tipos diferentes ({sorted(faixa_a)} "
+                                         f"e {sorted(faixa_b)})")
+            for tipo in sorted(faixa_a):
+                _itens(faixa_a[tipo], a, f"{prefixo}{nome} {tipo}: ")
+                _itens(faixa_b[tipo], b, f"{prefixo}{nome} {tipo}: ")
     n_a = sum(1 for x in a if x[1] == "p")
     n_b = sum(1 for x in b if x[1] == "p")
     if n_a != n_b:
@@ -188,6 +202,8 @@ def conferir(dados: bytes, esperado: Documento) -> None:
                 raise FalhaDeConferencia(f"campo ou marcador diferente no {lugar}")
             if x[11] != y[11]:
                 raise FalhaDeConferencia(f"lista (numeracao) diferente no {lugar}")
+            if x[12] != y[12]:
+                raise FalhaDeConferencia(f"quebra de secao diferente no {lugar}")
             if x[6:8] != y[6:8]:
                 raise FalhaDeConferencia(f"estilo diferente no {lugar}")
             raise FalhaDeConferencia(f"imagem diferente no {lugar}")

@@ -722,9 +722,8 @@ def materializar(doc) -> None:
     mesmos ids.
     """
     from editdoc.modelo.documento import TIPOS_DE_FAIXA, Tabela
-    historias = [doc.paragrafos]
-    for faixas in (doc.cabecalhos, doc.rodapes):
-        historias.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
+    from editdoc.modelo.documento import historias_de_faixa
+    historias = [doc.paragrafos] + historias_de_faixa(doc)
     precisa = []
 
     def coletar(blocos, grupos):
@@ -782,9 +781,8 @@ def _so_tipo(p, doc) -> bool:
 
 def _precisa_materializar(doc) -> bool:
     from editdoc.modelo.documento import TIPOS_DE_FAIXA, paragrafos_de
-    historias = [doc.paragrafos]
-    for faixas in (doc.cabecalhos, doc.rodapes):
-        historias.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
+    from editdoc.modelo.documento import historias_de_faixa
+    historias = [doc.paragrafos] + historias_de_faixa(doc)
     return any(_so_tipo(p, doc) for blocos in historias for p in paragrafos_de(blocos))
 
 
@@ -805,9 +803,8 @@ def tipos_dos_paragrafos(doc) -> None:
     """Preenche `Paragrafo.numeracao` (o tipo, fora da comparacao) a partir da lista efetiva."""
     from editdoc.modelo.documento import TIPOS_DE_FAIXA, paragrafos_de
     cat = getattr(doc, "numeracao", None)
-    historias = [doc.paragrafos]
-    for faixas in (doc.cabecalhos, doc.rodapes):
-        historias.extend(faixas[t] for t in TIPOS_DE_FAIXA if t in faixas)
+    from editdoc.modelo.documento import historias_de_faixa
+    historias = [doc.paragrafos] + historias_de_faixa(doc)
     for blocos in historias:
         for p in paragrafos_de(blocos):
             efetiva = lista_efetiva(p.lista, p.lista_nivel, p.estilo, doc.estilos, cat)

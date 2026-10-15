@@ -27,6 +27,10 @@ junto com o passo do usuario, e o documento volta ao estado de antes, ja' ajusta
 de uma nota, o primeiro toque cria um passo no corpo (a "sessao") e os ajustes e o conteudo
 final entram nele: no corpo, um desfazer devolve a nota e os espacadores de antes.
 
+Secoes (0.1.12): a pagina k do QTextDocument continua sendo [k*hb, (k+1)*hb), com hb a maior
+altura de corpo entre as secoes; numa secao mais baixa o corpo termina antes (`_pe`), e o mesmo
+espacador empurra o bloco que passa dele, com ou sem notas na pagina.
+
 Distribuicao: depois de cada pagina conferida, as notas dela (e o que continuou da anterior)
 vao para a area de baixo: separador curto, notas inteiras ou cortadas numa linha; o que nao
 cabe continua na pagina seguinte, depois do separador de continuacao (largura toda). As notas
@@ -215,6 +219,8 @@ class ConjuntoDeNotas:
         self._aplicando = False
         #: nota em edicao: (NotaQt, chave antiga, ja' tem passo no corpo)
         self.sessao: dict | None = None
+        #: ha' espacador no corpo (0.1.12: as secoes baixas tambem empurram blocos)
+        self._espacadores_vivos = False
         #: contagem de ajustes (os testes de desempenho conferem)
         self.ajustes = 0
         self._juntar_ajuste = False
@@ -233,7 +239,14 @@ class ConjuntoDeNotas:
         return self.layout.doc.defaultFont()
 
     def _largura(self) -> float:
-        return float(self.layout.pagina.corpo_largura_tw())
+        return float(self.layout.largura_das_notas())
+
+    def _pe(self, k: int, hb: float) -> float:
+        """Onde o corpo da pagina k termina (0.1.12: a secao da pagina pode ser mais baixa)."""
+        return k * hb + self.layout.altura_do_corpo(k)
+
+    def _curta(self, k: int, hb: float) -> bool:
+        return self._pe(k, hb) < (k + 1) * hb - FOLGA
 
     def doc_de(self, nota: mod_notas.Nota) -> NotaQt:
         k = pq.chave(nota)
@@ -478,7 +491,8 @@ class ConjuntoDeNotas:
     def assinatura(self) -> tuple:
         doc = self.layout.doc
         return (doc.revision(), pq.assinatura(doc), self.layout.hb,
-                self.layout.pagina.corpo_largura_tw(), doc.pageCount(),
+                self.layout.largura_das_notas(), doc.pageCount(),
+                self.layout.geracao_das_secoes(),
                 tuple((d.serie, d.doc.revision()) for d in self._docs.values()))
 
     def ativo(self) -> bool:
@@ -487,7 +501,8 @@ class ConjuntoDeNotas:
         desfazer que tira a ultima nota tira os espacadores junto): o plano nao roda (o arquivo
         do Word com so' as separadoras nao paga nada por tecla)."""
         return not (pq.catalogo(self.layout.doc).vazia() and not self.paginas
-                    and not self.extras)
+                    and not self.extras and not self.layout.secoes_baixas()
+                    and not self._espacadores_vivos)
 
     def atualizar(self, forcar: bool = False) -> bool:
         """Confere os espacadores, os numeros e a distribuicao das notas. True se a tela muda
@@ -505,7 +520,8 @@ class ConjuntoDeNotas:
         # ficam como estavam; a conferencia comeca na pagina de antes da edicao.
         desde = 0
         velha = self._assinatura
-        if not forcar and velha is not None and self._desde is not None and                 velha[1:4] == assinatura[1:4] and velha[5] == assinatura[5]:
+        if not forcar and velha is not None and self._desde is not None and \
+                velha[1:4] == assinatura[1:4] and velha[5:] == assinatura[5:]:
             bloco = doc.findBlock(min(self._desde, doc.characterCount() - 1))
             topo = doc.documentLayout().blockBoundingRect(bloco).top()
             desde = max(0, math.floor(topo / self.layout.hb) - 1)
@@ -552,8 +568,10 @@ class ConjuntoDeNotas:
         hb = self.layout.hb
         sep = self._altura_separador()
         med = self._medir(cat, hb)
-        if med.por_pagina or any(u.espacador() for u in med.unidades):
+        baixas = self.layout.secoes_baixas()
+        if med.por_pagina or baixas or any(u.espacador() for u in med.unidades):
             med = self._espacadores(med, sep, hb, cat, desde)
+        self._espacadores_vivos = any(u.espacador() for u in med.unidades)
         paginas_refs = {(m.tipo, m.id): math.floor(t / hb + 1e-6) for m, t, _b in med.refs}
         props = {t: cat.propriedades(t) for t in mod_notas.TIPOS}
         numeros = mod_notas.numeros([(m.tipo, m.id, m.personalizada) for m, _t, _b in med.refs],
@@ -637,7 +655,7 @@ class ConjuntoDeNotas:
             self.conferidas += 1
             tem_nota = k in med.por_pagina or continuacao > 0
             proxima = self._espacador_da_pagina(med, k, hb)
-            if tem_nota or proxima is not None:
+            if tem_nota or proxima is not None or self._curta(k, hb):
                 mudou = self._conferir_pagina(k, med, sep, hb, continuacao,
                                               tentativas.get(k, 0) < MAX_MUDANCAS_POR_PAGINA)
                 if mudou:
@@ -681,14 +699,129 @@ class ConjuntoDeNotas:
         reserva += inteiras + sum(docs[c].primeira_linha() for c in da_linha)
         return base + reserva <= pe + FOLGA
 
+    # -- linha de tabela empurrada (0.1.12) -------------------------------------------------------
+    @staticmethod
+    def _celulas_da_linha(tabela, r: int) -> list:
+        return [tabela.cellAt(r, c) for c in range(tabela.columns())
+                if tabela.cellAt(r, c).row() == r and tabela.cellAt(r, c).column() == c]
+
+    def _topo_da_linha(self, tabela, r: int) -> float:
+        """Topo da linha r da tabela (o do primeiro bloco das celulas dela)."""
+        dl = self.layout.doc.documentLayout()
+        topos = [dl.blockBoundingRect(c.firstCursorPosition().block()).top()
+                 for c in self._celulas_da_linha(tabela, r)]
+        return min(topos) if topos else dl.frameBoundingRect(tabela).top()
+
+    def _base_da_linha(self, tabela, r: int) -> float:
+        dl = self.layout.doc.documentLayout()
+        bases = [dl.blockBoundingRect(c.lastCursorPosition().block()).bottom()
+                 for c in self._celulas_da_linha(tabela, r)]
+        return max(bases) if bases else dl.frameBoundingRect(tabela).bottom()
+
+    @staticmethod
+    def _empurrao(cel) -> tuple[float, float] | None:
+        """(acolchoamento de baixo original, acrescimo) em px96 da celula empurrada, ou None."""
+        valor = cel.format().property(pq.PROP_LINHA_EMPURRADA)
+        if isinstance(valor, str) and ";" in valor:
+            try:
+                original, extra = (float(x) for x in valor.split(";"))
+                return original, extra
+            except ValueError:
+                return None
+        return None
+
+    def _definir_empurrao(self, tabela, r: int, extra_px: float) -> None:
+        """Acolchoamento de baixo nas celulas da linha r (a linha seguinte desce para a pagina
+        seguinte); extra 0 tira. Um ajuste anotado no desfazer, como o espacador."""
+        def aplicar(_c) -> None:
+            for cel in self._celulas_da_linha(tabela, r):
+                fmt = cel.format().toTableCellFormat()
+                atual = self._empurrao(cel)
+                original = atual[0] if atual is not None else fmt.bottomPadding()
+                if extra_px > 0.01:
+                    fmt.setBottomPadding(original + extra_px)
+                    fmt.setProperty(pq.PROP_LINHA_EMPURRADA, f"{original};{extra_px}")
+                else:
+                    fmt.setBottomPadding(original)
+                    fmt.clearProperty(pq.PROP_LINHA_EMPURRADA)
+                cel.setFormat(fmt)
+        self.ajustar(aplicar)
+
+    def _linhas_empurradas(self, k: int, med, hb: float) -> bool:
+        """Conferencia das linhas de tabela empurradas na pagina k de uma secao mais baixa:
+        a linha seguinte que ja' caberia volta; o acrescimo que ficou errado (o texto de cima
+        mudou) e' refeito. True se mudou."""
+        pe = self._pe(k, hb)
+        alvo = (k + 1) * hb - 2.0
+        for u in med.unidades:
+            if u.tabela is None or u.topo >= (k + 1) * hb or u.base <= k * hb:
+                continue
+            t = u.tabela
+            for r in range(t.rows() - 1):
+                cels = self._celulas_da_linha(t, r)
+                marcas = [m for m in (self._empurrao(c) for c in cels) if m is not None]
+                if not marcas:
+                    continue
+                topo = self._topo_da_linha(t, r)
+                if not (k * hb - FOLGA <= topo < (k + 1) * hb):
+                    continue
+                extra_tw = marcas[0][1] * 15.0
+                atual_tw = (cels[0].format().toTableCellFormat().bottomPadding()
+                            - marcas[0][0]) * 15.0
+                if atual_tw <= 0.5:
+                    self._definir_empurrao(t, r, 0.0)  # a grade foi refeita: sem acrescimo
+                    return True
+                seguinte_topo = self._topo_da_linha(t, r + 1)
+                altura = self._base_da_linha(t, r + 1) - seguinte_topo
+                base_natural = self._base_da_linha(t, r) + (seguinte_topo - self._base_da_linha(t, r)) - extra_tw
+                if base_natural + altura <= pe + FOLGA:
+                    self._definir_empurrao(t, r, 0.0)
+                    return True
+                base_com = seguinte_topo
+                if abs(base_com - alvo) > 1.5 and math.floor(seguinte_topo / hb) == k:
+                    novo = extra_tw + (alvo - base_com)
+                    self._definir_empurrao(t, r, max(0.0, novo) / 15.0)
+                    return True
+        return False
+
+    def _empurrar_linha(self, u, k: int, hb: float, t_falha: float) -> bool:
+        """A linha da tabela `u` com a linha de texto que passa do pe' (topo `t_falha`) desce
+        para a pagina seguinte: acolchoamento de baixo na linha de antes (0.1.12, secao mais
+        baixa; a tabela que comecou antes nao pode descer inteira). True se mudou."""
+        tabela = u.tabela
+        if tabela is None:
+            return False
+        linha = None
+        for r in range(tabela.rows()):
+            if self._topo_da_linha(tabela, r) <= t_falha + FOLGA:
+                linha = r
+            else:
+                break
+        if linha is None or linha == 0:
+            return False
+        anterior = linha - 1
+        if self._topo_da_linha(tabela, anterior) < k * hb - FOLGA:
+            return False  # a linha de cima comecou na pagina anterior: linha mais alta que a pagina
+        if any(self._empurrao(c) is not None for c in self._celulas_da_linha(tabela, anterior)):
+            return False
+        alvo = (k + 1) * hb - 2.0
+        base = self._topo_da_linha(tabela, linha)
+        extra = alvo - base
+        if extra <= 0.5:
+            return False
+        self._definir_empurrao(tabela, anterior, extra / 15.0)
+        return True
+
     def _conferir_pagina(self, k, med, sep, hb, continuacao, pode_mudar: bool) -> bool:
         """Espacador da pagina k em dia. True se mudou (o layout muda; medir de novo)."""
         if not pode_mudar:
             return False
-        pe = (k + 1) * hb
+        if self._curta(k, hb) and self._linhas_empurradas(k, med, hb):
+            return True
+        pe = self._pe(k, hb)
         docs = med.docs
         linhas = self._linhas_da_pagina(med, k, hb)
-        continuacao = min(continuacao, hb / 2)
+        continuacao = min(continuacao, (pe - k * hb) / 2)
         inteiras = 0.0
         falha = None
         for i, (t, b, u) in enumerate(linhas):
@@ -702,6 +835,10 @@ class ConjuntoDeNotas:
             u = linhas[falha][2]
             empurravel = (u is not linhas[0][2] and u.topo >= k * hb - FOLGA
                           and not u.quebra_do_usuario())
+            if not empurravel and u.tabela is not None and self._curta(k, hb):
+                # Secao mais baixa (0.1.12): a tabela que nao pode descer inteira desce a partir
+                # da linha que passa do pe'.
+                return self._empurrar_linha(u, k, hb, linhas[falha][0])
             if not empurravel or u is atual:
                 return False
             if atual is not None:
@@ -723,7 +860,8 @@ class ConjuntoDeNotas:
                 return False
         else:
             for t, b in self._linhas(atual):
-                if t - delta >= pe - FOLGA:
+                # 0.1.12: o Qt poe linhas ate' o fim da pagina (nao so' ate' o pe' da secao baixa).
+                if t - delta >= (k + 1) * hb - FOLGA:
                     break
                 da_linha = self._notas_da_linha(med, k2, t, b)
                 if not self._cabe(b - delta, pe, continuacao, sep, inteiras, da_linha, docs):
@@ -734,7 +872,7 @@ class ConjuntoDeNotas:
 
     def _continua(self, k, med, sep, hb, continuacao) -> float:
         """Altura das notas de rodape da pagina k (e da continuacao) que nao couberam."""
-        pe = (k + 1) * hb
+        pe = self._pe(k, hb)
         fim_corpo = self._fim_do_corpo(med, k, hb)
         vistos = set()
         total = continuacao
@@ -761,7 +899,7 @@ class ConjuntoDeNotas:
             if u.tabela is not None:
                 fmt = u.tabela.format()
                 if ligar:
-                    fmt.setPageBreakPolicy(_QUEBRA)
+                    fmt.setPageBreakPolicy(fmt.pageBreakPolicy() | _QUEBRA)
                     fmt.setProperty(pq.PROP_QUEBRA_NOTA, True)
                 else:
                     fmt = pq.sem_espacador(fmt)
@@ -770,7 +908,8 @@ class ConjuntoDeNotas:
                 c.setPosition(u.bloco.position())
                 fmt = u.bloco.blockFormat()
                 if ligar:
-                    fmt.setPageBreakPolicy(_QUEBRA)
+                    # A quebra derivada da secao (0.1.12, depois do paragrafo) continua.
+                    fmt.setPageBreakPolicy(fmt.pageBreakPolicy() | _QUEBRA)
                     fmt.setProperty(pq.PROP_QUEBRA_NOTA, True)
                 else:
                     fmt = pq.sem_espacador(fmt)
@@ -787,6 +926,36 @@ class ConjuntoDeNotas:
             self.indice = n
             self._juntar_ajuste = True
 
+    def ajustar(self, aplicar) -> None:
+        """Ajuste de formato que nao e' do usuario, feito por outro plano (as quebras e os recuos
+        derivados das secoes, 0.1.12): o mesmo passo anotado do espacador. `aplicar(cursor)`
+        muda os formatos com o cursor dado, dentro do bloco de edicao."""
+        doc = self.layout.doc
+        sessao = self.sessao is not None and self.sessao.get("passo")
+        self._aplicando = True
+        try:
+            c = QTextCursor(doc)
+            if sessao or self._juntar_ajuste:
+                c.joinPreviousEditBlock()
+            else:
+                c.beginEditBlock()
+            aplicar(c)
+            c.endEditBlock()
+        finally:
+            self._aplicando = False
+        self.ajustes += 1
+        if not sessao:
+            n = doc.availableUndoSteps()
+            if self._juntar_ajuste:
+                self.passos.discard(self.indice)
+            self.passos.add(n)
+            self.indice = n
+            self._juntar_ajuste = True
+
+    def separar_ajustes(self) -> None:
+        """O proximo ajuste comeca um passo anotado novo (fim de uma conferencia)."""
+        self._juntar_ajuste = False
+
     # -- distribuicao -------------------------------------------------------------------------
     def _distribuir(self, med, sep, hb, props) -> None:
         qt_paginas = max(1, self.layout.doc.pageCount())
@@ -796,7 +965,7 @@ class ConjuntoDeNotas:
         for k in range(qt_paginas):
             if k not in med.por_pagina and not pendentes:
                 continue
-            pe = (k + 1) * hb
+            pe = self._pe(k, hb)
             fim_corpo = self._fim_do_corpo(med, k, hb)
             proprias = []
             for m, _t, _b in med.por_pagina.get(k, ()):
@@ -820,7 +989,7 @@ class ConjuntoDeNotas:
         if fila_fim:
             k = qt_paginas - 1
             fim_corpo = self._fim_do_corpo(med, k, hb)
-            topo_rodape = min((f.y for f in paginas.get(k, [])), default=(k + 1) * hb)
+            topo_rodape = min((f.y for f in paginas.get(k, [])), default=self._pe(k, hb))
             fatias_fim, fila_fim = self._encher_fim(fila_fim, topo_rodape - fim_corpo, sep, False)
             if fatias_fim:
                 self._posicionar(fatias_fim, fim_corpo)
@@ -829,14 +998,15 @@ class ConjuntoDeNotas:
         extras = 0
         while (pendentes or fila_fim) and extras < MAX_EXTRAS:
             n = qt_paginas + extras
-            topo, pe = n * hb, (n + 1) * hb
-            fatias, pendentes = self._encher(pendentes, [], hb, sep)
+            topo, pe = n * hb, self._pe(n, hb)
+            util = pe - topo
+            fatias, pendentes = self._encher(pendentes, [], util, sep)
             usado = sum(f.altura for f in fatias)
             if fatias:
                 self._posicionar(fatias, pe - usado)
             fatias_fim = []
             if fila_fim:
-                fatias_fim, fila_fim = self._encher_fim(fila_fim, hb - usado, sep, continuar_fim)
+                fatias_fim, fila_fim = self._encher_fim(fila_fim, util - usado, sep, continuar_fim)
                 if fatias_fim:
                     continuar_fim = True
                     self._posicionar(fatias_fim, topo)
@@ -956,6 +1126,69 @@ def _paleta():
         PALETA.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
         PALETA.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 215))
     return PALETA
+
+
+def fechar_linhas_empurradas(painter, doc, recorte) -> None:
+    """A linha de tabela com acolchoamento a mais (0.1.12, a seguinte desceu de pagina numa
+    secao mais baixa) termina, na folha, onde o texto dela termina: o acolchoamento e' coberto
+    de branco e ganha a borda de baixo, como o Word desenha a tabela partida. Coordenadas do
+    documento, no pintor ja' transformado e recortado no corpo da folha."""
+    if not getattr(doc, "_tem_linhas_empurradas", True):
+        return
+    from PySide6.QtGui import QTextTable
+    from editdoc.ponte_qt.para_qt import bordas_da_tabela_em
+    from editdoc.modelo.unidades import px_de_oitavos_pt
+    dl = doc.documentLayout()
+    achou = False
+    it = doc.rootFrame().begin()
+    while not it.atEnd():
+        tabela = it.currentFrame()
+        it += 1
+        if not isinstance(tabela, QTextTable):
+            continue
+        quadro = dl.frameBoundingRect(tabela)
+        if recorte is not None and not quadro.intersects(recorte):
+            continue
+        for r in range(tabela.rows() - 1):
+            cel = tabela.cellAt(r, 0)
+            valor = cel.format().property(pq.PROP_LINHA_EMPURRADA)
+            if not (isinstance(valor, str) and ";" in valor):
+                continue
+            achou = True
+            try:
+                original = float(valor.split(";")[0]) * 15.0
+            except ValueError:
+                continue
+            # A base natural da linha: o fim do texto das celulas mais o acolchoamento de antes.
+            base, esquerda, direita = 0.0, math.inf, -math.inf
+            for c in range(tabela.columns()):
+                celula = tabela.cellAt(r, c)
+                if celula.row() != r or celula.column() != c:
+                    continue
+                fmt = celula.format().toTableCellFormat()
+                fim = dl.blockBoundingRect(celula.lastCursorPosition().block())
+                ini = dl.blockBoundingRect(celula.firstCursorPosition().block())
+                base = max(base, fim.bottom() + original)
+                esquerda = min(esquerda, ini.left() - fmt.leftPadding() * 15.0)
+                direita = max(direita, ini.right() + fmt.rightPadding() * 15.0)
+            if base <= 0 or esquerda > direita:
+                continue
+            borda = bordas_da_tabela_em(tabela.format()).horizontal
+            largura = px_de_oitavos_pt(borda.oitavos_pt) * 15.0 if borda is not None else 10.0
+            painter.fillRect(QRectF(esquerda - largura, base + largura / 2,
+                                    direita - esquerda + 2 * largura, quadro.bottom() - base),
+                             QColor(255, 255, 255))
+            quadro = QRectF(esquerda, quadro.top(), direita - esquerda, quadro.height())
+            if borda is not None and borda.estilo != "nenhuma":
+                caneta = QPen(QColor("#" + borda.cor_hex) if borda.cor_hex else QColor(0, 0, 0))
+                caneta.setWidthF(largura)
+                painter.setPen(caneta)
+                painter.drawLine(QPointF(quadro.left(), base), QPointF(quadro.right(), base))
+    if not achou:
+        try:
+            doc._tem_linhas_empurradas = bool(getattr(doc, "_secoes", None))
+        except AttributeError:
+            pass
 
 
 def desenhar_notas(painter, layout, n: int, transf, editada: NotaQt | None = None,

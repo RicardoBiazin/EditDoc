@@ -28,6 +28,11 @@ ao arquivo e se editam: NOTA so' aparece para a nota que nao pode ser lida (sem 
 corpo, referencia no cabecalho, no rodape ou numa caixa de texto, danificada, acima dos
 limites).
 
+Desde a 0.1.12 as secoes (cada w:sectPr, com papel, margens, cabecalhos, numeracao, colunas e o
+resto) voltam ao arquivo: SECAO so' aparece acima do limite de secoes ou para quebra de secao
+fora do corpo; PAGINA e CABECALHO_SECAO deixaram de existir. COLUNAS e NUMERO_PAGINA sao sem
+perda (preservados, mostrados em uma coluna e em decimal).
+
 Desde a 0.1.3, hiperlinks, campos (DATE, REF, TOC...), marcadores e as partes do pacote
 que o EditDoc nao edita (custom.xml, customXml, fontTable, webSettings, settings.xml) voltam
 ao arquivo: HIPERLINK, CAMPO e PARTE_PERDIDA so' aparecem para o que nao pode voltar
@@ -142,16 +147,12 @@ CATALOGO: dict[str, tuple] = {
                   "sai do arquivo ao salvar.",
         True),
     "QUEBRA_DE_PAGINA": (
-        lambda n: f"{n} {_plural(n, 'quebra de coluna não é preservada', 'quebras de coluna não são preservadas')} "
+        lambda n: f"{n} {_plural(n, 'quebra de tipo desconhecido não é preservada', 'quebras de tipo desconhecido não são preservadas')} "
                   "ao salvar.",
         True),
     "CABECALHO_RODAPE": (
         lambda n: f"{n} {_plural(n, 'cabeçalho ou rodapé não pôde ser lido', 'cabeçalhos ou rodapés não puderam ser lidos')} "
                   "(parte ausente, de tipo errado ou danificada) e sai do arquivo ao salvar.",
-        True),
-    "CABECALHO_SECAO": (
-        lambda n: "O documento tem seções com cabeçalho ou rodapé próprios. O EditDoc mantém "
-                  "só os da última seção, que passam a valer para o documento inteiro.",
         True),
     "CABECALHO_GRANDE": (
         lambda n: f"{n} {_plural(n, 'cabeçalho ou rodapé é grande demais', 'cabeçalhos ou rodapés são grandes demais')} "
@@ -159,16 +160,17 @@ CATALOGO: dict[str, tuple] = {
         True),
     "NUMERO_PAGINA": (
         lambda n: "O formato ou o número inicial da numeração de páginas não é mostrado pelo "
-                  "EditDoc. A numeração sai como 1, 2, 3 ao salvar.",
-        True),
+                  "EditDoc (aparece como 1, 2, 3). Ele é preservado no arquivo ao salvar.",
+        False),
     "SECAO": (
-        lambda n: f"{n} {_plural(n, 'quebra de seção não é preservada', 'quebras de seção não são preservadas')}. "
-                  "O arquivo sai com uma única seção.",
+        lambda n: f"{n} {_plural(n, 'quebra de seção não é preservada', 'quebras de seção não são preservadas')} "
+                  "(fora do corpo do documento ou acima do limite de seções do EditDoc). O texto "
+                  "fica na seção seguinte.",
         True),
-    "PAGINA": (
-        lambda n: "O arquivo tem mais de uma seção. Cada seção tem o seu papel e as suas margens, "
-                  "e o EditDoc mantém só as da última seção. O arquivo sai com uma única seção.",
-        True),
+    "COLUNAS": (
+        lambda n: f"{n} {_plural(n, 'seção tem', 'seções têm')} texto em colunas. As colunas são "
+                  "preservadas no arquivo, mas aparecem em uma coluna só no EditDoc.",
+        False),
     "PAPEL_INVALIDO": (
         lambda n: "O papel ou as margens do arquivo não cabem numa página útil. "
                   "O arquivo sai com o papel A4 e as margens padrão.",

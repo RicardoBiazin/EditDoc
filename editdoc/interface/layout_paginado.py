@@ -37,6 +37,11 @@ paginas a mais (so' notas, depois do texto) entram em `numero_paginas`.
 
 Campos no corpo: o contexto (`contexto_campos`) diz o total de paginas e a altura do
 corpo; quando o total muda, os campos sao medidos de novo (`atualizar_campos`).
+
+Secoes (0.1.12): `secoes` (interface/secoes.py). Com mais de uma secao, cada folha tem o papel,
+as margens, a altura do corpo, os cabecalhos e a numeracao da secao dela (`efetiva_da`,
+`pagina_da_folha`, `faixa_da_folha`); o QTextDocument pagina na maior altura de corpo (`hb`) e
+na maior largura. Com uma secao so', tudo segue o caminho de antes.
 """
 
 from __future__ import annotations
@@ -119,6 +124,11 @@ class LayoutPaginado:
         self._chave_campos: tuple | None = None
         from editdoc.interface.notas import ConjuntoDeNotas
         self.notas = ConjuntoDeNotas(self)
+        # Secoes (0.1.12): cada folha com o papel, os cabecalhos e o numero da secao dela.
+        from editdoc.interface.secoes import ConjuntoDeSecoes
+        self.faixas.layout = self
+        self.secoes = ConjuntoDeSecoes(self)
+        self._hb_qt = float(pagina.corpo_altura_tw())
         self._aplicar()
         # Ajustar fonte e margem marca o documento como alterado. Um documento novo nasce limpo.
         self.doc.setModified(False)
@@ -133,23 +143,154 @@ class LayoutPaginado:
         self.faixas.definir_fonte(fonte)
         self.notas.definir_fonte(fonte)
 
+    def _multiplas(self) -> bool:
+        secoes = getattr(self, "secoes", None)
+        return secoes is not None and secoes.multiplas()
+
     def _aplicar(self) -> None:
-        self.doc.setPageSize(QSizeF(self.pagina.corpo_largura_tw(),
-                                    self.pagina.corpo_altura_tw()))
+        if self._multiplas():
+            largura, altura = self.secoes.dimensoes()
+        else:
+            largura, altura = (float(self.pagina.corpo_largura_tw()),
+                               float(self.pagina.corpo_altura_tw()))
+        self._hb_qt = float(altura)
+        tamanho = QSizeF(largura, altura)
+        if self.doc.pageSize() != tamanho:
+            self.doc.setPageSize(tamanho)
         self.contexto_campos.hb = self.hb
         self.contexto_campos.pagina = self.pagina_arquivo
+        self.contexto_campos.secoes = self.campos_da_folha if self._multiplas() else None
         self._chave_campos = None
         ctx = self.flutuantes.contexto
         ctx.pagina, ctx.efetiva, ctx.hb = self.pagina_arquivo, self.pagina, self.hb
         ctx.topos = self.topos()
+        ctx.folhas = self._folha_para_flutuantes if self._multiplas() else None
+        ctx.geracao = self.geracao_das_secoes()
+
+    def aplicar_dimensoes(self) -> None:
+        """A geometria das secoes mudou (0.1.12): largura e altura do QTextDocument de novo."""
+        self._efetivas = {}
+        self._aplicar()
+
+    def geracao_das_secoes(self) -> int:
+        secoes = getattr(self, "secoes", None)
+        return secoes.geracao if secoes is not None else 0
+
+    def _folha_para_flutuantes(self, n: int) -> tuple[Pagina, Pagina]:
+        return self.pagina_da_folha(n), self.efetiva_da(n)
+
+    def atualizar_secoes(self, forcar: bool = False) -> bool:
+        """Secoes em dia (0.1.12): estrutura, geometria, quebras derivadas e o mapa de folhas.
+        True se a tela muda (quem pinta limpa o cache)."""
+        mudou = self.secoes.atualizar(forcar)
+        ctx = self.flutuantes.contexto
+        ctx.folhas = self._folha_para_flutuantes if self._multiplas() else None
+        if ctx.geracao != self.geracao_das_secoes():
+            ctx.geracao = self.geracao_das_secoes()
+            mudou = True
+        if mudou:
+            self._chave_campos = None
+            self.contexto_campos.secoes = self.campos_da_folha if self._multiplas() else None
+        return mudou
+
+    def campos_da_folha(self, n: int):
+        """(indice na secao, pagina numerada, paginas da secao) da folha n (0.1.12)."""
+        return self.secoes.campos_da_folha(n)
+
+    def secao_da_folha(self, n: int) -> int:
+        return self.secoes.secao_da_folha(n) if self._multiplas() else 0
+
+    def pagina_da_folha(self, n: int) -> Pagina:
+        """O papel e as margens do arquivo da secao da folha n (0.1.12)."""
+        if self._multiplas():
+            return self.secoes.info_da_folha(n).pagina
+        return self.pagina_arquivo
+
+    def tipo_da_folha(self, n: int) -> str:
+        """Qual variante de cabecalho vale na folha n: primeira, par ou padrao."""
+        if self._multiplas():
+            return self.secoes.tipo_da_folha(n)
+        return tipo_da_pagina(max(0, int(n)), self.pagina_arquivo)
+
+    def faixa_da_folha(self, onde: str, n: int, criar: bool = False):
+        """A variante de cabecalho (ou rodape) da folha n, com a heranca entre secoes."""
+        if not self._multiplas():
+            return self.faixas.obter(onde, tipo_da_pagina(max(0, int(n)), self.pagina_arquivo),
+                                     criar=criar)
+        indice = self.secoes.secao_da_folha(n)
+        tipo = self.secoes.tipo_da_folha(n)
+        achada = self.secoes.faixa_efetiva(indice, onde, tipo)
+        if achada is not None:
+            return achada[1]
+        return self.faixas.obter(onde, tipo, criar=True, secao=indice) if criar else None
+
+    def preparar_faixa(self, faixa, n: int, total: int) -> None:
+        """A variante pronta para a folha n: largura do corpo da secao (0.1.12) e campos com o
+        numero da folha (com a numeracao da secao)."""
+        if self._multiplas():
+            faixa.definir_largura(self.efetiva_da(n).corpo_largura_tw())
+            faixa.contexto.secoes = self.campos_da_folha
+        else:
+            faixa.contexto.secoes = None
+        faixa.preparar(n, total, self.pagina_da_folha(n))
+
+    def chave_de_campos_da_folha(self, n: int):
+        """O que muda os campos da faixa na folha n (para chave de cache: sem a Pagina)."""
+        if not self._multiplas():
+            return None
+        indice, pagina, paginas = self.campos_da_folha(n)
+        return (indice, pagina.numero_inicial, pagina.formato_numero, paginas,
+                self.secao_da_folha(n))
+
+    def vinculada(self, secao: int, onde: str, tipo: str) -> bool:
+        """A secao usa o cabecalho (ou rodape) `tipo` da anterior ("Vincular ao anterior")."""
+        if secao <= 0:
+            return False
+        secoes = self.secoes.secoes_atuais()
+        if secao >= len(secoes):
+            return False
+        propria = secoes[secao].chaves.get((onde, tipo))
+        if propria is None:
+            return True
+        anterior = self.secoes.faixa_efetiva(secao - 1, onde, tipo, secoes)
+        return anterior is not None and anterior[1].ident == propria
+
+    def altura_do_corpo(self, n: int) -> float:
+        """Altura do corpo da folha n (0.1.12: a secao pode ser mais baixa que `hb`)."""
+        if self._multiplas():
+            return float(self.secoes.efetiva_da(n).corpo_altura_tw())
+        return self.hb
+
+    def secoes_baixas(self) -> bool:
+        return self._multiplas() and self.secoes.baixa()
+
+    def largura_das_notas(self) -> float:
+        """Largura das notas de rodape: a do corpo (com secoes, a menor)."""
+        if self._multiplas():
+            return min(info.largura for info in self.secoes.lista)
+        return float(self.pagina.corpo_largura_tw())
 
     def definir_pagina(self, pagina: Pagina) -> None:
-        """Troca papel ou margens: o documento e' refeito para o novo corpo."""
+        """Troca papel ou margens (da ultima secao, a unica num documento de uma secao): o
+        documento e' refeito para o novo corpo."""
         self.pagina_arquivo = pagina
         self.faixas.definir_largura(pagina.corpo_largura_tw())
-        self.notas.definir_largura(pagina.corpo_largura_tw())
         self.pagina = self._efetiva()
         self._topos = self._calcular_topos()
+        self._efetivas = {}
+        self.secoes.calcular(forcar=True)
+        self.notas.definir_largura(self.largura_das_notas())
+        self._aplicar()
+
+    def definir_pagina_da_secao(self, indice: int, pagina: Pagina) -> None:
+        """Papel, orientacao ou margens de uma secao (0.1.12). A ultima e' `definir_pagina`."""
+        secoes = self.secoes.secoes_atuais()
+        if indice >= len(secoes) - 1:
+            self.definir_pagina(pagina)
+            return
+        secoes[indice].pagina = replace(pagina, pares_impares=self.pagina_arquivo.pares_impares)
+        self.secoes.calcular(forcar=True)
+        self.notas.definir_largura(self.largura_das_notas())
         self._efetivas = {}
         self._aplicar()
 
@@ -182,7 +323,9 @@ class LayoutPaginado:
 
     def efetiva_da(self, n: int) -> Pagina:
         """A pagina efetiva da folha n (0.1.8): o topo do corpo pelo cabecalho dela, a mesma
-        altura de corpo (`hb`) em todas."""
+        altura de corpo (`hb`) em todas. Com secoes (0.1.12), a da secao da folha."""
+        if self._multiplas():
+            return self.secoes.efetiva_da(n)
         tipo = tipo_da_pagina(max(0, int(n)), self.pagina_arquivo)
         ef = self._efetivas.get(tipo)
         if ef is None:
@@ -202,6 +345,13 @@ class LayoutPaginado:
 
     def recalcular_margens(self) -> bool:
         """O cabecalho ou o rodape mudou de altura: o corpo desce ou sobe. True se mudou."""
+        if self.secoes.calcular() and self._multiplas():
+            self.secoes.mapear()
+            self.pagina = self._efetiva()
+            self._topos = self._calcular_topos()
+            self._efetivas = {}
+            self._aplicar()
+            return True
         efetiva = self._efetiva()
         topos = None
         if efetiva == self.pagina:
@@ -222,7 +372,10 @@ class LayoutPaginado:
         ctx = self.contexto_campos
         total = self.numero_paginas()
         pagina = self.pagina_arquivo
-        chave = (total, self.hb, pagina.formato_numero, pagina.numero_inicial)
+        chave = (total, self.hb, pagina.formato_numero, pagina.numero_inicial,
+                 self.geracao_das_secoes(),
+                 tuple((i.inicio, i.paginas, i.numero_inicial) for i in self.secoes.lista)
+                 if self._multiplas() else ())
         if chave == self._chave_campos:
             return False
         self._chave_campos = chave
@@ -248,7 +401,10 @@ class LayoutPaginado:
 
     @property
     def hb(self) -> float:
-        """Altura de uma pagina de corpo, em unidades de layout (twips)."""
+        """Altura de uma pagina do QTextDocument, em unidades de layout (twips): a do corpo, ou
+        (0.1.12) a maior altura de corpo entre as secoes."""
+        if self._multiplas():
+            return self._hb_qt
         return float(self.pagina.corpo_altura_tw())
 
     def numero_paginas(self) -> int:
