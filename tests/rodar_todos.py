@@ -110,6 +110,8 @@ SUITES = [
      "0.1.8: topo do corpo pelo cabecalho de cada pagina (primeira, par, impar): tela, PDF, clique e objetos"),
     ("teste_desempenho.py",
      "0.1.8: digitacao num manual pesado: conferencia dos floats, tiles por tecla, caches e p95 do gate"),
+    ("teste_pintura_parcial.py",
+     "0.1.15: a tecla refaz so' a parte da linha nos tiles; igual a' tela refeita, pixel a pixel"),
     ("teste_mover_redimensionar.py",
      "0.1.9: mover e redimensionar objetos (mouse, setas, dialogo), quebra de texto, linha <-> flutuante, cabecalho, VML"),
     ("teste_notas.py",

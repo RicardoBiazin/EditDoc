@@ -76,10 +76,31 @@ de cada item até o layout mudar (`Numerador.faixas`, pelo sinal `update` do lay
 olhava todos os itens. As bordas e tabulações (`propriedades.desenhar`) guardam o que cada bloco
 tem para pintar até o documento mudar.
 
+Desde a 0.1.15 a linha digitada não tira mais tiles inteiros do cache. A faixa da linha
+(`_invalidar_linhas`, e a linha da tabela) anota no tile só a parte velha (`_sujos`, em twips do
+documento, com 150 twips de folga na vertical); na pintura seguinte, antes de copiar os tiles
+visíveis, cada tile com parte velha é pintado de novo num pixmap do tamanho dele, com a mesma
+transformação do tile e o recorte do Qt só em volta das partes (mais 150 twips), e só os pixels
+inteiros das partes são copiados por cima (`CompositionMode_Source`). A origem não pode ser
+deslocada para juntar tiles vizinhos numa pintura só: o Qt arredonda a posição da letra de forma
+diferente para coordenada negativa, e a letra da borda do tile mudava de pixel (medido a 137%). As
+outras invalidações (altura do documento mudou, flutuantes refeitos, números de lista) tiram o
+tile inteiro, como antes. Dois furos que o tile inteiro escondia: a linha que desce de página
+dentro do bloco fica abaixo do `blockBoundingRect` (a faixa usa as linhas, `_extensao`), e o
+número de lista recalculado fora da pintura (a janela pede o rótulo do cursor) não chegava à
+pintura (a vista compara `Numerador.desenho` com o da pintura anterior). A lista dos blocos com
+quebra de página do usuário, que a tela desenha a cada quadro, fica guardada até mudar o número
+de blocos ou chegar uma troca de formato. Medido no plano real (máquina carregada): pintura da
+célula a 1/3 de 15,9 para ~7 ms por tecla; a 1/2, 10,3 → 6,6; no item de lista, 8,9 → 7,1.
+
 O que não dá para tirar daqui: o `insertText` do Qt, num documento paginado, refaz TODAS as
 tabelas que vêm depois do ponto editado, as duas passadas de cada célula (medido e conferido no
 código do Qt 6.11; docs/SPIKES.md, 0.1.14). Num documento com muitas tabelas, digitar no começo
-custa dezenas de milissegundos que não são do EditDoc.
+custa dezenas de milissegundos que não são do EditDoc. O spike da 0.1.15 (docs/SPIKES.md) mediu
+que isso acontece mesmo quando a altura do bloco não muda, e que nenhuma saída de baixo risco
+corta a cascata: o layout preguiçoso do Qt só entra pelo layout inteiro e anda 1000 caracteres por
+tecla; colapso de bordas e formato de célula valem um terço e mudariam a aparência; layout próprio
+para tabelas ou um documento por trecho seriam reescritas do layout, da paginação e da edição.
 
 Quebra de página: um atributo do parágrafo (`quebra_antes`). No `.docx` é `w:br w:type="page"` no
 começo do parágrafo. Quebra no meio do texto, ao ler, vira dois parágrafos: é a única perda de

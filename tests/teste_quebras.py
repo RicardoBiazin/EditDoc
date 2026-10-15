@@ -132,6 +132,49 @@ def testar_tela() -> None:
     cor = COR_QUEBRA.rgb() & 0xFFFFFF
     n = _contar_cor(img, cor)
     checa(n > 20, f"a linha 'Quebra de pagina' aparece na tela ({n} pixels)")
+    # 0.1.15: a lista dos blocos com quebra fica guardada enquanto se digita, e uma troca de
+    # formato (a quebra tirada) a refaz.
+    guardada = painel._quebras
+    for _ in range(5):
+        QTest.keyClick(painel, Qt.Key.Key_X)
+        painel.viewport().grab()
+    checa(painel._quebras is guardada, "digitar nao refaz a lista dos blocos com quebra")
+    from PySide6.QtGui import QTextCursor, QTextFormat
+
+    def tirar_quebra(p):
+        doc = p.document()
+        bloco = next(b for b in _blocos(doc) if b.blockFormat().pageBreakPolicy() == painel_quebra())
+        c = QTextCursor(bloco)
+        bf = bloco.blockFormat()
+        bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_Auto)
+        c.setBlockFormat(bf)
+
+    tirar_quebra(painel)
+    n = _contar_cor(painel.viewport().grab().toImage(), cor)
+    checa_igual(n, 0, "tirada a quebra (troca de formato), a linha some")
+    painel.document().undo()
+    checa(_contar_cor(painel.viewport().grab().toImage(), cor) > 20,
+          "desfeita a troca, a linha volta")
+    # Contraprova: sem refazer a lista na troca de formato, a linha velha fica na tela.
+    from editdoc.interface import vista_paginas as vp
+    original = vp.VistaPaginas._mudou_texto
+
+    def sem_invalidar(self, pos, removido, adicionado):
+        guardar = self._quebras
+        original(self, pos, removido, adicionado)
+        self._quebras = guardar
+
+    vp.VistaPaginas._mudou_texto = sem_invalidar
+    painel.document().contentsChange.disconnect(painel._mudou_texto)
+    painel.document().contentsChange.connect(painel._mudou_texto)
+    try:
+        tirar_quebra(painel)
+        n = _contar_cor(painel.viewport().grab().toImage(), cor)
+    finally:
+        vp.VistaPaginas._mudou_texto = original
+        painel.document().contentsChange.disconnect(painel._mudou_texto)
+        painel.document().contentsChange.connect(painel._mudou_texto)
+    checa(n > 20, f"contraprova: sem refazer a lista, a linha velha fica ({n} pixels)")
     painel.document().setModified(False)
     painel.close()
 

@@ -449,6 +449,14 @@ class VistaPaginas(QAbstractScrollArea):
         self._zoom = 1.0
         self._cache: OrderedDict = OrderedDict()
         self._bytes_no_cache = 0
+        #: Partes velhas de tiles que ficam no cache (0.1.15): chave -> [(y0, y1, x0, x1)] em
+        #: twips do documento (x contado da margem esquerda). Na pintura seguinte so' essas partes
+        #: sao refeitas no pixmap guardado (`_repintar_partes`), nao o tile inteiro.
+        self._sujos: dict = {}
+        #: Os numeros de lista da pintura anterior (0.1.15, `_conferir_rotulos`).
+        self._desenho_listas: tuple | None = None
+        #: Blocos com quebra de pagina do usuario (0.1.15, `_blocos_com_quebra`).
+        self._quebras: tuple | None = None
         self._altura_doc_anterior: float | None = None
         self._pendencias: list[tuple] = []
         #: Objetos flutuantes (0.1.7): onde estavam (se algum muda, o cache sai inteiro) e se
@@ -601,6 +609,7 @@ class VistaPaginas(QAbstractScrollArea):
             layout.flutuantes.esquecer_refeitos()
         self._cache.clear()
         self._bytes_no_cache = 0
+        self._sujos.clear()
         self._faixas_pintadas.clear()
         self._bytes_faixas = 0
         self._pendencias = []
@@ -608,11 +617,48 @@ class VistaPaginas(QAbstractScrollArea):
     def _invalidar_faixa(self, y0: float, y1: float, x0: float = -math.inf,
                          x1: float = math.inf) -> None:
         """Tira do cache os tiles que mostram a faixa [y0, y1) do documento (twips) e, desde a
-        0.1.14, so' os que cruzam [x0, x1) na horizontal (a celula editada)."""
+        0.1.14, so' os que cruzam [x0, x1) na horizontal (a celula editada).
+
+        Desde a 0.1.15, so' para a faixa da LINHA digitada (`_invalidar_linhas` e a linha da
+        tabela, que ligam `_so_a_parte`), o tile em que ela cobre uma parte pequena fica no cache
+        com a parte anotada como velha (`_sujos`): a pintura seguinte refaz so' essa parte. A
+        linha digitada cruzava 2 a 4 tiles inteiros (cada um com tabela e numeros de lista: 2 a
+        3 ms). As outras invalidacoes (altura mudou, flutuantes, numeros de lista) continuam
+        tirando o tile inteiro."""
         for chave in [k for k, v in self._cache.items()
                       if v[2] > y0 and v[1] < y1 and v[5] > x0 and v[4] < x1]:
+            _pm, dy0, dy1, _nb, dx0, dx1 = self._cache[chave]
+            if not self._so_a_parte:
+                self._sujos.pop(chave, None)
+                self._bytes_no_cache -= self._cache.pop(chave)[3]
+                continue
+            # Folga vertical: a tinta da letra pode passar da caixa da linha (entrelinha exata,
+            # acento). O tile inteiro escondia esse excesso; a parte refeita tem de cobri-lo.
+            folga = self.FOLGA_VERTICAL_TW
+            parte = (max(y0 - folga, dy0), min(y1 + folga, dy1), max(x0, dx0), min(x1, dx1))
+            partes = self._sujos.get(chave, []) + [parte]
+            area = sum((p[1] - p[0]) * (p[3] - p[2]) for p in partes)
+            if len(partes) <= self.PARTES_POR_TILE and \
+                    area <= self.FRACAO_PARCIAL * (dy1 - dy0) * (dx1 - dx0):
+                self._sujos[chave] = partes
+                continue
+            self._sujos.pop(chave, None)
             nbytes = self._cache.pop(chave)[3]
             self._bytes_no_cache -= nbytes
+
+    #: Ate' quantas partes velhas um tile guarda, e ate' que fracao da area dele, antes de sair
+    #: inteiro do cache (0.1.15).
+    PARTES_POR_TILE = 4
+    FRACAO_PARCIAL = 0.5
+    #: Ligado so' durante a invalidacao da linha digitada (0.1.15, ver `_invalidar_faixa`).
+    _so_a_parte = False
+    #: Folga vertical (twips) da parte refeita, acima e abaixo da faixa: a tinta de 7,5 pt alem
+    #: da caixa da linha (entrelinha exata menor que a letra). Medido no plano: com 300 e 300, a
+    #: pintura da celula a 1/3 media 10,2 ms; com 150 e 150, ~9; sem folga, 7,3 (inseguro).
+    FOLGA_VERTICAL_TW = 150.0
+    #: Folga (twips) do recorte do Qt em volta das partes: a linha vizinha cuja caixa fica fora
+    #: da parte, mas cuja tinta entra nela, tambem e' pintada.
+    FOLGA_DE_CORTE_TW = 150.0
 
     def _mudou_texto(self, pos: int, removido: int, adicionado: int) -> None:
         """Anota a mudanca. A invalidacao e' feita na proxima pintura.
@@ -620,12 +666,17 @@ class VistaPaginas(QAbstractScrollArea):
         Nao se pode ler a altura do documento aqui: no sinal o layout ainda nao foi refeito, e a
         altura lida seria a antiga (medido: a quebra de linha deixava tiles velhos na tela).
         """
+        if removido and adicionado:
+            # Troca de formato (ou texto trocado): a quebra de pagina de um bloco pode ter mudado.
+            # So' inserir ou so' apagar nao muda formato de bloco; bloco a mais ou a menos muda a
+            # chave da lista (0.1.15, `_blocos_com_quebra`).
+            self._quebras = None
         # A base do bloco ANTES da mudanca (o layout ainda e' o velho aqui): uma linha que sai do
         # bloco deixa tinta abaixo da base nova, e a faixa invalidada tem de chegar ate' la'.
         doc = self.layout_pag.doc
         dl = doc.documentLayout()
         r = dl.blockBoundingRect(doc.findBlock(pos))
-        base_antiga = r.bottom()
+        base_antiga = self._extensao(doc.findBlock(pos))[1]
         # Dentro de tabela (0.1.14): o retangulo da tabela e do bloco ANTES da mudanca. Se os dois
         # nao mudam, so' a linha da tabela (ou so' as linhas do texto) sai do cache.
         tabela = self._tabela_externa(pos)
@@ -635,6 +686,22 @@ class VistaPaginas(QAbstractScrollArea):
             antes = (rt.top(), rt.bottom(), r.top(), r.bottom())
         self._pendencias.append((pos, adicionado, base_antiga, antes))
         self.viewport().update()
+
+    def _extensao(self, bloco) -> tuple[float, float]:
+        """(topo, base) do bloco em twips do documento, com as linhas (0.1.15).
+
+        A linha que nao cabe no pe' da pagina desce para a seguinte com um deslocamento dentro
+        do bloco, e o `blockBoundingRect` nao a cobre inteira (medido: a linha do sumario no
+        topo da pagina 2, 210 twips abaixo da base do retangulo). Com o tile inteiro refeito o
+        excesso nao aparecia; com a parte refeita (`_repintar_partes`), sim."""
+        r = self.layout_pag.doc.documentLayout().blockBoundingRect(bloco)
+        topo, base = r.top(), r.bottom()
+        lay = bloco.layout()
+        if lay is not None and lay.lineCount():
+            primeira, ultima = lay.lineAt(0), lay.lineAt(lay.lineCount() - 1)
+            topo = min(topo, r.top() + primeira.y())
+            base = max(base, r.top() + ultima.y() + ultima.height())
+        return topo, base
 
     def _tabela_externa(self, pos: int):
         """O quadro de primeiro nivel (a tabela de fora, se aninhada) que contem `pos`, ou None."""
@@ -683,7 +750,11 @@ class VistaPaginas(QAbstractScrollArea):
                         return
                 faixa = self._faixa_da_linha_da_tabela(pos)
                 if faixa is not None:
-                    self._invalidar_faixa(*faixa, *xs)
+                    self._so_a_parte = True
+                    try:
+                        self._invalidar_faixa(*faixa, *xs)
+                    finally:
+                        self._so_a_parte = False
                     return
         topo, base = self._faixa_de(pos, pos + adicionado)
         # So' as linhas que podem ter mudado (0.1.8): da linha anterior a' da mudanca (apagar
@@ -699,9 +770,14 @@ class VistaPaginas(QAbstractScrollArea):
     def _invalidar_linhas(self, linhas, topo: float, base: float,
                           xs: tuple = ()) -> None:
         anterior, atual = linhas
-        if anterior is not None:
-            self._invalidar_faixa(max(topo, anterior[0]), anterior[1], *xs)
-        self._invalidar_faixa(max(topo, atual), base, *xs)
+        # A linha digitada (0.1.15): o tile fica no cache, so' a parte da linha e' refeita.
+        self._so_a_parte = True
+        try:
+            if anterior is not None:
+                self._invalidar_faixa(max(topo, anterior[0]), anterior[1], *xs)
+            self._invalidar_faixa(max(topo, atual), base, *xs)
+        finally:
+            self._so_a_parte = False
 
     #: Folga horizontal (twips) em volta do texto da celula: acolchoamento, borda e a tinta da
     #: letra que passa da caixa (italico).
@@ -725,9 +801,7 @@ class VistaPaginas(QAbstractScrollArea):
 
     def _faixa_do_bloco(self, inicio: int, fim: int) -> tuple[float, float]:
         doc = self.layout_pag.doc
-        dl = doc.documentLayout()
-        return (dl.blockBoundingRect(doc.findBlock(inicio)).top(),
-                dl.blockBoundingRect(doc.findBlock(fim)).bottom())
+        return (self._extensao(doc.findBlock(inicio))[0], self._extensao(doc.findBlock(fim))[1])
 
     def _faixa_na_tabela(self, pos: int, adicionado: int, antes):
         """Digitar numa celula (0.1.14). Ate' a 0.1.13 a tabela inteira saia do cache a cada
@@ -778,12 +852,14 @@ class VistaPaginas(QAbstractScrollArea):
             topo = rt.top()
         else:
             topo = max(dl.blockBoundingRect(b).bottom() for _a, b in blocos_da_linha(r0 - 1))
-            topo = min(topo, min(dl.blockBoundingRect(a).top() for a, _b in blocos_da_linha(r0)))
+            topo = min(topo, min(self._extensao(a)[0] for a, _b in blocos_da_linha(r0)))
         if r1 >= tabela.rows() - 1:
             base = rt.bottom()
         else:
             base = min(dl.blockBoundingRect(a).top() for a, _b in blocos_da_linha(r1 + 1))
-            base = max(base, max(dl.blockBoundingRect(b).bottom() for _a, b in blocos_da_linha(r1)))
+            # Pelas linhas (0.1.15, `_extensao`): a linha da celula que desce de pagina passa
+            # da base do retangulo do bloco.
+            base = max(base, max(self._extensao(b)[1] for _a, b in blocos_da_linha(r1)))
         return topo, base
 
     def _linhas_da_mudanca(self, pos: int, na_tabela: bool = False):
@@ -824,8 +900,8 @@ class VistaPaginas(QAbstractScrollArea):
         """
         doc = self.layout_pag.doc
         dl = doc.documentLayout()
-        topo = dl.blockBoundingRect(doc.findBlock(inicio)).top()
-        base = dl.blockBoundingRect(doc.findBlock(fim)).bottom()
+        topo = self._extensao(doc.findBlock(inicio))[0]
+        base = self._extensao(doc.findBlock(fim))[1]
         cursor = QTextCursor(doc)
         cursor.setPosition(min(max(inicio, 0), doc.characterCount() - 1))
         quadro = cursor.currentFrame()
@@ -843,7 +919,11 @@ class VistaPaginas(QAbstractScrollArea):
         entrada = self._cache.get(chave)
         if entrada is not None:
             self._cache.move_to_end(chave)
+            partes = self._sujos.pop(chave, None)
+            if partes:
+                self._repintar_partes([(entrada[0], i, j, partes)], n, dpr, m)
             return entrada[0]
+        self._sujos.pop(chave, None)
         cfg = self.layout_pag.efetiva_da(n)
         e = m.escala
         tw = TILE_PX / e
@@ -854,10 +934,7 @@ class VistaPaginas(QAbstractScrollArea):
         # corpo (como no Word, ela fica atras do texto): o tile nao pode ter fundo.
         pm.fill(Qt.GlobalColor.transparent if self._tiles_transparentes else COR_FOLHA)
         pintor = QPainter(pm)
-        t = QTransform()
-        t.translate(-i * TILE_PX, -j * TILE_PX)
-        t.scale(e, e)
-        desenhar_folha(pintor, self.layout_pag, n, t,
+        desenhar_folha(pintor, self.layout_pag, n, self._transformacao_do_tile(i, j, e),
                        corpo_recorte=(i * tw - cfg.margem_esq_tw, j * tw - cfg.margem_sup_tw,
                                       tw, tw), marcas=self._marcas, comentarios=True,
                        tela=True)
@@ -875,9 +952,96 @@ class VistaPaginas(QAbstractScrollArea):
         self._cache[chave] = (pm, dy0, dy1, nbytes, dx0, dx0 + tw)
         self._bytes_no_cache += nbytes
         while self._bytes_no_cache > LIMITE_DO_CACHE_BYTES and self._cache:
-            _, valor = self._cache.popitem(last=False)
+            velha, valor = self._cache.popitem(last=False)
+            self._sujos.pop(velha, None)
             self._bytes_no_cache -= valor[3]
         return pm
+
+    @staticmethod
+    def _transformacao_do_tile(i: int, j: int, e: float, dx: float = 0.0,
+                               dy: float = 0.0) -> QTransform:
+        """Twips da folha -> pixels logicos do tile (i, j); (dx, dy) desloca a origem (px
+        logicos) para um pedaco do tile. O MESMO calculo para o tile inteiro e para a parte."""
+        t = QTransform()
+        t.translate(-i * TILE_PX - dx, -j * TILE_PX - dy)
+        t.scale(e, e)
+        return t
+
+    def _repintar_partes(self, itens, n: int, dpr: float, m: Mapa) -> None:
+        """Refaz nos pixmaps guardados so' as partes velhas dos tiles da folha n (0.1.15).
+
+        `itens`: [(pixmap, i, j, partes)]. Cada tile e' pintado de novo num pixmap do tamanho
+        dele, com a MESMA transformacao do tile (o Qt arredonda a posicao da letra de um jeito
+        para coordenada positiva e de outro para negativa: deslocar a origem, mesmo por pixels
+        inteiros, mudou a letra da borda de lugar num zoom de 137%), mas so' com o que cruza as
+        partes, com folga (`FOLGA_DE_CORTE_TW`); so' os pixels inteiros das partes sao copiados
+        por cima do tile (sem mistura). O resultado e' o do tile pintado do zero;
+        `teste_desempenho` confere pixel a pixel."""
+        cfg = self.layout_pag.efetiva_da(n)
+        hb = self.layout_pag.hb
+        e = m.escala
+        tw = TILE_PX / e
+        lado = round(TILE_PX * dpr)
+        corte = self.FOLGA_DE_CORTE_TW
+        fundo = Qt.GlobalColor.transparent if self._tiles_transparentes else COR_FOLHA
+        # O que o tile mostra, em twips do corpo (o recorte do tile pintado do zero).
+        for pm, i, j, partes in itens:
+            tx0, ty0 = i * tw - cfg.margem_esq_tw, j * tw - cfg.margem_sup_tw
+            alvos = []
+            cy0 = cx0 = math.inf
+            cy1 = cx1 = -math.inf
+            for y0, y1, x0, x1 in partes:
+                # Twips do documento -> twips do corpo da pagina; o recorte do Qt com folga.
+                by0, by1 = y0 - n * hb, y1 - n * hb
+                cy0, cy1 = min(cy0, by0 - corte), max(cy1, by1 + corte)
+                cx0 = min(cx0, x0 - corte if x0 > -math.inf else tx0)
+                cx1 = max(cx1, x1 + corte if x1 < math.inf else tx0 + tw)
+                # Pixels inteiros do dispositivo dentro do tile (a parte copiada).
+                py0 = math.floor(((by0 + cfg.margem_sup_tw) * e - j * TILE_PX) * dpr) - 1
+                py1 = math.ceil(((by1 + cfg.margem_sup_tw) * e - j * TILE_PX) * dpr) + 1
+                px0 = math.floor(((x0 + cfg.margem_esq_tw) * e - i * TILE_PX) * dpr) - 1 \
+                    if x0 > -math.inf else 0
+                px1 = math.ceil(((x1 + cfg.margem_esq_tw) * e - i * TILE_PX) * dpr) + 1 \
+                    if x1 < math.inf else lado
+                px0, py0, px1, py1 = max(0, px0), max(0, py0), min(lado, px1), min(lado, py1)
+                if px1 > px0 and py1 > py0:
+                    alvos.append((px0, py0, px1, py1))
+            if not alvos:
+                continue
+            # O recorte do Qt: as partes com folga, dentro do recorte do tile.
+            rx0, ry0 = max(cx0, tx0), max(cy0, ty0)
+            rx1, ry1 = min(cx1, tx0 + tw), min(cy1, ty0 + tw)
+            novo = QPixmap(lado, lado)
+            novo.setDevicePixelRatio(dpr)
+            novo.fill(fundo)
+            if rx1 > rx0 and ry1 > ry0:
+                pintor = QPainter(novo)
+                desenhar_folha(pintor, self.layout_pag, n, self._transformacao_do_tile(i, j, e),
+                               corpo_recorte=(rx0, ry0, rx1 - rx0, ry1 - ry0),
+                               marcas=self._marcas, comentarios=True, tela=True)
+                pintor.end()
+            pintor = QPainter(pm)
+            pintor.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            for px0, py0, px1, py1 in alvos:
+                # Copia 1:1 em pixels do dispositivo (os dois pixmaps no mesmo DPR).
+                pintor.drawPixmap(QRectF(px0 / dpr, py0 / dpr, (px1 - px0) / dpr,
+                                         (py1 - py0) / dpr), novo,
+                                  QRectF(px0, py0, px1 - px0, py1 - py0))
+            pintor.end()
+
+    def _repintar_sujos(self, n: int, tiles, dpr: float, m: Mapa) -> None:
+        """Antes de copiar os tiles visiveis da folha n: as partes velhas de todos eles de uma
+        vez (0.1.15). `tiles`: [(i, j)] que vao ser copiados."""
+        itens = []
+        for i, j in tiles:
+            chave = (n, i, j, self._zoom, dpr)
+            partes = self._sujos.get(chave)
+            entrada = self._cache.get(chave)
+            if partes and entrada is not None:
+                itens.append((entrada[0], i, j, partes))
+                del self._sujos[chave]
+        if itens:
+            self._repintar_partes(itens, n, dpr, m)
 
     # ----- caret e selecao (o painel informa) ------------------------------
     def _posicao_caret(self) -> int | None:
@@ -962,6 +1126,25 @@ class VistaPaginas(QAbstractScrollArea):
         self.verticalScrollBar().setValue(int(m.y_da_linha(linha) - folga))
 
     # ----- pintura --------------------------------------------------------
+    def _conferir_rotulos(self, numerador) -> None:
+        """Numeros de lista que mudaram desde a pintura anterior (0.1.15), mesmo que outro tenha
+        recalculado antes (a janela pede o rotulo do cursor depois da tecla, e o `atualizar` da
+        pintura entao devolvia "nada mudou"): do primeiro item diferente para baixo sai do
+        cache. Apagar a marca de lista de um item vazio (Backspace) renumera os de baixo sem
+        mudar a altura de nada; o tile inteiro escondia os da mesma fileira, a parte nao."""
+        desenho = numerador.desenho
+        anterior, self._desenho_listas = self._desenho_listas, desenho
+        if anterior is None or anterior is desenho or anterior == desenho:
+            return
+        i = next((k for k, (a, b) in enumerate(zip(anterior, desenho)) if a != b),
+                 min(len(anterior), len(desenho)))
+        numeros = [d[i][0] for d in (anterior, desenho) if i < len(d)]
+        doc = self.layout_pag.doc
+        bloco = doc.findBlockByNumber(min(numeros)) if numeros else doc.lastBlock()
+        if not bloco.isValid():
+            bloco = doc.lastBlock()
+        self._invalidar_faixa(self._extensao(bloco)[0], math.inf)
+
     def preparar_para_impressao(self) -> None:
         """Campos do corpo com o total atual antes de imprimir ou exportar (M7).
 
@@ -987,10 +1170,12 @@ class VistaPaginas(QAbstractScrollArea):
             # Total de paginas mudou e o corpo tem campo: o numero na tela muda.
             self._limpar_cache()
             self._altura_doc_anterior = None
-        if pq_listas.numerador_de(self.layout_pag.doc).atualizar():
+        numerador = pq_listas.numerador_de(self.layout_pag.doc)
+        if numerador.atualizar():
             # Um numero de lista mudou longe da edicao (Tab num item renumera os de baixo).
             self._limpar_cache()
             self._altura_doc_anterior = None
+        self._conferir_rotulos(numerador)
         paginas_antes = self._paginas()
         if self.layout_pag.atualizar_secoes():
             # Secoes (0.1.12): papel, quebras derivadas ou numeracao das folhas mudaram.
@@ -1039,12 +1224,14 @@ class VistaPaginas(QAbstractScrollArea):
             else:
                 nx = math.ceil(w / TILE_PX)
                 ny = math.ceil(h / TILE_PX)
-                for j in range(ny):
-                    for i in range(nx):
-                        alvo = QRectF(x0 + i * TILE_PX, y0 + j * TILE_PX, TILE_PX, TILE_PX)
-                        if alvo.intersects(visivel):
-                            p.drawPixmap(QPointF(alvo.x(), alvo.y()),
-                                         self._tile(n, i, j, dpr, m))
+                tiles = [(i, j) for j in range(ny) for i in range(nx)
+                         if QRectF(x0 + i * TILE_PX, y0 + j * TILE_PX, TILE_PX,
+                                   TILE_PX).intersects(visivel)]
+                if self._sujos:
+                    self._repintar_sujos(n, tiles, dpr, m)
+                for i, j in tiles:
+                    p.drawPixmap(QPointF(x0 + i * TILE_PX, y0 + j * TILE_PX),
+                                 self._tile(n, i, j, dpr, m))
             self._pintar_notas(p, m, n, x0, y0)
             self._pintar_faixas(p, m, n, x0, y0, n_total, w)
             p.restore()
@@ -1302,21 +1489,24 @@ class VistaPaginas(QAbstractScrollArea):
         """
         doc = self.layout_pag.doc
         dl = doc.documentLayout()
+        quebras = self._blocos_com_quebra()
+        if not quebras:
+            return
         topo = i0 * self.layout_pag.hb
-        bloco = doc.findBlock(dl.hitTest(QPointF(0, topo), Qt.FuzzyHit))
+        inicio = doc.findBlock(dl.hitTest(QPointF(0, topo), Qt.FuzzyHit)).blockNumber()
         limite = (i1 + 1) * self.layout_pag.hb
         fonte = p.font()
         fonte.setPointSizeF(8.0)
         p.save()
         p.setFont(fonte)
-        while bloco.isValid() and dl.blockBoundingRect(bloco).top() < limite:
+        for numero in quebras:
+            if numero < inicio:
+                continue
+            bloco = doc.findBlockByNumber(numero)
+            if not bloco.isValid() or dl.blockBoundingRect(bloco).top() >= limite:
+                break
             anterior = bloco.previous()
-            # O espacador da area das notas (0.1.10) nao e' quebra do usuario: sem rotulo.
-            # Nem a quebra derivada da secao (0.1.12): a quebra de secao tem o seu rotulo.
-            bf = bloco.blockFormat()
-            tem_quebra = bool(bf.pageBreakPolicy() & _QUEBRA_ANTES) and \
-                not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)
-            if tem_quebra and anterior.isValid():
+            if anterior.isValid():
                 y = dl.blockBoundingRect(anterior).bottom()
                 corpo_w = float(self.layout_pag.efetiva_da(
                     self.layout_pag.pagina_de_y(max(0.0, y - 1.0))).corpo_largura_tw())
@@ -1333,8 +1523,30 @@ class VistaPaginas(QAbstractScrollArea):
                 p.setPen(COR_QUEBRA)
                 p.drawText(QRectF(meio - larg / 2, ya - metrica.height() / 2, larg,
                                   metrica.height()), Qt.AlignmentFlag.AlignCenter, rotulo)
-            bloco = bloco.next()
         p.restore()
+
+    def _blocos_com_quebra(self) -> list[int]:
+        """Numeros dos blocos com quebra de pagina do usuario, em ordem (0.1.15).
+
+        Ate' a 0.1.14 cada pintura olhava o formato e o retangulo de todos os blocos das folhas
+        visiveis (no plano, centenas de blocos de celula: 1,5 a 2,8 ms por tecla). A lista vale
+        enquanto o numero de blocos nao muda e nenhuma mudanca troca formato (`_mudou_texto`:
+        digitar so' insere ou so' apaga dentro dos blocos)."""
+        doc = self.layout_pag.doc
+        chave = (getattr(doc, "serie", id(doc)), doc.blockCount())
+        if self._quebras is None or self._quebras[0] != chave:
+            lista = []
+            bloco = doc.begin()
+            while bloco.isValid():
+                # O espacador da area das notas (0.1.10) nao e' quebra do usuario: sem rotulo.
+                # Nem a quebra derivada da secao (0.1.12): a quebra de secao tem o seu rotulo.
+                bf = bloco.blockFormat()
+                if bool(bf.pageBreakPolicy() & _QUEBRA_ANTES) and \
+                        not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf):
+                    lista.append(bloco.blockNumber())
+                bloco = bloco.next()
+            self._quebras = (chave, lista)
+        return self._quebras[1]
 
     # ----- eventos de tela ------------------------------------------------
     def resizeEvent(self, ev) -> None:

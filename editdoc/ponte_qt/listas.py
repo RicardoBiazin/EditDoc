@@ -182,6 +182,13 @@ class Numerador:
     def _layout_mudou(self, *_args) -> None:
         self.geracao_layout += 1
 
+    @property
+    def desenho(self) -> tuple:
+        """((numero do bloco, texto, nivel), ...) dos rotulos do ultimo calculo (0.1.15): a vista
+        compara com o da pintura anterior. O `atualizar` chamado fora da pintura (a janela pede o
+        rotulo do cursor) devolvia "mudou" a quem chamou, e a pintura seguinte nao via a mudanca."""
+        return self._chave_desenho
+
     def faixas(self, doc: QTextDocument) -> list[tuple[float, float, int]]:
         """(topo, base, numero do bloco) de cada item com layout, na ordem do documento."""
         rotulos = self.rotulos()

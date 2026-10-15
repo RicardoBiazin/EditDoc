@@ -920,7 +920,134 @@ Por que não entrou nesta versão (o que o mecanismo atual teria de mudar):
 Risco alto para uma versão que também mexe no layout por desempenho: fica para uma versão própria,
 começando pelo `Mapa` folha → páginas (sem colunas, nada muda).
 
+## 0.1.15: digitar antes das tabelas (o plano), spike das saídas que a 0.1.14 não testou
+
+Feito em 15/10/2026, na máquina de desenvolvimento (Windows 11, Python 3.13, PySide6 6.11.2,
+offscreen, dispositivo de 1440 dpi), com a máquina carregada (dois jogos e o navegador abertos:
+o documento simples, que parado mede ~5 ms, mediu 4 a 12 ms). Código do Qt conferido no
+`qtextdocumentlayout.cpp`, `qtextdocument.cpp` e `qtextdocument_p.h` do ramo 6.11 do qtbase.
+Scripts no rascunho da sessão (`spike_a.py`, `spike_lazy.py`, `spike_custo.py`, `spike_faixa.py`,
+`etapas_pintura.py`, `gate_plano.py`, `gate_todos.py`), fora do repositório.
+
+Meta pedida: p95 ≤ 16 ms digitando no plano real a 1/3 (célula), na célula a 1/2 e no item de
+lista (0.1.14: ~50, ~35 e ~40 ms), sem piorar nada.
+
+### Onde vai o tempo (0.1.14, plano real, médias de 80 teclas)
+
+| Ponto | tecla (`insertText` do Qt) | pintura | da pintura: tiles (`desenhar_folha`) | linhas de quebra | resto |
+|---|---|---|---|---|---|
+| célula a 1/3 | 25,3 | 15,9 | 11,9 (3,9 tiles inteiros) | 1,4 | 2,6 |
+| célula a 1/2 | 20,2 | 10,3 | 6,2 (2,1) | 1,5 | 2,6 |
+| item de lista | 24,8 | 8,9 | 6,6 (4,0) | 0,3 | 2,0 |
+
+Mesmo com a pintura em zero, a tecla do Qt sozinha passa de 16 ms nos três pontos.
+
+### (a) A cascata depende da altura do bloco mudar? Dá para adiá-la?
+
+| Medida | Resultado |
+|---|---|
+| tecla que NÃO muda a altura do bloco (117 de 120) × a que muda (3) | 26,7 × 27,4 ms: a cascata é a mesma. No código: `layoutFlow` liga `cd->sizeDirty = true` em todo quadro no fluxo depois do trecho sempre que `pageSize().height() > 0`, sem olhar se algo se moveu. "Absorver" a variação de altura não muda nada. |
+| `markContentsDirty` do bloco, sem mudar nada | 25,5 ms (a mesma cascata) |
+| layout inteiro (religar o layout + `documentSize`) | 63,2 ms |
+| layout preguiçoso do Qt (`currentLazyLayoutPosition`), timers do layout presos por filtro de eventos | só entra pelo layout do documento inteiro (`documentChanged(0, 0, tamanho)`); num clone sem os sinais do EditDoc, a 1ª tecla custou 8,7 ms e a fronteira andou ~1000 caracteres por tecla (`docPos > currentLazyLayoutPosition + lazyLayoutStepSize`, e o passo volta a 1000 a cada mudança): 25 ms de novo na 10ª tecla. Na janela, os sinais pedem o tamanho do documento e o layout termina na 1ª tecla (70 ms). `pageCount` no clone preguiçoso: 10 páginas em vez de 13. **Não serve.** |
+| layout próprio que delega ao `QTextDocumentLayout` | impossível pelo PySide: a classe é privada, `setDocumentLayout` apaga o layout anterior (`delete lout`) e não há como criar um segundo para o mesmo documento. |
+| quadro flutuante (`FloatLeft`) para a tabela | o Qt só marca a tabela flutuante como suja se ela atravessa página (`positionFloat`), mas ela passa a não se partir entre páginas e o texto anda em volta: muda a paginação. **Não serve.** |
+
+### De onde vem o custo de cada tabela refeita (clone solto do plano, digitando no começo)
+
+| Variação (só no clone) | ms por tecla |
+|---|---|
+| como está | 32,2 |
+| blocos das células escondidos (`setVisible(False)`) | 17,3: metade é a estrutura da tabela (células, bordas, `cellAt`, `row()`/`column()`), não o texto |
+| sem colapso de bordas | 26,0 |
+| formato de célula vazio (sem bordas nem acolchoamento próprios) | 27,1 |
+| os dois juntos | 21,9 |
+| célula sem o JSON do EditDoc | 31,7 (nada) |
+| sem cabeçalho repetido | 30,6 |
+| largura de coluna variável | 32,5 (nada) |
+
+O que cai (um terço, no máximo) muda a geometria da célula (sem o colapso, a borda inteira entra
+no acolchoamento; o acolchoamento por lado só existe no formato da célula) e a pintura das bordas
+passaria a ser do EditDoc, inclusive no PDF: risco alto para uma versão estável, e a tecla ainda
+passaria de 16 ms.
+
+### (b) e (c): tabelas congeladas, layout próprio de tabela, documento por trecho
+
+- **Tabela congelada** (pintada de um cache e com a geometria guardada): o custo está no layout
+  do Qt, que roda sobre o documento inteiro; para o Qt pular a tabela ela teria de sair do
+  documento ou do fluxo, e isso é conteúdo (desfazer, "alterado", gravação). Esconder os blocos
+  (o que não é conteúdo) mudaria a altura de tudo abaixo: número de páginas, campos, notas.
+- **Layout próprio só para tabelas** (a tabela como objeto do layout paginado, células como
+  subdocumentos): um objeto na linha não se parte entre páginas; para manter as mesmas quebras
+  seria preciso refazer em Python a paginação de tabela do Qt (linha que desce, célula que
+  continua na página seguinte, cabeçalho repetido) e depois cursor, seleção atravessando tabela,
+  localizar, copiar, desfazer, revisões de tabela (0.1.13/0.1.14), comandos de tabela e a ida e
+  volta. Reescrita grande.
+- **Documento por trecho entre tabelas**: o mesmo problema, maior (cursor, seleção, desfazer e
+  localizar atravessando documentos).
+
+Conclusão: com o `QTextDocumentLayout` do Qt 6.11, nenhuma saída corta a cascata das tabelas com
+risco aceitável para a 0.1.15. **A meta de 16 ms nesses três pontos não é alcançável nesta
+arquitetura**; a tecla do Qt (20 a 28 ms carregado) fica como está.
+
+### O que entrou (a pintura, do EditDoc)
+
+1. **Só a parte da linha nos tiles.** A linha digitada cruzava 2 a 4 tiles, e cada um saía
+   inteiro do cache. Agora o tile fica e a parte da linha é anotada; a pintura refaz só ela, num
+   pixmap do tamanho do tile com a mesma transformação, e copia os pixels da parte. Caminhos
+   medidos e descartados no caminho: juntar as partes de tiles vizinhos numa pintura só, com a
+   origem da folha (7,3 ms de pintura a 1/3, contra 10,2 por tile), errava a letra da borda do
+   tile em um pixel a 137% (o Qt arredonda a posição de outro jeito para coordenada negativa);
+   folgas de 300 twips em volta da parte custavam 10,2 ms, 150 twips ~9, nenhuma folga 7,3 (mas
+   a entrelinha exata menor que a letra deixava tinta velha: contraprova no teste).
+2. **Dois furos que o tile inteiro escondia**, achados pelo teste pixel a pixel: a linha que
+   desce de página dentro do bloco fica abaixo do `blockBoundingRect` (a linha do sumário do
+   manual sintético, 210 twips abaixo); e o número de lista recalculado fora da pintura (a janela
+   pede o rótulo do cursor) não chegava à pintura, então o Backspace que tira o item vazio da
+   lista deixava os números de baixo velhos fora da fileira de tiles da linha.
+3. **A lista das quebras de página do usuário** (as linhas tracejadas, desenhadas a cada quadro)
+   fica guardada até mudar o número de blocos ou chegar uma troca de formato: eram 1,4 a 2,8 ms
+   por tecla olhando centenas de blocos de célula.
+
+Pintura depois (médias de 80 teclas, máquina carregada): célula a 1/3 15,9 → 7,2 ms; a 1/2
+10,3 → 6,6; item 8,9 → 7,1. Na fixture `documento_plano`: 7,8 → 4,7, 6,6 → 4,2, 9,4 → 6,9.
+
+### Tabela do gate (p95 em ms, 80 teclas com `viewport().grab()`, um processo por ponto, mediana de 3 rodadas intercaladas 0.1.14 x 0.1.15)
+
+Painel de 1000 × 800 da `teste_desempenho` (fixtures em código) e janela de 1400 × 950 (arquivo
+real, `gate_plano.py`); a coluna 0.1.14 é o código do commit da 0.1.14 extraído do git, medido na
+mesma hora (simples a 4,6 ms: a carga caiu durante esta medida).
+
+| Documento | Onde digita | 0.1.14 | 0.1.15 |
+|---|---|---|---|
+| documento simples (referência) | corpo | 4,6 | 4,7 |
+| manual sintético | capa | 9,4 | 6,7 |
+| idem | sumário | 8,9 | 7,3 |
+| idem | corpo | 5,9 | 5,4 |
+| capa cheia | antes das âncoras | 15,0 | 12,4 |
+| 2000 revisões, controle ligado | corpo | 9,3 | 5,7 |
+| plano sintético | 1/3 do documento | 45,0 | 41,2 |
+| idem | célula a 1/2 | 34,3 | 30,2 |
+| idem | item de lista a 1/4 | 47,0 | 34,3 |
+| **plano real** (2 seções, 16 tabelas) | 1/3 (numa célula) | 47,0 | **35,7** |
+| idem | célula a 1/2 | 33,6 | **29,3** |
+| idem | item de lista a 1/4 | 37,0 | **34,9** |
+
+Nenhum ponto piorou; todos os da tabela de antes melhoraram (a linha digitada refaz menos
+pixels em qualquer documento). **O plano continua acima de 16 ms**: o que sobra é a tecla do Qt
+(20 a 28 ms nessa máquina), que nenhuma saída de baixo risco corta (acima).
+
+Regressão nos 11 `.docx` reais da pasta Downloads (cópias temporárias, abrir → salvar como →
+reabrir → salvar, 0.1.14 e 0.1.15 com o mesmo roteiro): todos gravam nas duas vezes, sem falha na
+conferência nem no validador, sem diferença c14n entre a 1ª e a 2ª gravação, e o mesmo número de
+páginas da 0.1.14 em cada arquivo (um deles abre com 4 páginas e o salvo reabre com 6 nas duas
+versões: diferença que já existia, registrada como pendência).
+
 ## Pendências
+
+- 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com
+  uma reescrita (layout próprio para tabelas ou documento por trecho; ver "0.1.15"). E um `.docx`
+  real abre com 4 páginas e, salvo pelo EditDoc, reabre com 6 (igual na 0.1.14): investigar.
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,

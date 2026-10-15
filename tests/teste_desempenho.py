@@ -307,7 +307,10 @@ def testar_conferencia() -> None:
 
 # -- tiles por tecla --------------------------------------------------------------------------
 
-def _tiles_por_tecla(painel, pos: int, teclas: int = 8) -> float:
+def _tiles_por_tecla(painel, pos: int, teclas: int = 8, inteira: bool = False) -> float:
+    """Chamadas de `desenhar_folha` por tecla (desde a 0.1.15 as partes velhas de tiles vizinhos
+    sao pintadas numa chamada so'). `inteira`: a tela toda refeita a cada tecla (o cache de tiles
+    limpo antes da pintura), para contar o que cada tile refeito custa."""
     from editdoc.interface import vista_paginas as vp
     _ir(painel, pos)
     _tecla(painel)
@@ -323,6 +326,8 @@ def _tiles_por_tecla(painel, pos: int, teclas: int = 8) -> float:
     try:
         for _ in range(teclas):
             _tecla(painel)
+            if inteira:
+                painel._limpar_cache()
             painel.viewport().grab()
     finally:
         vp.desenhar_folha = original
@@ -585,7 +590,10 @@ def testar_plano() -> None:
 
         pq_listas.Numerador.faixas = contar
         try:
-            tiles = _tiles_por_tecla(painel, item)
+            # A tela inteira refeita a cada tecla (0.1.15): desde as partes pintadas juntas, a
+            # tecla no item faz uma chamada de pintura so', e o cache das faixas so' aparece
+            # com varios tiles por pintura (16 aqui). A contraprova abaixo usa o mesmo caminho.
+            tiles = _tiles_por_tecla(painel, item, inteira=True)
             calculos = feitas[0]
             checa(numerador.versao == versao, f"digitar no item nao recalcula os numeros "
                                               f"(mudancas de estrutura: {numerador.versao - versao})")
@@ -604,7 +612,7 @@ def testar_plano() -> None:
             pq_listas.desenhar_rotulos = sem_cache
             vp.pq_listas.desenhar_rotulos = sem_cache
             try:
-                _tiles_por_tecla(painel, item)
+                _tiles_por_tecla(painel, item, inteira=True)
             finally:
                 pq_listas.desenhar_rotulos = original_rotulos
                 vp.pq_listas.desenhar_rotulos = original_rotulos
@@ -901,16 +909,16 @@ def _p95_em_partes(painel, pos: int, teclas: int = 80) -> tuple[float, float, fl
     return _p95(total), _p95(tecla), _p95(pintura)
 
 
-#: Folga da PINTURA do plano sobre o p95 inteiro do simples (0.1.14). Cada tile do plano tem tabela
-#: e numeros de lista (medido: 0,8 ms por tile parado, ~3 ms carregado, contra ~0,4 do simples) e a
-#: linha do item da fixture cruza uma fileira de tiles (8 por tecla): medido carregado, 24 a 28 ms
-#: contra 9,5 a 11 do simples. Com a tabela inteira saindo do cache (a 0.1.13), a celula refaz 12
-#: a 20 tiles e passa do limite (contraprova sem relogio em `testar_plano`).
-FATOR_DA_PINTURA_DO_PLANO = 3.5
+#: Folga da PINTURA do plano sobre o p95 inteiro do simples. Na 0.1.14 era 3,5: cada tile do plano
+#: tem tabela e numeros de lista (0,8 ms por tile parado, ~3 ms carregado) e a linha do item da
+#: fixture cruza uma fileira de tiles (8 inteiros por tecla; carregado, 24 a 28 ms contra 9,5 a 11
+#: do simples). Desde a 0.1.15 so' a parte da linha e' refeita em cada tile e a lista das quebras
+#: fica guardada: medido carregado, 4 a 7 ms; o criterio passa a ser o dos outros pontos.
+FATOR_DA_PINTURA_DO_PLANO = FATOR_DO_SIMPLES
 
 
 def testar_p95_do_plano() -> None:
-    secao("0.1.14: p95 no plano (1/3, celula, item): a pintura no gate; a tecla e' do Qt")
+    secao("0.1.14/0.1.15: p95 no plano (1/3, celula, item): a pintura no gate; a tecla e' do Qt")
     simples = documento_simples()
     plano = documento_plano()
 
@@ -934,7 +942,8 @@ def testar_p95_do_plano() -> None:
             print(f"         {nome}: p95 {total:.1f} ms (tecla {tecla:.1f}, pintura {pintura:.1f}); "
                   f"simples {refs[-1]:.1f}")
             # A tecla e' o insertText do Qt, que refaz todas as tabelas depois do ponto editado
-            # (ver docs/SPIKES.md, 0.1.14): fica fora do criterio. A pintura e' do EditDoc.
+            # (ver docs/SPIKES.md, 0.1.14; o spike da 0.1.15 mediu cada saida e nenhuma corta isso
+            # sem reescrever o layout): fica fora do criterio. A pintura e' do EditDoc.
             passou, m, s, limite = avaliar(pinturas, refs, FATOR_DA_PINTURA_DO_PLANO)
             if passou:
                 break

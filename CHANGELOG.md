@@ -1,3 +1,50 @@
+## 0.1.15 - 2026-10-15
+
+Digitar repinta só a linha nos tiles da tela, não os tiles inteiros; spike das saídas para a
+tecla antes das tabelas, com a conclusão de que a parte do Qt não sai sem reescrever o layout.
+
+Desempenho: no arquivo real de 16 tabelas, digitar antes delas passava do gate de 16 ms (p95
+~50 ms na célula a 1/3, ~35 na célula a 1/2, ~40 no item de lista). Spike (docs/SPIKES.md,
+"0.1.15"): a cascata do `QTextDocumentLayout` acontece a cada tecla mesmo quando a altura do
+bloco não muda (26,7 × 27,4 ms); o layout preguiçoso do Qt só entra pelo layout inteiro e anda
+1000 caracteres por tecla; não há como embrulhar o layout pelo PySide; tirar o colapso de bordas
+e os formatos de célula vale um terço e mudaria a aparência; tabela flutuante muda a paginação;
+tabela congelada, layout próprio de tabela e documento por trecho exigem tirar a tabela do
+documento ou reescrever paginação e edição. **A meta de 16 ms nesses pontos não foi alcançada**:
+a tecla do Qt sozinha mede 20 a 28 ms.
+
+O que entrou, na pintura (do EditDoc):
+
+- a linha digitada não tira mais do cache os 2 a 4 tiles inteiros que cruza: a parte da linha é
+  anotada no tile e a pintura seguinte refaz só ela, com a mesma transformação do tile, e copia
+  os pixels da parte (`VistaPaginas._sujos`, `_repintar_partes`). Altura que muda, objetos
+  flutuantes e números de lista continuam tirando o tile inteiro;
+- dois furos que o tile inteiro escondia: a linha que desce de página dentro do bloco ficava
+  fora da faixa refeita (a faixa agora vai pelas linhas do bloco); e o número de lista
+  recalculado fora da pintura (a janela pede o rótulo do cursor) não chegava à tela, então o
+  Backspace que tira o item vazio da lista podia deixar números velhos abaixo (a vista compara os
+  números com os da pintura anterior);
+- a lista das quebras de página do usuário (as linhas tracejadas) fica guardada até mudar o
+  número de blocos ou um formato: cada quadro olhava centenas de blocos de célula.
+
+Pintura por tecla no plano real (máquina carregada): 15,9 → 7,2 ms a 1/3, 10,3 → 6,6 a 1/2,
+8,9 → 7,1 no item. Gate (p95, mediana de 3 rodadas intercaladas, 0.1.14 → 0.1.15): plano real
+47,0 → 35,7, 33,6 → 29,3 e 37,0 → 34,9; plano sintético 45,0 → 41,2, 34,3 → 30,2 e 47,0 → 34,3;
+o resto da tabela melhorou ou ficou igual (simples 4,6 → 4,7, manual 9,4/8,9/5,9 → 6,7/7,3/5,4,
+capa cheia 15,0 → 12,4, 2000 revisões 9,3 → 5,7).
+
+Nada muda no arquivo salvo, na paginação, no PDF, na impressão, na edição de tabela nem no
+desfazer: regressão nos 11 `.docx` reais (abrir → salvar como → reabrir → salvar) sem falha, sem
+diferença c14n e com o mesmo número de páginas da 0.1.14.
+
+Testes: suíte nova `teste_pintura_parcial` (tela com as partes igual à refeita do zero, pixel a
+pixel, a 137%, na célula, no item de lista, com entrelinha exata menor que a letra e na linha que
+desce de página; contraprova de cada mecanismo); `teste_quebras` confere a lista guardada das
+quebras (com contraprova); o p95 da pintura do plano passa ao critério dos outros pontos (2,5 ×
+o simples, era 3,5 ×). Reescrita: a contraprova do cache das faixas dos itens de lista
+(`testar_plano`) agora refaz a tela inteira a cada tecla, porque a tecla no item faz uma
+pintura só e o cache só aparece com vários tiles por pintura.
+
 ## 0.1.14 - 2026-10-15
 
 Digitar em documento com muitas tabelas e listas repinta só o que mudou; rejeitar passa a valer
