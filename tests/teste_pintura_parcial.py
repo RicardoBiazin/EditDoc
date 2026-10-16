@@ -91,14 +91,33 @@ def testar_partes_dos_tiles() -> None:
             ruins = _sequencia_confere(painel, item, teclas)
             checa_igual(ruins, 0, f"item de lista a 137%: {len(teclas)} teclas iguais a' tela "
                                   "refeita")
-            # Contraprova: o Backspace que tira o item vazio da lista renumera os de baixo sem
-            # mudar altura; quem pede o rotulo do cursor recalcula antes da pintura.
-            original_rotulos = V._conferir_rotulos
-            V._conferir_rotulos = lambda self, numerador: None
+            # Contraprova (0.1.17): a linha que quebra no item desce os itens de baixo ate' a
+            # quebra das regras do Word (viuvas e orfas) que segura o resto: a altura do documento
+            # nao muda, e sem conferir o bloco de baixo eles ficavam velhos na tela.
+            original_moveu = V._seguinte_moveu
+            V._seguinte_moveu = lambda self, *a: False
             try:
                 sabotado = _sequencia_confere(painel, item, teclas)
             finally:
+                V._seguinte_moveu = original_moveu
+            checa(sabotado > 0, f"contraprova: sem conferir o bloco de baixo, {sabotado} teclas "
+                                "deixam itens velhos na tela")
+            # Contraprova: o Backspace que tira o item vazio da lista renumera os de baixo sem
+            # mudar altura; quem pede o rotulo do cursor recalcula antes da pintura.
+            # 0.1.17: com a compensacao do layout do Word ligada, sair da lista refaz o formato do
+            # bloco (o espaco somado volta no ajuste) e a pintura limpa o cache inteiro, o que
+            # esconderia o numero velho; a contraprova mede a conferencia dos rotulos sozinha.
+            original_rotulos = V._conferir_rotulos
+            V._conferir_rotulos = lambda self, numerador: None
+            paginacao = painel.layout_pag.paginacao
+            paginacao.ligado = False
+            try:
+                painel.viewport().grab()
+                sabotado = _sequencia_confere(painel, item, teclas)
+            finally:
                 V._conferir_rotulos = original_rotulos
+                paginacao.ligado = True
+                painel.viewport().grab()
             checa(sabotado > 0, f"contraprova: sem conferir os numeros da pintura anterior, "
                                 f"{sabotado} teclas deixam numero velho na tela")
         finally:

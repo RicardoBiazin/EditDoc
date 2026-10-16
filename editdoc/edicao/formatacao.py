@@ -172,6 +172,8 @@ def definir_paragrafo(editor: QTextEdit, *, antes_tw: int | None = None,
     cursor = editor.textCursor()
     cursor.beginEditBlock()
     cursor.mergeBlockFormat(formato)
+    if antes_tw is not None or depois_tw is not None:
+        _esquecer_compensacao(editor, antes=antes_tw is not None, depois=depois_tw is not None)
     if primeira_tw is not None:
         # Item de lista: o recuo pedido e' o de verdade; o visual volta no ajuste da lista.
         from editdoc.ponte_qt.listas import PROP_RECUO_REAL
@@ -191,7 +193,22 @@ def definir_espacamento(editor: QTextEdit, percentual: int) -> None:
     cursor = editor.textCursor()
     cursor.beginEditBlock()
     cursor.mergeBlockFormat(formato)
+    _esquecer_compensacao(editor, linha=True)
     cursor.endEditBlock()
+
+
+def _esquecer_compensacao(editor: QTextEdit, antes: bool = False, depois: bool = False,
+                          linha: bool = False) -> None:
+    """0.1.17: o valor que o usuario acabou de dar e' o de verdade; a compensacao do layout do
+    Word (ponte_qt/paginacao.py) e' refeita na proxima pintura."""
+    from editdoc.ponte_qt import paginacao as pq_paginacao
+    for bloco in _blocos_da_selecao(editor):
+        bf = bloco.blockFormat()
+        if any(bf.hasProperty(p) for p in (pq_paginacao.PROP_WORD_ANTES,
+                                           pq_paginacao.PROP_WORD_DEPOIS,
+                                           pq_paginacao.PROP_WORD_LINHA)):
+            pq_paginacao.esquecer(bf, antes=antes, depois=depois, linha=linha)
+            QTextCursor(bloco).setBlockFormat(bf)
 
 
 _MARCAS = (QTextListFormat.Style.ListDisc, QTextListFormat.Style.ListCircle,

@@ -4,8 +4,10 @@
   docDefaults do Word para esse caso (Times New Roman 10, sem espaco entre paragrafos, entrelinha
   simples) e o escritor grava esse docDefaults. Ate' a 0.1.15 o escritor gravava o do documento
   novo (8 pt depois, 1,08): a imagem da altura da pagina deixava de caber e o arquivo salvo
-  reabria com mais paginas. Contraprova: com o escritor antigo, o salvo reabre com mais paginas
-  e a conferencia recusa o arquivo.
+  reabria com mais paginas. Contraprova: com o escritor antigo, o salvo reabre com outro layout
+  (o texto mais baixo, cada bloco com outra entrelinha) e a conferencia recusa o arquivo. Desde
+  a 0.1.17 a linha da imagem com entrelinha multipla cresce so' o que o Word cresce (o multiplo
+  da linha do texto), entao a imagem continua cabendo e o numero de paginas nao denuncia mais.
 - Sem settings.xml, a tabulacao padrao gravada e' a que o leitor supos (720), nao 708.
 - Conferencia pos-gravacao: compara a formatacao efetiva (docDefaults, estilo, lista e direta)
   de cada paragrafo, trecho de texto e tabela. Cada sabotagem do XML gravado (docDefaults,
@@ -117,6 +119,19 @@ def abrir(j, dados: bytes) -> int:
     return j.painel.layout_pag.numero_paginas()
 
 
+def fim_do_texto(j) -> float:
+    """Onde termina (y, twips) a ultima linha de texto do relatorio convertido."""
+    doc = j.painel.documento_corpo()
+    dl = doc.documentLayout()
+    ultimo = 0.0
+    b = doc.begin()
+    while b.isValid():
+        if b.text().startswith("Linha "):
+            ultimo = dl.blockBoundingRect(b).bottom()
+        b = b.next()
+    return ultimo
+
+
 def formatos(j) -> list:
     """(margem de baixo, tipo e valor da entrelinha, fonte e tamanho do texto) de cada bloco."""
     doc = j.painel.documento_corpo()
@@ -143,6 +158,7 @@ def testar_arquivo_sem_estilos() -> None:
     j = janela()
     paginas_1 = abrir(j, original)
     checa_igual(paginas_1, 3, "o original abre com 3 paginas (imagem, texto, imagem)")
+    fim_do_texto_1 = fim_do_texto(j)
     doc = j.painel.documento_corpo()
     checa_igual((doc.defaultFont().family(), doc.defaultFont().pointSizeF()),
                 ("Times New Roman", 10.0), "a fonte do texto sem formatacao e' a do Word")
@@ -180,10 +196,11 @@ def testar_arquivo_sem_estilos() -> None:
     checa_levanta(conferencia.FalhaDeConferencia, conferencia.conferir,
                   "contraprova: a conferencia recusa o arquivo do escritor antigo",
                   antigo, esperado)
-    paginas_antigo = abrir(j, antigo)
-    checa(paginas_antigo > paginas_1,
-          f"contraprova: o arquivo do escritor antigo reabre com mais paginas "
-          f"({paginas_1} -> {paginas_antigo})")
+    abrir(j, antigo)
+    # 0.1.17: a imagem da altura da pagina continua cabendo (ver o topo); o que muda e' o texto.
+    checa(formatos(j) != formatos_1 and fim_do_texto(j) > fim_do_texto_1 + 100,
+          f"contraprova: o arquivo do escritor antigo reabre com outro layout (o texto termina "
+          f"em {fim_do_texto(j):.0f} e nao em {fim_do_texto_1:.0f})")
     fechar(j)
 
 

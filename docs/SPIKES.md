@@ -1128,16 +1128,140 @@ gravação) contra a página do mesmo texto no EditDoc:
 
 Fica como pendência (abaixo). Nenhuma dessas diferenças muda entre abrir e reabrir o salvo.
 
+## 0.1.17: paginação mais perto da do Word, medida contra o próprio Word
+
+O oráculo: o Word grava `w:lastRenderedPageBreak` onde começou cada página na última vez que
+paginou o arquivo. Cada um vira, numa cópia em memória, um marcador (`w:bookmarkStart/End`, sem
+largura) partindo o run; no `QTextDocument`, a posição do marcador diz o parágrafo e a linha em que
+o Word quebrou. Para cada quebra: o texto está na mesma página no EditDoc? A página do EditDoc
+começa no mesmo parágrafo? Na mesma linha? (Um U+200B no lugar do marcador mudava a altura da
+linha: um arquivo ia de 27 a 28 páginas.) Só 5 dos 12 arquivos têm as marcas; o manual foi salvo
+pelo EditDoc depois do Word (`Application` = EditDoc no `app.xml`), sem elas: o `Pages` = 48 dele é
+o de uma gravação antiga do Word e não pôde ser conferido quebra a quebra.
+
+Medido no Windows real (plataforma `windows` do Qt, janela com `WA_DontShowOnScreen`, nada na
+tela) e no offscreen com as fontes do Windows usadas carregadas. Carregar TODAS as fontes no
+offscreen mudou o fallback (Arial Unicode): 10 páginas onde o Windows dá 5.
+
+### Causas achadas (por arquivo, na primeira quebra que diverge)
+
+- **Altura da linha.** O Qt 6.11 usa winAscent + winDescent também na plataforma `windows`
+  (Arial 12: 268 twips nos dois), sem o lineGap; o Word soma o "espaço externo" (o lineGap do
+  hhea que passa da altura do win): 276. Arial e Times New Roman: +3 % a +4 % por linha; Calibri,
+  Verdana, Cambria e Segoe UI: nada (medido em `QTextLayout` contra as tabelas da fonte).
+- **Parágrafo vazio junto da tabela.** O `QTextDocumentLayout` esconde o bloco vazio logo depois
+  de uma tabela (`isEmptyBlockAfterTable`) e o logo antes (`isEmptyBlockBeforeTable`, se não tiver
+  fundo). No Word é um parágrafo de verdade. Arquivo 7 (3 páginas, 10 tabelas, cada uma seguida
+  de um parágrafo vazio de 1,5 linha): o EditDoc punha a página 2 do Word inteira na 1.
+- **Marca de parágrafo.** O parágrafo vazio tem a altura da fonte da marca (`w:pPr/w:rPr`); o
+  EditDoc usava a do docDefaults (Arial 12 em vez de Calibri 12 nas caixas vazias do arquivo 7).
+- **Espaços junto da tabela.** O Qt ignora o espaço depois do parágrafo antes de uma tabela, o
+  espaço antes do parágrafo depois dela e, na célula, o antes do primeiro e o depois do último.
+- **Espaço entre parágrafos.** O Qt usa o maior; o Word soma (ECMA-376 17.3.1.33; o colapso é só
+  da entrelinha automática do HTML). O `contextualSpacing` tira o espaço entre o mesmo estilo.
+  Nos arquivos com oráculo quase não há pares com espaço depois E antes, então o oráculo não o
+  separa; ficou pela especificação.
+- **Linhas viúvas e órfãs.** Arquivo 8: as três quebras do Word caem no começo de um parágrafo
+  que o EditDoc partia com uma linha órfã no pé da página. Ligado por padrão no Word (o arquivo
+  não tem `w:widowControl` nenhum).
+- **Imagem com entrelinha múltipla.** O proporcional do Qt multiplica a linha da imagem (1,5 x
+  a imagem). No arquivo 10, a página 11 do Word tem duas imagens (3480 e 3390 twips), 13 linhas de
+  texto (414 cada) e 7 espaços de 160: 1,5 x imagem dá 19 334 twips, mais que a página (14 334);
+  a imagem sem o multiplicador dá 13 372 (ou 13 642 com meia linha de texto por imagem), e o
+  parágrafo seguinte (988) não caberia: o Word multiplica a linha do texto, não a da imagem.
+- **Espaço antes no alto da página.** O `newPage` do Qt faz `y = max(y, topo da página)`: o
+  espaço antes que passa da divisa fica em parte na página seguinte. O Word mantém o espaço antes
+  inteiro (não há `suppressTopSpacing` nem `suppressSpBfAfterPgBrk` nos arquivos).
+- **Não corrigidas:** a página em branco do arquivo 9 (uma quebra de página num parágrafo
+  sozinho seguida de uma quebra de seção "próxima página": o Word começa a seção na página
+  seguinte à capa, o EditDoc deixa uma página a mais); a viúva de um parágrafo com três linhas ou
+  mais em cima (o Word desce UMA linha, o layout do Qt não); a altura das linhas da tabela de
+  cabeçalho do arquivo 10 (a primeira quebra do Word vem 1 a 2 linhas antes); o Aptos (arquivos 9
+  e 11) não existe na máquina, e o fallback não serve de comparação.
+
+### O que entrou (compensação no formato, `interface/paginacao.py`)
+
+| Parte | Como |
+|---|---|
+| linha da fonte | entrelinha proporcional x razão Word/Qt da família (`QRawFont`: head, hhea, OS/2); a linha com objeto alto usa a distância somada (`LineDistanceHeight`) |
+| espaço somado | o de cima com zero depois, o de baixo com a soma antes; `contextualSpacing` |
+| tabela | fundo transparente no vazio de antes; a altura do vazio de depois no espaço do seguinte; os espaços em volta nas margens do quadro |
+| marca de parágrafo | o paragrafo vazio com a fonte do `w:pPr/w:rPr` (`para_qt`) |
+| regras | viúvas e órfãs (o parágrafo inteiro), manter linhas juntas, manter com o próximo (a cadeia), quebra antes do estilo, espaço antes no alto da página |
+
+Cada parte foi medida contra o oráculo sozinha, numa versão intermediária (ainda sem a regra do
+espaço no alto da página e sem a linha da imagem; Windows, quebras certas no mesmo parágrafo /
+mesma linha; o arquivo 7 tem 2 quebras, o 8 tem 3, o 10 tem 23; "todas" é a versão final):
+
+| Parte ligada | arq. 7 | arq. 8 | arq. 10 |
+|---|---|---|---|
+| nenhuma (só a marca de parágrafo) | 0 / 0 | 1 / 0 | 0 / 0 |
+| linha | 0 / 0 | 1 / 0 | 1 / 0 |
+| espaço | 0 / 0 | 1 / 0 | 0 / 0 |
+| tabela | 0 / 0 | 1 / 0 | 2 / 0 |
+| regras | 0 / 0 | 1 / 1 | 0 / 0 |
+| todas | 2 / 2 | 3 / 3 | 1 / 1 |
+
+### Páginas: Word × EditDoc (Windows e offscreen), 0.1.16 → 0.1.17
+
+Word = `<Pages>` do `docProps/app.xml` ou, sem ele, as marcas + 1.
+
+| Arquivo | Word | Windows 0.1.16 → 0.1.17 | offscreen 0.1.16 → 0.1.17 |
+|---|---|---|---|
+| 1 (o do defeito da 0.1.16) e a cópia salva pelo EditDoc | - | 4 → 4 | 4 → 4 |
+| 2 a 4 | - | 5 → 5 | 5 → 5 |
+| 5 e 6: o manual | 48 (gravação antiga) | 52 → 49 | 52 → 49 |
+| 7 | 3 | 3 → 3 | 3 → 3 |
+| 8 | 4 | 3 → 4 | 3 → 4 |
+| 9 (Aptos, que falta) | 14 | 13 → 15 | 13 → 14 |
+| 10 | 24 (23 marcas) | 27 → 26 | 27 → 26 |
+| 11 (Aptos) | 2 | 2 → 2 | 2 → 2 |
+
+### Acerto das quebras do Word (mesmo parágrafo / mesma linha / texto na mesma página)
+
+| Arquivo | quebras | Windows 0.1.16 | Windows 0.1.17 | offscreen 0.1.16 | offscreen 0.1.17 |
+|---|---|---|---|---|---|
+| 7 | 2 | 0 / 0 / 0 | 2 / 2 / 2 | 0 / 0 / 0 | 2 / 2 / 2 |
+| 8 | 3 | 0 / 0 / 0 | 3 / 3 / 3 | 0 / 0 / 0 | 3 / 3 / 3 |
+| 10 | 23 | 0 / 0 / 0 | 1 / 1 / 5 | 0 / 0 / 0 | 1 / 1 / 5 |
+| 9 (Aptos) | 13 | 1 / 1 / 6 | 0 / 0 / 9 | 0 / 0 / 5 | 2 / 2 / 11 |
+| 11 (Aptos) | 1 | 1 / 0 / 1 | 1 / 0 / 1 | 1 / 1 / 1 | 1 / 0 / 1 |
+| total | 42 | 2 / 1 / 7 | 7 / 6 / 20 | 1 / 1 / 6 | 9 / 8 / 22 |
+
+Nos arquivos com as fontes que existem na máquina (7, 8 e 10), o parágrafo da quebra passou de
+0 a 6 em 28 e o texto na página certa de 0 a 10. No 10 a primeira quebra já vem 1 a 2 linhas
+antes da do Word (a tabela do cabeçalho) e o erro se acumula até o fim (a última quebra fica 46
+parágrafos antes; na 0.1.16, 52).
+
+### Desempenho
+
+Custo por tecla (média de 40, `ConjuntoDePaginacao`): compensação 0,3 a 0,8 ms (duas chamadas
+por pintura), regras 0,4 a 1,7 ms (2 páginas conferidas); uma tecla em 40 muda uma quebra das
+regras e refaz o layout de baixo (até 54 ms no manual sintético e 122 ms no plano, uma vez).
+Gate (`teste_desempenho`, p95, mediana de 3 rodadas, mesma máquina, 0.1.16 → 0.1.17): capa
+15,5 → 18,3; sumário 18,0 → 20,3; corpo 13,1 → 14,1; antes da capa 26,1 → 27,6; 2000 revisões
+13,8 → 14,4; o documento simples de referência 8,9 → 11,6; plano (pintura) 7,3 → 13,3, 6,6 →
+10,8, 9,6 → 9,8 (a tecla do Qt, 35 a 38 ms, continua a exceção conhecida). Todos dentro do
+critério do teste (ate' 2,5 x o simples). A vista passou a refazer tudo abaixo quando o bloco de
+baixo ou a base da tabela se movem (a quebra das regras segura a altura do documento).
+
+### Regressão
+
+Os 12 `.docx` (cópias temporárias, plataforma `windows`): abrir → salvar como → reabrir →
+salvar → reabrir: todos gravam, sem aviso, conferência e validador passando, sem diferença c14n
+entre a 1ª e a 2ª gravação, mesmas páginas nas três aberturas, documento sem "alterado" ao abrir.
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com
   uma reescrita (layout próprio para tabelas ou documento por trecho; ver "0.1.15"). O `.docx`
   real que abria com 4 páginas e reabria com 6 foi resolvido na 0.1.16.
-- 0.1.16: paginação mais perto da do Word: somar o espaço depois e o espaço antes (o Qt usa o
-  maior), controle de viúvas e órfãs, manter com o próximo, manter linhas juntas e
-  `contextualSpacing` (ver "0.1.16"). Conferir no Word: a fonte do texto sem formatação num
-  arquivo sem `styles.xml` (Times New Roman 10) e as páginas dos 11 arquivos reais no Windows real
-  (o offscreen mede a linha sem o `lineGap` da fonte).
+- 0.1.16: paginação mais perto da do Word: feita na 0.1.17 (ver "0.1.17"). Conferir no Word: a
+  fonte do texto sem formatação num arquivo sem `styles.xml` (Times New Roman 10).
+- 0.1.17: a viúva de três linhas ou mais (descer uma linha só), a quebra de página seguida de
+  quebra de seção "próxima página" (página a mais), a altura das linhas de tabela e o espaço no
+  começo e no fim da célula; conferir no Word a soma dos espaços (o oráculo não a separou) e a
+  linha da imagem com entrelinha múltipla (imagem + meia linha do texto, deduzido do arquivo 10).
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,

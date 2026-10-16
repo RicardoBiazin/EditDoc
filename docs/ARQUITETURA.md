@@ -1045,6 +1045,41 @@ comentário ou de uma caixa de texto só são preservadas; mover texto (recortar
 controle ligado vira exclusão e inserção, não movimento; o comentário na margem do PDF não é um
 balão (texto pequeno ao lado do trecho, um embaixo do outro).
 
+## Paginação como a do Word (0.1.17)
+
+Medida contra o próprio Word: cada `w:lastRenderedPageBreak` que o Word grava diz onde ele começou
+uma página na última vez (docs/SPIKES.md, "0.1.17"). O `QTextDocumentLayout` continua o layout;
+o que muda é o formato que ele recebe, mantido em dia por `ConjuntoDePaginacao`
+(`interface/paginacao.py`, chamado por `LayoutPaginado.atualizar_secoes`, antes e depois das
+seções). Nada disso vai ao arquivo: o `de_qt` lê os valores de verdade.
+
+- Compensação (`compensar`, só o trecho editado e os vizinhos): a entrelinha leva a razão
+  Word/Qt da família (`fator_da_familia`: o Word soma o espaço externo da fonte; Arial e Times
+  1,03 a 1,04, Calibri 1); o bloco com imagem mais alta que a linha usa a distância somada
+  (`LineDistanceHeight`), porque o Word multiplica a linha do texto, não a da imagem; o espaço
+  entre parágrafos irmãos é somado (o de cima fica com zero depois, o de baixo com a soma antes),
+  menos o que o `contextualSpacing` manda tirar entre o mesmo estilo; depois de uma quebra do
+  usuário, só o espaço antes; o parágrafo vazio antes de uma tabela ganha fundo transparente (o
+  Qt só o mostra assim) e o de depois passa a altura dele ao seguinte; os espaços que o Qt ignora
+  junto da tabela vão para as margens do quadro dela. O valor de verdade fica em
+  `PROP_WORD_ANTES/DEPOIS/LINHA` ("real;aplicado", `ponte_qt/paginacao.py`), como o recuo
+  escondido da seção: quem troca o valor grava um novo, que é do usuário.
+- Regras (`regras`, página a página a partir da editada, até a página começar como no plano
+  anterior): linhas viúvas e órfãs (ligado por padrão, como no Word), manter linhas juntas,
+  manter com o próximo (a cadeia inteira), quebra antes do estilo e o espaço antes no alto da
+  página (o Qt o perde ali; o Word o mantém). O parágrafo que desce ganha a quebra das regras
+  (`PROP_QUEBRA_REGRA`), que sai quando a simulação do parágrafo no lugar de antes (as alturas
+  das linhas dele depois da unidade de cima) diz que ele caberia.
+- Desfazer: os ajustes são o passo anotado das seções e das notas (`ConjuntoDeNotas.ajustar`).
+- Tela: a quebra de página mais abaixo segura o resto, então a altura do documento pode não mudar
+  com o texto de cima se movendo; a vista confere o bloco de baixo e a base da tabela.
+
+Limites: a viúva de um parágrafo com três linhas ou mais em cima pediria descer uma linha só, o
+que o layout do Qt não faz (fica como está); o espaço antes do primeiro parágrafo de uma célula e o
+depois do último, a linha de tabela que não se parte (`cantSplit`) e a altura das linhas de tabela
+não entram; cabeçalho, rodapé e notas não são compensados; a quebra de página seguida de uma quebra
+de seção (próxima página) dá uma página a mais (o Word não a cria).
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
@@ -1113,9 +1148,10 @@ edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas na t
 ## Riscos abertos
 
 1. Espaçamento entre parágrafos: o Qt colapsa margens verticais para o maior
-   valor, e o Word, ao que tudo indica, soma. Conferido no código do Qt 6.11 na 0.1.16
-   (`layoutBlock`: `qMax(topMargin, bottomMargin do anterior)`); continua aberto, junto com
-   viúvas e órfãs, manter com o próximo e `contextualSpacing` (docs/SPIKES.md, 0.1.16).
+   valor, e o Word soma. Conferido no código do Qt 6.11 na 0.1.16 (`layoutBlock`:
+   `qMax(topMargin, bottomMargin do anterior)`); desde a 0.1.17 compensado no formato, com
+   viúvas e órfãs, manter com o próximo, manter linhas juntas e `contextualSpacing` (ver
+   "Paginação como a do Word"). Fica o que está nos limites de lá.
 2. O Word pode reclamar de um `.docx` gerado sem ser visto. Mitigação: vocabulário
    conservador, validação de ordem dos elementos, releitura antes da troca, e um
    protocolo de aceite manual com amostras.

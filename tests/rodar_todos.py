@@ -114,6 +114,8 @@ SUITES = [
      "0.1.15: a tecla refaz so' a parte da linha nos tiles; igual a' tela refeita, pixel a pixel"),
     ("teste_fidelidade.py",
      "0.1.16: arquivo sem styles.xml reabre com as mesmas paginas; conferencia da formatacao efetiva"),
+    ("teste_paginacao_word.py",
+     "0.1.17: paginacao do Word (linha da fonte, espaco somado, viuvas, keepNext, tabela); oraculo"),
     ("teste_mover_redimensionar.py",
      "0.1.9: mover e redimensionar objetos (mouse, setas, dialogo), quebra de texto, linha <-> flutuante, cabecalho, VML"),
     ("teste_notas.py",

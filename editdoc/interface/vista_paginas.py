@@ -44,6 +44,7 @@ from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina
 from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import notas as pq_notas
+from editdoc.ponte_qt import paginacao as pq_paginacao
 from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import propriedades as pq_props
@@ -684,7 +685,16 @@ class VistaPaginas(QAbstractScrollArea):
         if tabela is not None:
             rt = dl.frameBoundingRect(tabela)
             antes = (rt.top(), rt.bottom(), r.top(), r.bottom())
-        self._pendencias.append((pos, adicionado, base_antiga, antes))
+        # 0.1.17: o topo do bloco de baixo ANTES da mudanca (ver `_aplicar_pendencias`).
+        # O bloco recem-criado (Enter) ainda nao tem layout: perguntar o retangulo dele aqui
+        # derruba o processo (medido). Sem o topo, a pintura refaz tudo dali para baixo.
+        seguinte = doc.findBlock(pos + adicionado).next()
+        topo_seguinte = None
+        if seguinte.isValid():
+            lay_seguinte = seguinte.layout()
+            topo_seguinte = dl.blockBoundingRect(seguinte).top() \
+                if lay_seguinte is not None and lay_seguinte.lineCount() > 0 else math.nan
+        self._pendencias.append((pos, adicionado, base_antiga, antes, topo_seguinte))
         self.viewport().update()
 
     def _extensao(self, bloco) -> tuple[float, float]:
@@ -737,7 +747,7 @@ class VistaPaginas(QAbstractScrollArea):
             topo = min(self._faixa_de(p[0], p[0])[0] for p in pendencias)
             self._invalidar_faixa(topo, math.inf)
             return
-        pos, adicionado, base_antiga, antes = pendencias[0]
+        pos, adicionado, base_antiga, antes, topo_seguinte = pendencias[0]
         if antes is not None:
             faixa = self._faixa_na_tabela(pos, adicionado, antes)
             if faixa is not None:
@@ -757,6 +767,14 @@ class VistaPaginas(QAbstractScrollArea):
                         self._so_a_parte = False
                     return
         topo, base = self._faixa_de(pos, pos + adicionado)
+        if self._tabela_moveu(pos, antes) or \
+                (antes is None and self._seguinte_moveu(pos, adicionado, topo_seguinte)):
+            # O bloco de baixo se moveu (0.1.17), mesmo com a altura do documento igual: uma
+            # quebra de pagina mais abaixo (do usuario ou das regras do Word) segura o resto no
+            # lugar. Medido: a linha que quebra num item de lista do plano deixava os itens de
+            # baixo velhos na tela.
+            self._invalidar_faixa(topo, math.inf)
+            return
         # So' as linhas que podem ter mudado (0.1.8): da linha anterior a' da mudanca (apagar
         # pode puxar uma palavra para cima) ate' a base do bloco, a de antes ou a de agora. Num
         # paragrafo alto (a ancora da capa, com objetos que reservam a pagina inteira) o bloco
@@ -766,6 +784,26 @@ class VistaPaginas(QAbstractScrollArea):
             self._invalidar_faixa(topo, max(base, base_antiga))
             return
         self._invalidar_linhas(linhas, topo, max(base, base_antiga))
+
+    def _tabela_moveu(self, pos: int, antes) -> bool:
+        """A base da tabela editada saiu do lugar (0.1.17): o que vem abaixo dela se moveu."""
+        if antes is None:
+            return False
+        tabela = self._tabela_externa(pos)
+        return tabela is not None and \
+            abs(self.layout_pag.doc.documentLayout().frameBoundingRect(tabela).bottom()
+                - antes[1]) >= 0.5
+
+    def _seguinte_moveu(self, pos: int, adicionado: int, topo_seguinte) -> bool:
+        """O bloco logo abaixo do trecho mudado saiu do lugar (0.1.17)? `topo_seguinte`: o topo
+        dele antes da mudanca (NaN: bloco sem layout ainda, conta como movido)."""
+        doc = self.layout_pag.doc
+        seguinte = doc.findBlock(pos + adicionado).next()
+        if topo_seguinte is None or not seguinte.isValid():
+            return False
+        if math.isnan(topo_seguinte):
+            return True
+        return abs(doc.documentLayout().blockBoundingRect(seguinte).top() - topo_seguinte) >= 0.5
 
     def _invalidar_linhas(self, linhas, topo: float, base: float,
                           xs: tuple = ()) -> None:
@@ -1542,7 +1580,7 @@ class VistaPaginas(QAbstractScrollArea):
                 # Nem a quebra derivada da secao (0.1.12): a quebra de secao tem o seu rotulo.
                 bf = bloco.blockFormat()
                 if bool(bf.pageBreakPolicy() & _QUEBRA_ANTES) and \
-                        not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf):
+                        not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf) and                         not pq_paginacao.eh_regra(bf):  # 0.1.17: nem a das regras do Word
                     lista.append(bloco.blockNumber())
                 bloco = bloco.next()
             self._quebras = (chave, lista)

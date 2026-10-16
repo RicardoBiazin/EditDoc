@@ -220,12 +220,16 @@ def props_de_bloco(bf: QTextBlockFormat) -> dict:
             out["recuo_primeira_linha_tw"] = real
     elif bf.hasProperty(P.TextIndent):
         out["recuo_primeira_linha_tw"] = round(bf.textIndent())
-    if bf.hasProperty(P.BlockTopMargin):
-        out["espaco_antes_tw"] = twips_de_px(bf.topMargin())
-    if bf.hasProperty(P.BlockBottomMargin):
-        out["espaco_depois_tw"] = twips_de_px(bf.bottomMargin())
-    if bf.hasProperty(P.LineHeight) and bf.lineHeightType() == _PROPORCIONAL:
-        out["espacamento_linha_pct"] = round(bf.lineHeight())
+    # 0.1.17: os valores de verdade, sem a compensacao do layout do Word (ponte_qt/paginacao.py).
+    from editdoc.ponte_qt import paginacao as pq_paginacao  # import tardio: ele usa o modelo
+    antes, depois = pq_paginacao.antes_real(bf), pq_paginacao.depois_real(bf)
+    if antes is not None:
+        out["espaco_antes_tw"] = twips_de_px(antes)
+    if depois is not None:
+        out["espaco_depois_tw"] = twips_de_px(depois)
+    linha = pq_paginacao.linha_real(bf)
+    if linha is not None and linha[0] == _PROPORCIONAL:
+        out["espacamento_linha_pct"] = round(linha[1])
     nivel = bf.property(PROP_NIVEL)
     if isinstance(nivel, int) and 0 <= nivel <= 8:
         out["nivel"] = nivel
@@ -351,6 +355,9 @@ def recompor_bloco(bf: QTextBlockFormat, base_velha: dict, base_nova: dict,
     for prop in PROPS_QT_BLOCO:
         novo.clearProperty(prop)
     novo.clearProperty(PROP_NIVEL)
+    # 0.1.17: espaco e entrelinha vem do zero; a compensacao do layout e' refeita depois.
+    from editdoc.ponte_qt import paginacao as pq_paginacao
+    pq_paginacao.esquecer(novo, antes=True, depois=True, linha=True)
     # O recuo da primeira linha passa a ser o de verdade; o visual da lista volta no ajuste.
     novo.clearProperty(PROP_RECUO_REAL)
     aplicar_bloco(novo, {**base_nova, **proprio})

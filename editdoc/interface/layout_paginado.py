@@ -128,6 +128,9 @@ class LayoutPaginado:
         from editdoc.interface.secoes import ConjuntoDeSecoes
         self.faixas.layout = self
         self.secoes = ConjuntoDeSecoes(self)
+        # Paginacao como a do Word (0.1.17): compensacao do layout e regras de quebra.
+        from editdoc.interface.paginacao import ConjuntoDePaginacao
+        self.paginacao = ConjuntoDePaginacao(self)
         self._hb_qt = float(pagina.corpo_altura_tw())
         self._aplicar()
         # Ajustar fonte e margem marca o documento como alterado. Um documento novo nasce limpo.
@@ -181,7 +184,12 @@ class LayoutPaginado:
 
     def atualizar_secoes(self, forcar: bool = False) -> bool:
         """Secoes em dia (0.1.12): estrutura, geometria, quebras derivadas e o mapa de folhas.
-        True se a tela muda (quem pinta limpa o cache)."""
+        True se a tela muda (quem pinta limpa o cache).
+
+        0.1.17: antes, a compensacao do layout (espaco somado, linha do Word, vazio junto da
+        tabela); depois, as regras de quebra do Word (viuvas e orfas, manter com o proximo).
+        """
+        compensou = self.paginacao.compensar()
         mudou = self.secoes.atualizar(forcar)
         ctx = self.flutuantes.contexto
         ctx.folhas = self._folha_para_flutuantes if self._multiplas() else None
@@ -191,7 +199,14 @@ class LayoutPaginado:
         if mudou:
             self._chave_campos = None
             self.contexto_campos.secoes = self.campos_da_folha if self._multiplas() else None
-        return mudou
+        # As secoes mudam formatos (quebras e recuos derivados): a compensacao deles vem ja',
+        # senao a pintura seguinte mudaria o layout de novo (a tela com cache ficaria velha).
+        compensou = self.paginacao.compensar() or compensou
+        if self.paginacao.regras(forcar):
+            mudou = True
+            self.secoes.atualizar()  # a quebra das regras pode mudar o mapa de folhas
+            compensou = self.paginacao.compensar() or compensou
+        return mudou or compensou
 
     def campos_da_folha(self, n: int):
         """(indice na secao, pagina numerada, paginas da secao) da folha n (0.1.12)."""

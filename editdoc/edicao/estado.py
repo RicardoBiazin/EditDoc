@@ -37,6 +37,13 @@ class EstadoDoCursor:
     numeracao: bool
 
 
+
+def _entrelinha(bloco_fmt) -> int:
+    """Entrelinha proporcional de verdade (0.1.17: sem a compensacao do layout do Word)."""
+    from editdoc.ponte_qt import paginacao as pq_paginacao
+    linha = pq_paginacao.linha_real(bloco_fmt)
+    return round(linha[1]) if linha is not None and linha[0] == _PROPORCIONAL else 100
+
 def ler(editor: QTextEdit) -> EstadoDoCursor:
     doc = editor.document()
     cursor = editor.textCursor()
@@ -86,8 +93,7 @@ def ler(editor: QTextEdit) -> EstadoDoCursor:
         subscrito=va == QTextCharFormat.VerticalAlignment.AlignSubScript,
         sobrescrito=va == QTextCharFormat.VerticalAlignment.AlignSuperScript,
         alinhamento=alinhamento,
-        espacamento=round(bloco_fmt.lineHeight())
-        if bloco_fmt.lineHeightType() == _PROPORCIONAL else 100,
+        espacamento=_entrelinha(bloco_fmt),
         marcadores=tipo == "marcadores",
         numeracao=tipo == "numeracao",
     )

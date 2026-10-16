@@ -1,3 +1,75 @@
+## 0.1.17 - 2026-10-16
+
+Paginação mais perto da do Word, medida contra o próprio Word: cada `w:lastRenderedPageBreak` que
+o Word grava diz onde ele começou uma página, e o EditDoc passou a quebrar nos mesmos lugares em
+mais arquivos.
+
+Medição (12 `.docx` reais, cópias em memória, no Windows real e no offscreen; docs/SPIKES.md,
+"0.1.17"): nos arquivos com as marcas do Word e com as fontes que existem na máquina, a página
+do EditDoc começava no parágrafo do Word em 0 de 28 quebras; agora em 6, e o texto da quebra
+está na página certa em 10 (antes, 0). Dois arquivos passam a ter as páginas do Word (3 × 3 e
+4 × 4 com as quebras na mesma linha); o manual vai de 52 a 49 (o `app.xml` diz 48, de uma
+gravação antiga do Word); o de 24 páginas, de 27 a 26.
+
+Causas achadas e corrigidas (só no layout: tela, PDF e impressão; nada muda no arquivo gravado):
+
+- altura da linha: o Qt usa a ascendente e a descendente da fonte (também na plataforma
+  `windows`); o Word soma o espaço externo (o lineGap do hhea que passa da altura do OS/2): Arial
+  12 tem 268 twips no Qt e 276 no Word. A entrelinha leva a razão Word/Qt da família, medida nas
+  tabelas da fonte;
+- a imagem na linha com entrelinha múltipla: o Qt multiplicava a linha da imagem (1,5 vez a
+  imagem); o Word multiplica a linha do texto;
+- o parágrafo vazio logo antes e logo depois de uma tabela, que o Qt escondia, ocupa a altura
+  dele; os espaços que o Qt ignora junto da tabela (depois do parágrafo de cima, antes do de
+  baixo) vão para as margens do quadro;
+- o parágrafo vazio tem a altura da fonte da marca de parágrafo (`w:pPr/w:rPr`), não a do
+  docDefaults;
+- espaço entre parágrafos somado (o Qt usa o maior), com o `contextualSpacing` entre parágrafos
+  do mesmo estilo; depois de uma quebra do usuário, só o espaço antes;
+- controle de linhas viúvas e órfãs (ligado por padrão), manter linhas juntas, manter com o
+  próximo (a cadeia inteira), quebra de página antes vinda do estilo e o espaço antes no alto da
+  página (o Qt o perdia em parte): o parágrafo desce com uma quebra que não é do usuário
+  (`PROP_QUEBRA_REGRA`), tirada quando ele voltaria a caber.
+
+Como: `ConjuntoDePaginacao` (`interface/paginacao.py`) mantém em dia, no formato dos blocos e das
+tabelas, a compensação (só o trecho editado e os vizinhos) e as regras (da página editada até a
+página começar como antes), num passo anotado do desfazer como os das seções e das notas. O valor
+de verdade de cada espaço e entrelinha fica numa propriedade (`ponte_qt/paginacao.py`, UserProperty
++ 45 a + 49) e é o que o `de_qt`, a faixa, a régua e o copiar leem. A tela passou a refazer tudo
+abaixo quando o bloco de baixo (ou a base da tabela) se move com a altura do documento igual: uma
+quebra mais abaixo segura o resto, e os itens de baixo ficavam velhos na tela.
+
+Ficam diferentes (docs/ARQUITETURA.md): a viúva de três linhas ou mais em cima (o Word desce uma
+linha), a altura das linhas de tabela e o espaço no começo e no fim da célula, a quebra de página
+seguida de quebra de seção "próxima página" (uma página a mais), cabeçalho, rodapé e notas sem
+compensação.
+
+Desempenho: 0,7 a 2,5 ms por tecla (compensação e regras); uma tecla em 40 que muda uma quebra das
+regras refaz o layout de baixo. Gate (p95, mediana de 3, 0.1.16 → 0.1.17): capa 15,5 → 18,3,
+sumário 18,0 → 20,3, corpo 13,1 → 14,1, antes da capa 26,1 → 27,6, 2000 revisões 13,8 → 14,4; o
+documento simples de referência 8,9 → 11,6; plano (pintura) 7,3 → 13,3 (a tecla do Qt continua a
+exceção conhecida). Dentro do critério do teste.
+
+Regressão nos 12 `.docx` reais (abrir → salvar como → reabrir → salvar → reabrir, no Windows):
+todos gravam, conferência e validador passam, sem diferença c14n entre a 1ª e a 2ª gravação,
+mesmas páginas nas três aberturas.
+
+Testes: suíte nova `teste_paginacao_word` (fixtures geradas em código, cada regra com contraprova:
+linha da fonte, espaço somado, `contextualSpacing`, viúvas e órfãs, `keepLines`, `keepNext` e a
+cadeia, `pageBreakBefore` do estilo, espaço no alto da página e depois da quebra do usuário,
+vazio e espaços junto da tabela, imagem com entrelinha 1,5, marca de parágrafo, arquivo gravado
+igual com e sem a compensação, desfazer e copiar; oráculo com `lastRenderedPageBreak` sintético
+num modelo simples do Word: 9 de 9 quebras certas, 0 sem a compensação; custo por tecla).
+Contraprovas novas na vista (`teste_pintura_parcial`: o bloco de baixo; `teste_desempenho`: a base
+da tabela). Verificações reescritas, sem tirar nenhuma: `teste_limites` lê o espaço depois pelo
+valor de verdade (o formato tem a soma no de baixo); `teste_zoom` compara com o layout já assentado
+(as regras ajustam na primeira pintura); `teste_desempenho` tira o controle de viúvas da fixture
+do objeto flutuante (senão o parágrafo desceria inteiro e a linha estreita não desceria sozinha);
+`teste_fidelidade` passa a acusar o arquivo do escritor antigo pelo layout do texto (a imagem da
+altura da página continua cabendo, como no Word); a contraprova dos números de lista de
+`teste_pintura_parcial` desliga a compensação (sair da lista refaz o formato e limpa o cache, o
+que esconderia o número velho).
+
 ## 0.1.16 - 2026-10-15
 
 O arquivo sem `styles.xml` (gerado por conversores de PDF e outros programas) volta do EditDoc

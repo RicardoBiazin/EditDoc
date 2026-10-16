@@ -253,7 +253,10 @@ def _irredutivel() -> bytes:
                                  largura * EMU, altura * EMU, h=("margin", "align", "right"),
                                  v=("paragraph", "posOffset", 0))
              + "<w:r><w:t>Capa.</w:t></w:r></w:p>"
-             + "".join(f"<w:p><w:r><w:t>Linha {i} {tf.TEXTO}</w:t></w:r></w:p>" for i in range(30)))
+             + "".join(f'<w:p><w:pPr><w:widowControl w:val="0"/></w:pPr>'
+                       f"<w:r><w:t>Linha {i} {tf.TEXTO}</w:t></w:r></w:p>" for i in range(30)))
+    # 0.1.17: sem o controle de linhas viuvas e orfas (ligado por padrao, como no Word), o
+    # paragrafo partido no pe' da pagina desceria inteiro e a linha estreita nao desceria sozinha.
     return tf.doc_do_corpo(corpo)
 
 
@@ -562,6 +565,16 @@ def testar_plano() -> None:
                   + [K.Key_Return] + [K.Key_C] * 2 + [K.Key_Backspace] * 3)
         ruins = _sequencia_confere(painel, pos, teclas)
         checa_igual(ruins, 0, f"celula: {len(teclas)} teclas sem nada velho na tela")
+        # Contraprova (0.1.17): a linha da tabela que cresce desce o que vem abaixo dela ate' a
+        # quebra das regras do Word que segura o resto (a altura do documento nao muda).
+        original_t = vp.VistaPaginas._tabela_moveu
+        vp.VistaPaginas._tabela_moveu = lambda self, *a: False
+        try:
+            sabotado = _sequencia_confere(painel, pos, teclas)
+        finally:
+            vp.VistaPaginas._tabela_moveu = original_t
+        checa(sabotado > 0, f"contraprova: sem conferir a base da tabela, {sabotado} teclas "
+                            "deixam a tela velha")
         # Contraprova: a faixa horizontal errada (fora da celula) deixa a tela velha.
         original_x = vp.VistaPaginas._colunas_da_celula
         vp.VistaPaginas._colunas_da_celula = lambda self, p: (-5000.0, -4000.0)

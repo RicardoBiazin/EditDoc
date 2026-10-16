@@ -24,6 +24,9 @@ def _painel():
     painel.show()
     drenar_eventos(2)
     painel.setPlainText(TEXTO)
+    # 0.1.17: as regras de paginacao do Word (viuvas e orfas) ajustam o layout na primeira
+    # pintura; o teste compara com o layout ja' assentado.
+    painel.layout_pag.atualizar_secoes()
     painel.document().clearUndoRedoStacks()
     painel.document().setModified(False)
     return painel

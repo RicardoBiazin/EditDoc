@@ -86,7 +86,11 @@ def testar_docdefaults_na_tela() -> None:
     doc = j.painel.documento_corpo()
     corpo = [b for b in blocos(doc) if b.text() in ("um", "dois")]
     bf = corpo[0].blockFormat()
-    checa_igual(twips_de_px(bf.bottomMargin()), 160, "o paragrafo do corpo tem 8 pt depois")
+    # 0.1.17: o formato do Qt leva o espaco somado no paragrafo de baixo (o Qt usaria o maior);
+    # o valor de verdade do paragrafo e' o que a compensacao guarda.
+    from editdoc.ponte_qt import paginacao as pq_paginacao
+    checa_igual(twips_de_px(pq_paginacao.depois_real(bf)), 160,
+                "o paragrafo do corpo tem 8 pt depois")
     checa(bf.lineHeightType() == _PROPORCIONAL and round(bf.lineHeight()) == 108,
           "e 108% entre linhas")
     dl = doc.documentLayout()

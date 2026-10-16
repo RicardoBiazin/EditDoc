@@ -42,6 +42,7 @@ from editdoc.ponte_qt import campos, imagens, links, listas, marcas, opacos
 from editdoc.ponte_qt import comentarios as pq_comentarios
 from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import estilos as pq_estilos
+from editdoc.ponte_qt import paginacao as pq_paginacao
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt import revisoes as pq_revisoes
 from editdoc.ponte_qt import secoes as pq_secoes
@@ -184,7 +185,7 @@ def paragrafo_do_formato(bf, res, em_celula: bool = False) -> Paragrafo:
     # O espacador da area das notas (0.1.10) nao e' quebra do usuario: nao volta ao arquivo.
     # A quebra derivada da secao (0.1.12) tambem nao e' do usuario.
     p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore) \
-        and not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)
+        and not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)         and not pq_paginacao.eh_regra(bf)  # 0.1.17: a quebra das regras do Word nao e' do usuario
     p.extras = pq_props.extras_de_ppr(bf)
     pq_revisoes.ler_paragrafo(bf, p)  # 0.1.13
     return p

@@ -362,7 +362,7 @@ def sem_espacador(fmt):
         politica = QTextFormat.PageBreakFlag.PageBreak_Auto
         if bits & 1:
             politica |= QTextFormat.PageBreakFlag.PageBreak_AlwaysAfter
-        if bits & 2:
+        if bits & 2 or novo.property(_USUARIO + 48):  # 0.1.17: PROP_QUEBRA_REGRA fica
             politica |= QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore
         novo.setPageBreakPolicy(politica)
     return novo

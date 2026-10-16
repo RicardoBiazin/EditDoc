@@ -90,6 +90,7 @@ from editdoc.ponte_qt import links as pq_links
 from editdoc.ponte_qt import listas as pq_listas
 from editdoc.ponte_qt import marcas as pq_marcas
 from editdoc.ponte_qt import notas as pq_notas
+from editdoc.ponte_qt import paginacao as pq_paginacao
 from editdoc.ponte_qt import secoes as pq_secoes
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import opacos as pq_opacos
@@ -999,6 +1000,7 @@ class PainelDocumento(VistaPaginas):
         bf = QTextBlockFormat(self._cursor.blockFormat())
         bf.clearProperty(pq_notas.PROP_QUEBRA_NOTA)  # o espacador das notas nao passa adiante
         bf.clearProperty(pq_secoes.PROP_QUEBRA_SECAO)  # nem a quebra derivada da secao (0.1.12)
+        bf.clearProperty(pq_paginacao.PROP_QUEBRA_REGRA)  # nem a das regras do Word (0.1.17)
         bf.setPageBreakPolicy(_QUEBRA if quebra else _SEM_QUEBRA)
         bf.clearProperty(pq_listas.PROP_SAIU_DA_LISTA)  # a marca do Backspace nao passa adiante
         proximo = ed_estilos.formatos_do_proximo(self.document(), bf) if no_fim else None
@@ -1138,7 +1140,7 @@ class PainelDocumento(VistaPaginas):
             base.clearProperty(propriedade)
         bf = QTextBlockFormat(c.blockFormat())
         for propriedade in (pq_notas.PROP_QUEBRA_NOTA, pq_secoes.PROP_QUEBRA_SECAO,
-                            pq_listas.PROP_SAIU_DA_LISTA):
+                            pq_listas.PROP_SAIU_DA_LISTA, pq_paginacao.PROP_QUEBRA_REGRA):
             bf.clearProperty(propriedade)
         bf.setPageBreakPolicy(_SEM_QUEBRA)
         c.insertBlock(bf)
@@ -2235,7 +2237,9 @@ def ed_links_formato_antes_da_nota(doc, pos: int) -> QTextCharFormat:
 def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
     """O HTML do trecho copiado sem a quebra de pagina do espacador das notas (0.1.10): ela nao
     e' do usuario, e colar a levaria como quebra de verdade. Nem (0.1.12) a quebra derivada da
-    secao e o recuo direito escondido da secao estreita: colados, virariam do usuario."""
+    secao e o recuo direito escondido da secao estreita: colados, virariam do usuario. Nem
+    (0.1.17) a compensacao do layout do Word (espaco somado, entrelinha da fonte, quebra das
+    regras): o HTML leva os valores de verdade do paragrafo."""
     from editdoc.interface.secoes import ConjuntoDeSecoes
     from editdoc.ponte_qt.imagens import DocumentoQt
     tmp = DocumentoQt()
@@ -2244,6 +2248,10 @@ def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
     bloco = tmp.begin()
     while bloco.isValid():
         bf = bloco.blockFormat()
+        if any(bf.hasProperty(p) for p in pq_paginacao.PROPS_DE_PAGINACAO):
+            bf = pq_paginacao.sem_compensacao(bf)
+            QTextCursor(bloco).setBlockFormat(bf)
+            tem = True
         if pq_notas.eh_espacador(bf) or pq_secoes.eh_derivada(bf) or \
                 pq_estilos.recuo_secao(bf) is not None:
             bf = pq_notas.sem_espacador(bf)
@@ -2252,6 +2260,15 @@ def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
             QTextCursor(bloco).setBlockFormat(bf)
             tem = True
         bloco = bloco.next()
+    pilha = list(tmp.rootFrame().childFrames())
+    while pilha:
+        quadro = pilha.pop()
+        pilha.extend(quadro.childFrames())
+        fmt = quadro.frameFormat()
+        if fmt.hasProperty(pq_paginacao.PROP_WORD_ANTES) or \
+                fmt.hasProperty(pq_paginacao.PROP_WORD_DEPOIS):
+            quadro.setFrameFormat(pq_paginacao.sem_compensacao(fmt))
+            tem = True
     return tmp.toHtml() if tem else frag.toHtml()
 
 

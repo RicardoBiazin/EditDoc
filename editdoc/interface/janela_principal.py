@@ -400,8 +400,11 @@ class JanelaPrincipal(QMainWindow):
         bf = self.painel.textCursor().block().blockFormat()
         # Recuos em twips no bloco (0.1.4); espacos em px96.
         # 0.1.12: sem o recuo escondido da secao estreita.
+        # 0.1.17: o espaco de verdade, sem a compensacao do layout do Word.
+        from editdoc.ponte_qt import paginacao as pq_paginacao
         self.faixa.mostrar_paragrafo(round(bf.leftMargin()), round(pq_estilos.recuo_direito_real(bf)),
-                                     round(bf.topMargin() * 15), round(bf.bottomMargin() * 15))
+                                     round((pq_paginacao.antes_real(bf) or 0.0) * 15),
+                                     round((pq_paginacao.depois_real(bf) or 0.0) * 15))
         c = self.comandos
         c.acao("marcas_formatacao").setChecked(self.painel.marcas_visiveis())
         # A regua guarda o proprio estado: antes de a janela aparecer, isHidden() da' True.

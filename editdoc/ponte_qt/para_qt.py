@@ -370,6 +370,13 @@ def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QText
 def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resolvedor) -> None:
     cursor.setBlockFormat(_formato_do_bloco(p, res, cursor.currentTable() is not None))
     base = res.caractere(p.estilo, None)
+    if not p.runs and p.extras:
+        # 0.1.17: o paragrafo vazio tem a altura da marca de paragrafo (o w:rPr do w:pPr), como
+        # no Word; o texto digitado nele tambem a usa.
+        from editdoc.ponte_qt import paginacao as pq_paginacao
+        marca = pq_paginacao.fonte_da_marca(p.extras, res.estilos)
+        if marca:
+            base = {**base, **marca}
     if base:
         # Bloco vazio: a altura da linha e o texto digitado nele seguem o estilo.
         cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))

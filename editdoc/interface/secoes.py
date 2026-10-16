@@ -39,6 +39,7 @@ from editdoc.modelo.pagina import Pagina, pagina_efetiva
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import secoes as pq
 from editdoc.ponte_qt.notas import PROP_QUEBRA_NOTA
+from editdoc.ponte_qt.paginacao import PROP_QUEBRA_REGRA as _PROP_QUEBRA_REGRA
 
 log = log_interno.obter(__name__)
 
@@ -478,7 +479,8 @@ class ConjuntoDeSecoes:
         depois, antes = _inteiro(_DEPOIS), _inteiro(_ANTES)
         if bits & BIT_DEPOIS and not quer & BIT_DEPOIS:
             valor &= ~depois
-        if bits & BIT_ANTES and not quer & BIT_ANTES and not fmt.property(PROP_QUEBRA_NOTA):
+        if bits & BIT_ANTES and not quer & BIT_ANTES and not fmt.property(PROP_QUEBRA_NOTA) \
+                and not fmt.property(_PROP_QUEBRA_REGRA):
             valor &= ~antes
         if quer & BIT_DEPOIS and not tabela:
             valor |= depois
