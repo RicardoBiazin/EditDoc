@@ -1430,6 +1430,78 @@ colunas (nada muda, testes atuais passam); (2) colunas iguais só em seção de 
 (folha = N páginas do Qt, sem seção contínua); (3) quebra de coluna no parágrafo e `w:sep`;
 (4) seção contínua com colunas no meio da folha, por último.
 
+## 0.1.20: folha × página do Qt (passo 1 das colunas, sem mudança de comportamento)
+
+Primeiro passo do caminho de "0.1.19": separar a folha (página impressa ou visível, com cabeçalho,
+rodapé e margens da seção) da página do Qt (unidade de paginação do QTextDocument). Hoje as duas
+coincidem: a folha n é a página n do Qt, faixa [n*hb, (n+1)*hb). A identidade mora numa só camada,
+`modelo/folhas.MapaFolhas` (sem Qt), exposta como `LayoutPaginado.mapa`: `topo(n)`, `fim(n)`,
+`pagina_de_y(y, folga)`, `folha_de_y(y, folhas)`, `folha_da_pagina(p)`.
+
+### O que migrou (trechos trocados, em editdoc/)
+
+| Arquivo | Trechos | Uso |
+|---|---|---|
+| `modelo/folhas.py` | 6 | `Mapa` (tela/documento) passa pela camada; a própria camada |
+| `interface/notas.py` | 52 | planos das notas: `_topo`/`_fim`/`_pe`, `_medir`, espaçadores, distribuição, área de notas por folha (`painter.translate`) |
+| `interface/paginacao.py` | 11 | regras do Word: páginas de linha e de tabela, hit-test da pagina, assinatura, pe' da pagina |
+| `interface/vista_paginas.py` | 9 | desenho da folha (`translate`, recorte), tiles (`_tile`, `_repintar_partes`), faixa de quebra, rolagem |
+| `interface/secoes.py` | 3 | `mapear`: primeira folha de cada seção (a conversão página do Qt -> folha fica explícita) |
+| `interface/layout_paginado.py` | 3 | criação do mapa e `pagina_de_y` (cursor, clique, caret) |
+| `ponte_qt/flutuantes.py` | 3 | `Contexto.pe_da` e `folha_de` (objetos flutuantes) |
+| `ponte_qt/campos.py` | 2 | `_indice` (campos PAGE e NUMPAGES: a folha de um y) |
+| `interface/impressao.py` | 3 | comentários na margem da folha (impressão e PDF) |
+| `interface/painel_documento.py` | 2 | clique em flutuante na folha; posição da imagem selecionada |
+| `edicao/objetos.py` | 1 | ancoragem de objeto (`_bloco_para_ancora`) |
+
+Somam 95 trechos de texto (cada um pode ser uma ou mais ocorrências). O que sobrou de `hb` é altura
+da página (chave de cache, limite do corpo, `hb - 1`), não deslocamento de folha: `grep` no
+`editdoc/` mostra só essas leituras.
+
+### Ficou acoplado, e por quê
+
+- `pagina_de_y` e `pagina_do_cursor` continuam com o nome de antes (testes e a janela usam; trocar
+  o nome seria reescrever verificação). O que mudou é quem faz a conta: a camada.
+- Folhas a mais (só notas de fim e de rodapé continuadas, depois do texto) não têm página do Qt. O
+  plano de notas as trata como `n >= paginas_do_texto()` com a conta da identidade (`topo(n)`).
+  Quando as colunas vierem, este é o ponto que precisa de resposta própria da camada.
+- Paginação (0.1.17/0.1.18) continua contando páginas do Qt: é a regra certa para o passo 1, e a
+  camada só converte. Com colunas, a regra passa a ser por folha; isso é o passo 2.
+- `ConjuntoDeSecoes` continua com `info.hb` (altura do corpo de cada seção): é geometria da seção, não
+  conversão de folha.
+
+### Medido
+
+- Suíte: base 3384 verificações (`git` HEAD 87959e4); depois, 3391 (7 da camada, com contraprova) e
+  0 falhas. `teste_notas` chamava `_medir(cat, hb)`, `_linhas_da_pagina(med, k, hb)` e
+  `_distribuir(..., hb, ...)` (assinatura privada): as chamadas passaram a usar a camada, sem retirar
+  nenhuma verificação.
+- Regressão: 14 `.docx` reais de uma pasta pessoal (somente leitura, nomes fora do repositório): abrir, salvar,
+  reabrir, salvar, na 0.1.19 e na 0.1.20 (`QT_QPA_PLATFORM=windows`, fontes do Windows). Páginas
+  abertas e reabertas iguais em todos; c14n de todas as partes (datas de criação e alteração do
+  `docProps/core.xml` fora, porque são a hora do salvamento) iguais em todos; o salvo 1 e o salvo 2
+  iguais nos 14. Saída JSON idêntica nas duas árvores.
+- Gate de desempenho (`tests/teste_desempenho.py`, p95 de 80 teclas com a pintura, mediana por ponto,
+  3 rodadas intercaladas 0.1.19 e 0.1.20, em ms):
+
+| Ponto | 0.1.19 (rodadas 1, 2, 3) | 0.1.20 (rodadas 1, 2, 3) | Diferença máxima |
+|---|---|---|---|
+| capa | 8,3 · 7,7 · 8,0 | 8,0 · 7,9 · 8,0 | 0,3 |
+| sumário | 9,5 · 9,0 · 9,3 | 9,1 · 8,8 · 8,8 | 0,5 (a 0.1.20 mais rápida) |
+| corpo | 7,0 · 6,6 · 6,5 | 6,7 · 7,2 · 6,3 | 0,6 (sinal trocado: ruído) |
+| antes das âncoras da capa | 12,8 · 12,9 · 12,6 | 12,7 · 12,7 · 12,4 | 0,2 |
+| 2000 revisões | 5,8 · 6,0 · 5,9 | 5,7 · 5,9 · 5,7 | 0,2 |
+
+Nenhum ponto passa de 1,5 ms, e o sinal da diferença troca de rodada para rodada: ruído. Os 6
+gates passaram nas duas versões.
+
+### Veredito do passo 1
+
+Feito, sem mudança de comportamento: mesmas páginas, mesmos pixels (suíte de tela e de PDF), mesmo
+arquivo salvo (c14n da regressão). O próximo passo é o 2 (colunas iguais só em quebra de página),
+que é o primeiro com folha ≠ página do Qt de verdade; ele continua adiado até a sessão de tela no
+Windows.
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com

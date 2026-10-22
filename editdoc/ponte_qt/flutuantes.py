@@ -53,6 +53,7 @@ from editdoc.formato_docx import flutuantes as fx
 from editdoc.modelo import flutuantes as mf
 from editdoc.modelo import imagem as mod_imagem
 from editdoc.modelo.documento import ROTULOS_OPACOS, ObjetoOpaco
+from editdoc.modelo.folhas import MapaFolhas
 from editdoc.modelo.pagina import Pagina
 from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
@@ -164,9 +165,10 @@ class Contexto:
     def pe_da(self, n: int) -> float:
         """Onde o corpo da folha n termina, em y do documento (0.1.12: a secao pode ser mais
         baixa que hb)."""
+        mapa = MapaFolhas.de_altura(self.hb)
         if self.folhas is not None:
-            return n * self.hb + float(self.efetiva_da(n).corpo_altura_tw())
-        return (n + 1) * self.hb
+            return mapa.topo(n) + float(self.efetiva_da(n).corpo_altura_tw())
+        return mapa.fim(n)
 
     def topo_da_pagina(self, n: int) -> float:
         """Topo do corpo na folha n (0.1.8): o do tipo da pagina (primeira, par, padrao)."""
@@ -187,8 +189,9 @@ class Contexto:
     def folha_de(self, y_doc: float) -> tuple[int, float, float]:
         """(pagina, dx, dy): somar (dx, dy) leva um ponto do documento para a folha."""
         if self.hb:
-            n = max(0, math.floor(y_doc / self.hb))
-            return n, float(self.efetiva_da(n).margem_esq_tw), self.topo_da_pagina(n) - n * self.hb
+            mapa = MapaFolhas.de_altura(self.hb)
+            n = max(0, mapa.pagina_de_y(y_doc))
+            return n, float(self.efetiva_da(n).margem_esq_tw), self.topo_da_pagina(n) - mapa.topo(n)
         return self.indice, self.origem[0], self.origem[1]
 
 

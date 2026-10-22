@@ -32,7 +32,6 @@ primeiro paragrafo de uma celula e o depois do ultimo (o Qt os ignora) e as linh
 
 from __future__ import annotations
 
-import math
 
 from PySide6.QtGui import QTextBlockFormat, QTextCursor, QTextFormat, QTextTable
 
@@ -377,15 +376,15 @@ class ConjuntoDePaginacao:
     # -- regras de quebra ---------------------------------------------------------------------------
     def _unidade_de(self, bloco=None, tabela=None) -> _Unidade:
         dl = self.layout.doc.documentLayout()
-        hb = self.layout.hb
+        mapa = self.layout.mapa
         if tabela is not None:
             r = dl.frameBoundingRect(tabela)
-            return _Unidade(tabela=tabela, paginas=[math.floor((r.top() + 1) / hb),
-                                                    math.floor((r.bottom() - 1) / hb)],
+            return _Unidade(tabela=tabela, paginas=[mapa.pagina_de_y(r.top() + 1),
+                                                    mapa.pagina_de_y(r.bottom() - 1)],
                             topo=r.top())
         r = dl.blockBoundingRect(bloco)
         lay = bloco.layout()
-        paginas = [math.floor((r.top() + lay.lineAt(i).y() + 1) / hb)
+        paginas = [mapa.pagina_de_y(r.top() + lay.lineAt(i).y() + 1)
                    for i in range(lay.lineCount())]
         return _Unidade(bloco=bloco, paginas=paginas, topo=r.top())
 
@@ -447,7 +446,7 @@ class ConjuntoDePaginacao:
         if pagina <= 0:
             return doc.begin()
         from PySide6.QtCore import QPointF, Qt
-        pos = doc.documentLayout().hitTest(QPointF(1.0, pagina * self.layout.hb + 1.0),
+        pos = doc.documentLayout().hitTest(QPointF(1.0, self.layout.mapa.topo(pagina) + 1.0),
                                            Qt.HitTestAccuracy.FuzzyHit)
         if pos < 0:
             return doc.begin()
@@ -458,23 +457,22 @@ class ConjuntoDePaginacao:
 
     def _assinatura(self, u: _Unidade, k: int) -> tuple:
         """Como a pagina k comeca (na unidade u): estavel quando o texto de cima muda de bloco."""
-        hb = self.layout.hb
         if u.tabela is not None:
-            return ("t", round(u.topo - k * hb, 1), u.tabela.rows())
+            return ("t", round(u.topo - self.layout.mapa.topo(k), 1), u.tabela.rows())
         i = u.paginas.index(k) if k in u.paginas else 0
         linha = u.bloco.layout().lineAt(i)
-        return ("b", u.bloco.length(), i, round(u.topo + linha.y() - k * hb, 1))
+        return ("b", u.bloco.length(), i, round(u.topo + linha.y() - self.layout.mapa.topo(k), 1))
 
     def _regras_desde(self, desde: int, forcar: bool) -> bool:
         doc = self.layout.doc
-        hb = self.layout.hb
+        mapa = self.layout.mapa
         if forcar:
             inicio = 0
             self._inicios = {}
         else:
             bloco = self._bloco_do_primeiro_nivel(desde)
             topo = doc.documentLayout().blockBoundingRect(bloco).top()
-            inicio = max(0, math.floor(topo / hb) - 1)
+            inicio = max(0, mapa.pagina_de_y(topo) - 1)
         pagina_editada = inicio
         mudou_algo = False
         ultima_mudanca = -10
@@ -632,10 +630,10 @@ class ConjuntoDePaginacao:
         pelo menos essa folga no pe' da pagina; senao continua empurrado."""
         bloco = u.bloco
         fmt = bloco.blockFormat()
-        hb = self.layout.hb
+        mapa = self.layout.mapa
         fim = self._fim(anterior)
-        pagina = math.floor((fim - FOLGA) / hb)
-        pe = (pagina + 1) * hb
+        pagina = mapa.pagina_de_y(fim - FOLGA)
+        pe = mapa.fim(pagina)
         margem = max(self._antes_desejado(bloco, fmt, {}, sem_regra=True),
                      anterior.bloco.blockFormat().bottomMargin()
                      if anterior.bloco is not None else 0.0) * 15.0

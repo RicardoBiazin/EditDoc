@@ -181,7 +181,7 @@ def _bloco_para_ancora(layout, n: int, y_tw: float):
     doc = layout.doc
     hb = layout.hb
     topo = layout.topo_da_pagina(n)
-    y_doc = n * hb + min(max(y_tw - topo, 0.0), hb - 1.0)
+    y_doc = layout.mapa.topo(n) + min(max(y_tw - topo, 0.0), hb - 1.0)
     pos = doc.documentLayout().hitTest(QPointF(1.0, y_doc), Qt.HitTestAccuracy.FuzzyHit)
     pos = layout.ajustar_para_pagina(max(0, pos), n)
     return doc.findBlock(pos)

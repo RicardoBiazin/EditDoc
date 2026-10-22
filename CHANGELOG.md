@@ -1,3 +1,22 @@
+## 0.1.20 - 2026-10-22
+
+Refatoração interna, sem mudança de comportamento. Primeiro passo do caminho para colunas de texto
+(docs/SPIKES.md, "0.1.19"): a folha (a página impressa ou visível, com cabeçalho, rodapé e margens
+da seção) fica separada da página do Qt (a unidade de paginação do QTextDocument). Hoje as duas são
+a mesma coisa, e essa identidade mora numa única camada, `modelo/folhas.MapaFolhas`, exposta como
+`LayoutPaginado.mapa`. Cursor, clique, tiles, desenho da folha, objetos flutuantes, notas, campos,
+paginação (0.1.17 e 0.1.18), seção contínua, impressão e PDF passam por ela, e nenhum deles usa mais
+`n * hb` ou `floor(y / hb)` direto.
+
+Nada muda na tela, no PDF, na impressão ou no arquivo salvo. A suíte tem 3391 verificações (3384 da
+base e 7 da camada, com contraprova). Os .docx de regressão abrem, salvam, reabrem e salvam com as
+mesmas páginas e o mesmo c14n da 0.1.19. O gate de desempenho ficou dentro do ruído (docs/SPIKES.md,
+"0.1.20").
+
+Testes: `teste_paginas` ganhou `testar_folhas_qt`. `teste_notas` chamava `_medir`, `_linhas_da_pagina`
+e `_distribuir` com o argumento `hb`, que saiu da assinatura privada (a altura vem da camada); as
+verificações são as mesmas.
+
 ## 0.1.19 - 2026-10-22
 
 A faixa amarela de avisos só aparece quando salvar faria o arquivo perder algo. Antes ela listava

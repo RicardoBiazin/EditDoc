@@ -23,14 +23,13 @@ tamanho em pixels de layout (pt x 20).
 
 from __future__ import annotations
 
-import math
-
 from PySide6.QtCore import QPointF, QSizeF
 from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QPyTextObject, QTextCharFormat,
                            QTextCursor, QTextDocument, QTextFormat)
 
 from editdoc import log_interno
 from editdoc.modelo.campos import valor_do_campo
+from editdoc.modelo.folhas import MapaFolhas
 from editdoc.modelo.pagina import Pagina
 
 log = log_interno.obter(__name__)
@@ -141,7 +140,7 @@ class ManipuladorDeCampo(QPyTextObject):
         if ctx.indice_fixo is not None:
             return ctx.indice_fixo
         if ctx.hb and ctx.hb > 0:
-            return max(0, math.floor(y / ctx.hb))
+            return max(0, MapaFolhas.de_altura(ctx.hb).pagina_de_y(y))
         return 0
 
     def intrinsicSize(self, doc, pos, fmt) -> QSizeF:  # noqa: N802 - nome do Qt

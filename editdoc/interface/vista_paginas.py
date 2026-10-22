@@ -256,7 +256,6 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     """
     # A efetiva da pagina n (0.1.8): o topo do corpo segue o cabecalho dela.
     cfg = layout.efetiva_da(n)
-    hb = layout.hb
     corpo_h = cfg.corpo_altura_tw()
     # Objetos flutuantes (0.1.7): pintados na folha inteira (podem estar na margem), os de
     # tras antes do texto e os da frente depois.
@@ -287,10 +286,11 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     painter.setWorldTransform(transf)
     painter.translate(cfg.margem_esq_tw, cfg.margem_sup_tw)
     painter.setClipRect(recorte)
-    painter.translate(0, -n * hb)
+    painter.translate(0, -layout.mapa.topo(n))
 
     ctx = QAbstractTextDocumentLayout.PaintContext()
-    ctx.clip = QRectF(recorte.x(), n * hb + recorte.y(), recorte.width(), recorte.height())
+    ctx.clip = QRectF(recorte.x(), layout.mapa.topo(n) + recorte.y(),
+                      recorte.width(), recorte.height())
     ctx.palette = PALETA_TEXTO
     ctx.cursorPosition = -1
     selecoes = pq_comentarios.selecoes_de_realce(layout.doc) if comentarios else []
@@ -920,9 +920,10 @@ class VistaPaginas(QAbstractScrollArea):
         topo_bloco = doc.documentLayout().blockBoundingRect(bloco).top()
         # Folga de meia linha: a tinta da letra pode passar um pouco da caixa da linha.
         topo_linha = topo_bloco + linha.y()
-        hb = self.layout_pag.hb
+        mapa = self.layout_pag.mapa
         # A folga nao passa para a pagina de cima: cada pagina recorta o proprio corpo.
-        atual = max(topo_linha - linha.height() / 2.0, math.floor(topo_linha / hb + 1e-6) * hb)
+        atual = max(topo_linha - linha.height() / 2.0,
+                    mapa.topo(mapa.pagina_de_y(topo_linha, 1e-6)))
         anterior = lay.lineAt(linha.lineNumber() - 1) if linha.lineNumber() > 0 else None
         if anterior is None or anterior.height() <= 0:
             # Linha de altura zero (so' objetos que flutuam) nao tem tinta; nem antes: digitar e
@@ -982,10 +983,10 @@ class VistaPaginas(QAbstractScrollArea):
         # Faixa do documento que o tile mostra, cortada no corpo da pagina (0.1.8): o texto de
         # uma pagina nunca e' pintado fora do corpo dela, entao o tile da margem de baixo nao
         # sai do cache por uma mudanca no alto da pagina seguinte.
-        hb = self.layout_pag.hb
-        dy0 = n * hb + (j * tw - cfg.margem_sup_tw)
-        dy1 = min(dy0 + tw, (n + 1) * hb)
-        dy0 = max(dy0, n * hb)
+        mapa = self.layout_pag.mapa
+        dy0 = mapa.topo(n) + (j * tw - cfg.margem_sup_tw)
+        dy1 = min(dy0 + tw, mapa.fim(n))
+        dy0 = max(dy0, mapa.topo(n))
         nbytes = lado * lado * 4
         # Faixa horizontal do documento que o tile mostra (0.1.14), contada da margem esquerda.
         dx0 = i * tw - cfg.margem_esq_tw
@@ -1018,7 +1019,7 @@ class VistaPaginas(QAbstractScrollArea):
         por cima do tile (sem mistura). O resultado e' o do tile pintado do zero;
         `teste_desempenho` confere pixel a pixel."""
         cfg = self.layout_pag.efetiva_da(n)
-        hb = self.layout_pag.hb
+        mapa = self.layout_pag.mapa
         e = m.escala
         tw = TILE_PX / e
         lado = round(TILE_PX * dpr)
@@ -1032,7 +1033,7 @@ class VistaPaginas(QAbstractScrollArea):
             cy1 = cx1 = -math.inf
             for y0, y1, x0, x1 in partes:
                 # Twips do documento -> twips do corpo da pagina; o recorte do Qt com folga.
-                by0, by1 = y0 - n * hb, y1 - n * hb
+                by0, by1 = y0 - mapa.topo(n), y1 - mapa.topo(n)
                 cy0, cy1 = min(cy0, by0 - corte), max(cy1, by1 + corte)
                 cx0 = min(cx0, x0 - corte if x0 > -math.inf else tx0)
                 cx1 = max(cx1, x1 + corte if x1 < math.inf else tx0 + tw)
@@ -1532,9 +1533,9 @@ class VistaPaginas(QAbstractScrollArea):
         quebras = self._blocos_com_quebra()
         if not quebras:
             return
-        topo = i0 * self.layout_pag.hb
+        topo = self.layout_pag.mapa.topo(i0)
         inicio = doc.findBlock(dl.hitTest(QPointF(0, topo), Qt.FuzzyHit)).blockNumber()
-        limite = (i1 + 1) * self.layout_pag.hb
+        limite = self.layout_pag.mapa.fim(i1)
         fonte = p.font()
         fonte.setPointSizeF(8.0)
         p.save()

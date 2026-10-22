@@ -27,7 +27,6 @@ Documento de uma secao so': nada disso roda; o layout segue o caminho de antes.
 from __future__ import annotations
 
 import bisect
-import math
 from dataclasses import dataclass, field, replace
 
 from PySide6.QtGui import QTextCursor, QTextFormat, QTextTable
@@ -255,7 +254,6 @@ class ConjuntoDeSecoes:
     def mapear(self) -> None:
         """Primeira folha, numero de folhas e numero inicial de cada secao."""
         lay = self.layout
-        H = lay.hb
         dl = lay.doc.documentLayout()
         total = lay.numero_paginas()
         inicios = [0]
@@ -268,9 +266,9 @@ class ConjuntoDeSecoes:
             else:
                 topo = dl.frameBoundingRect(tabela).top() if tabela is not None \
                     else dl.blockBoundingRect(bloco).top()
-                inicio = math.floor(topo / H + 1e-6)
+                inicio = lay.mapa.folha_da_pagina(lay.mapa.pagina_de_y(topo, 1e-6))
                 base = dl.blockBoundingRect(lay.doc.findBlock(anterior.pos)).bottom()
-                if math.floor(max(0.0, base - 1.0) / H + 1e-6) >= inicio:
+                if lay.mapa.pagina_de_y(max(0.0, base - 1.0), 1e-6) >= inicio:
                     # Secao continua que comeca no meio da folha (o fim da anterior esta' na
                     # mesma folha): a folha e' da anterior.
                     inicio += 1

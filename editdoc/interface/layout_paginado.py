@@ -46,7 +46,6 @@ na maior largura. Com uma secao so', tudo segue o caminho de antes.
 
 from __future__ import annotations
 
-import math
 from dataclasses import replace
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF
@@ -54,6 +53,7 @@ from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument
 
 from editdoc.interface.cabecalhos import ConjuntoDeFaixas
 from editdoc.modelo.campos import tipo_da_pagina
+from editdoc.modelo.folhas import MapaFolhas
 from editdoc.modelo.pagina import Pagina, pagina_efetiva
 from editdoc.ponte_qt import campos
 from editdoc.ponte_qt import estilos as pq_estilos
@@ -132,6 +132,8 @@ class LayoutPaginado:
         from editdoc.interface.paginacao import ConjuntoDePaginacao
         self.paginacao = ConjuntoDePaginacao(self)
         self._hb_qt = float(pagina.corpo_altura_tw())
+        # Folha x pagina do Qt (0.1.20): toda conversao de y, folha e faixa passa por aqui.
+        self.mapa = MapaFolhas(lambda: self.hb)
         self._aplicar()
         # Ajustar fonte e margem marca o documento como alterado. Um documento novo nasce limpo.
         self.doc.setModified(False)
@@ -427,8 +429,8 @@ class LayoutPaginado:
         return max(1, self.doc.pageCount()) + getattr(getattr(self, "notas", None), "extras", 0)
 
     def pagina_de_y(self, y: float) -> int:
-        n = math.floor(y / self.hb)
-        return min(max(n, 0), self.numero_paginas() - 1)
+        """Folha do ponto y do documento (0.1.20: pela camada `mapa`)."""
+        return self.mapa.folha_de_y(y, self.numero_paginas())
 
     def origem_bloco(self, bloco) -> QPointF:
         """Origem absoluta do bloco em coordenadas do documento.

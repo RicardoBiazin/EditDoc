@@ -191,7 +191,7 @@ def desenhar_comentarios(painter: QPainter, layout: LayoutPaginado, n: int,
     if not cat.itens:
         return
     cfg = layout.efetiva_da(n)
-    hb = layout.hb
+    mapa = layout.mapa
     esquerda = cfg.largura_tw - cfg.margem_dir_tw + 120
     largura = cfg.margem_dir_tw - 240
     if largura < 600:
@@ -204,9 +204,9 @@ def desenhar_comentarios(painter: QPainter, layout: LayoutPaginado, n: int,
         if pos is None:
             continue
         r = layout.retangulo_cursor(pos)
-        if not (n * hb <= r.top() < (n + 1) * hb):
+        if not (mapa.topo(n) <= r.top() < mapa.fim(n)):
             continue
-        itens.append((r.top() - n * hb + cfg.margem_sup_tw, c))
+        itens.append((r.top() - mapa.topo(n) + cfg.margem_sup_tw, c))
     if not itens:
         return
     fonte = QFont(doc.defaultFont())

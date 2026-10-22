@@ -20,6 +20,10 @@ papel, margens e topo do corpo). A pagina do documento continua sendo a faixa [n
 com hb a maior altura de corpo (`hb_documento`). Folhas de tamanhos diferentes ficam uma
 embaixo da outra, cada uma centrada; lado a lado, a linha tem a altura da maior folha dela.
 Sem `folhas`, as contas sao as de sempre (todas iguais a `pagina`).
+
+Folha x pagina do Qt (0.1.20): `MapaFolhas` e' a unica camada que converte y em folha e
+folha em faixa do documento. Hoje a folha n e' a pagina n do QTextDocument; quem precisa
+de `n * hb` ou de `floor(y / hb)` usa a camada, para a identidade ficar num lugar so'.
 """
 
 from __future__ import annotations
@@ -86,6 +90,53 @@ def escala_do_zoom(zoom: float) -> float:
     return zoom / 15.0
 
 
+class MapaFolhas:
+    """Folha x pagina do QTextDocument (0.1.20, passo 1 das colunas: docs/SPIKES.md, 0.1.19).
+
+    Folha: a pagina impressa ou visivel, com o cabecalho, o rodape e as margens da secao dela.
+    Pagina do Qt: a unidade de paginacao do QTextDocument, a faixa [n*h, (n+1)*h) do documento,
+    com h a altura de uma pagina (`altura`). Hoje as duas coincidem: a folha n e' a pagina n do
+    Qt. Quem converte y em folha ou folha em faixa passa por esta classe, nunca por `n * hb` nem
+    por `floor(y / hb)`.
+
+    Sem Qt. `altura` e' chamada a cada conta, porque a altura muda com as secoes.
+    """
+
+    def __init__(self, altura: Callable[[], float]) -> None:
+        self._altura = altura
+
+    @classmethod
+    def de_altura(cls, altura: float) -> MapaFolhas:
+        """Mapa de uma altura que nao muda durante a conta."""
+        return cls(lambda: altura)
+
+    @property
+    def hb(self) -> float:
+        return float(self._altura())
+
+    def topo(self, n: int) -> float:
+        """Y do topo da faixa da folha n (e da pagina do Qt n), no documento."""
+        return n * self.hb
+
+    def fim(self, n: int) -> float:
+        """Y do fim da faixa da folha n."""
+        return (n + 1) * self.hb
+
+    def pagina_de_y(self, y: float, folga: float = 0.0) -> int:
+        """Pagina do Qt do ponto y, sem limite. `folga` (1e-6) soma antes do piso: o ponto
+        exatamente na divisa conta como da pagina de baixo, como antes."""
+        return math.floor(y / self.hb + folga)
+
+    def folha_de_y(self, y: float, folhas: int) -> int:
+        """Folha do ponto y, limitada a [0, folhas - 1]."""
+        return min(max(self.pagina_de_y(y), 0), max(folhas - 1, 0))
+
+    @staticmethod
+    def folha_da_pagina(pagina: int) -> int:
+        """Folha formada pela pagina do Qt (hoje, a mesma)."""
+        return pagina
+
+
 @dataclass
 class Mapa:
     """Converte entre documento (twips) e tela (px logicos) para uma pagina e um zoom."""
@@ -123,6 +174,11 @@ class Mapa:
         if self.hb_documento is not None:
             return float(self.hb_documento)
         return float(self.pagina.corpo_altura_tw())
+
+    @property
+    def mapa_folhas(self) -> MapaFolhas:
+        """A camada folha x pagina do Qt (0.1.20) sobre a altura desta geometria."""
+        return MapaFolhas(lambda: self.hb)
 
     # -- folhas de tamanhos diferentes (0.1.12) -------------------------------------------------
     def _disposicao(self, paginas: int):
@@ -237,7 +293,7 @@ class Mapa:
 
     def pagina_de_y(self, y_doc: float, paginas: int) -> int:
         """Pagina do ponto de documento, limitada a [0, paginas - 1]."""
-        n = math.floor(y_doc / self.hb)
+        n = self.mapa_folhas.pagina_de_y(y_doc)
         return min(max(n, 0), max(paginas - 1, 0))
 
     def folha_na_tela(self, n: int) -> tuple[float, float, float, float]:
@@ -258,7 +314,7 @@ class Mapa:
         n = self.pagina_de_y(y_doc, paginas)
         cfg = self.pagina_da(n)
         tx = x_doc + cfg.margem_esq_tw
-        ty = y_doc - n * self.hb + self.topo(n)
+        ty = y_doc - self.mapa_folhas.topo(n) + self.topo(n)
         x0, y0, _l, _a = self.folha_na_tela(n)
         return x0 + tx * self.escala, y0 + ty * self.escala
 
@@ -269,7 +325,7 @@ class Mapa:
         x0, y0, _l, _a = self.folha_na_tela(n)
         tx = (x_tela - x0) / self.escala
         ty = (y_tela - y0) / self.escala
-        return tx - cfg.margem_esq_tw, ty - self.topo(n) + n * self.hb
+        return tx - cfg.margem_esq_tw, ty - self.topo(n) + self.mapa_folhas.topo(n)
 
     def altura_total(self, paginas: int) -> float:
         if self.folhas is not None:

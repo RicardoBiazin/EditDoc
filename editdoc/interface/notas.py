@@ -241,12 +241,19 @@ class ConjuntoDeNotas:
     def _largura(self) -> float:
         return float(self.layout.largura_das_notas())
 
-    def _pe(self, k: int, hb: float) -> float:
-        """Onde o corpo da pagina k termina (0.1.12: a secao da pagina pode ser mais baixa)."""
-        return k * hb + self.layout.altura_do_corpo(k)
+    def _topo(self, k: int) -> float:
+        """Y do topo da pagina k (0.1.20: pela camada `layout.mapa`)."""
+        return self.layout.mapa.topo(k)
 
-    def _curta(self, k: int, hb: float) -> bool:
-        return self._pe(k, hb) < (k + 1) * hb - FOLGA
+    def _fim(self, k: int) -> float:
+        return self.layout.mapa.fim(k)
+
+    def _pe(self, k: int) -> float:
+        """Onde o corpo da pagina k termina (0.1.12: a secao da pagina pode ser mais baixa)."""
+        return self._topo(k) + self.layout.altura_do_corpo(k)
+
+    def _curta(self, k: int) -> bool:
+        return self._pe(k) < self._fim(k) - FOLGA
 
     def doc_de(self, nota: mod_notas.Nota) -> NotaQt:
         k = pq.chave(nota)
@@ -524,7 +531,7 @@ class ConjuntoDeNotas:
                 velha[1:4] == assinatura[1:4] and velha[5:] == assinatura[5:]:
             bloco = doc.findBlock(min(self._desde, doc.characterCount() - 1))
             topo = doc.documentLayout().blockBoundingRect(bloco).top()
-            desde = max(0, math.floor(topo / self.layout.hb) - 1)
+            desde = max(0, self.layout.mapa.pagina_de_y(topo) - 1)
             if desde not in self._cont:
                 desde = 0
         self._desde = None
@@ -547,7 +554,7 @@ class ConjuntoDeNotas:
                                                    for f in fs))
                                           for n, fs in self.paginas.items())))
 
-    def _medir(self, cat, hb):
+    def _medir(self, cat):
         unidades = self._unidades()
         refs = self._referencias()
         docs = {}
@@ -559,20 +566,20 @@ class ConjuntoDeNotas:
         por_pagina: dict[int, list] = {}
         for m, t, b in refs:
             if m.tipo == "rodape" and (m.tipo, m.id) in docs:
-                por_pagina.setdefault(math.floor(t / hb + 1e-6), []).append((m, t, b))
+                por_pagina.setdefault(self.layout.mapa.pagina_de_y(t, 1e-6), []).append((m, t, b))
         return _Medida(unidades, [u.topo for u in unidades], refs, por_pagina, docs)
 
     def _rodada(self, cat, desde: int = 0) -> bool:
         """Uma passada do plano. True se algo mudou que pede outra (numero refeito)."""
         doc = self.layout.doc
-        hb = self.layout.hb
         sep = self._altura_separador()
-        med = self._medir(cat, hb)
+        med = self._medir(cat)
         baixas = self.layout.secoes_baixas()
         if med.por_pagina or baixas or any(u.espacador() for u in med.unidades):
-            med = self._espacadores(med, sep, hb, cat, desde)
+            med = self._espacadores(med, sep, cat, desde)
         self._espacadores_vivos = any(u.espacador() for u in med.unidades)
-        paginas_refs = {(m.tipo, m.id): math.floor(t / hb + 1e-6) for m, t, _b in med.refs}
+        paginas_refs = {(m.tipo, m.id): self.layout.mapa.pagina_de_y(t, 1e-6)
+                    for m, t, _b in med.refs}
         props = {t: cat.propriedades(t) for t in mod_notas.TIPOS}
         numeros = mod_notas.numeros([(m.tipo, m.id, m.personalizada) for m, _t, _b in med.refs],
                                     props, paginas_refs)
@@ -587,14 +594,14 @@ class ConjuntoDeNotas:
                 d.definir_numero(mod_notas.texto_do_simbolo(m.simbolo) if m.personalizada
                                  else numeros.get((m.tipo, m.id), ""))
         if refazer:
-            med = self._medir(cat, hb)
-        self._distribuir(med, sep, hb, props)
+            med = self._medir(cat)
+        self._distribuir(med, sep, props)
         return refazer
 
     # -- espacadores ------------------------------------------------------------------------
-    def _linhas_da_pagina(self, med, k: int, hb: float) -> list:
+    def _linhas_da_pagina(self, med, k: int) -> list:
         """(topo, base, unidade) das linhas cujo topo cai na pagina k."""
-        topo_p, pe = k * hb, (k + 1) * hb
+        topo_p, pe = self._topo(k), self._fim(k)
         i = max(0, bisect.bisect_right(med.topos, topo_p + FOLGA) - 1)
         saida = []
         while i < len(med.unidades):
@@ -608,18 +615,19 @@ class ConjuntoDeNotas:
             i += 1
         return saida
 
-    def _assinatura_da_pagina(self, med, k: int, hb: float, continuacao: float) -> tuple:
-        linhas = tuple((round(t - k * hb, 2), round(b - k * hb, 2))
-                       for t, b, _u in self._linhas_da_pagina(med, k, hb))
-        refs = tuple((m.tipo, m.id, round(t - k * hb, 2)) for m, t, _b in med.por_pagina.get(k, ()))
+    def _assinatura_da_pagina(self, med, k: int, continuacao: float) -> tuple:
+        linhas = tuple((round(t - self._topo(k), 2), round(b - self._topo(k), 2))
+                       for t, b, _u in self._linhas_da_pagina(med, k))
+        refs = tuple((m.tipo, m.id, round(t - self._topo(k), 2))
+                     for m, t, _b in med.por_pagina.get(k, ()))
         alturas = tuple(round(med.docs[(m.tipo, m.id)].altura(), 2)
                         for m, _t, _b in med.por_pagina.get(k, ()))
-        proxima = self._espacador_da_pagina(med, k, hb)
+        proxima = self._espacador_da_pagina(med, k)
         return (linhas, refs, alturas, round(continuacao, 2), proxima is not None)
 
-    def _fim_do_corpo(self, med, k: int, hb: float) -> float:
+    def _fim_do_corpo(self, med, k: int) -> float:
         """A base da ultima linha do corpo na pagina k (o topo dela, se vazia)."""
-        topo_p, pe = k * hb, (k + 1) * hb
+        topo_p, pe = self._topo(k), self._fim(k)
         i = bisect.bisect_left(med.topos, pe - FOLGA) - 1
         while i >= 0:
             u = med.unidades[i]
@@ -633,8 +641,7 @@ class ConjuntoDeNotas:
             i -= 1
         return topo_p
 
-    def _espacadores(self, med, sep, hb, cat, desde: int = 0):
-        doc = self.layout.doc
+    def _espacadores(self, med, sep, cat, desde: int = 0):
         k = desde
         continuacao = self._cont.get(k, 0.0) if k else 0.0
         if k == 0:
@@ -644,41 +651,42 @@ class ConjuntoDeNotas:
         mudancas = 0
         mudou_algo = False
         self.conferidas = 0
-        while k < max(1, doc.pageCount()) and mudancas < 4 * max(1, doc.pageCount()) + 16:
+        while k < self.layout.paginas_do_texto() and \
+                mudancas < 4 * self.layout.paginas_do_texto() + 16:
             self._cont[k] = continuacao
             if desde and not mudou_algo and k > desde + 1:
                 # Pagina igual a do plano anterior (as mesmas linhas, notas e continuacao):
                 # as seguintes tambem sao.
-                sig = self._assinatura_da_pagina(med, k, hb, continuacao)
+                sig = self._assinatura_da_pagina(med, k, continuacao)
                 if self._assinaturas.get(k) == sig:
                     break
             self.conferidas += 1
             tem_nota = k in med.por_pagina or continuacao > 0
-            proxima = self._espacador_da_pagina(med, k, hb)
-            if tem_nota or proxima is not None or self._curta(k, hb):
-                mudou = self._conferir_pagina(k, med, sep, hb, continuacao,
+            proxima = self._espacador_da_pagina(med, k)
+            if tem_nota or proxima is not None or self._curta(k):
+                mudou = self._conferir_pagina(k, med, sep, continuacao,
                                               tentativas.get(k, 0) < MAX_MUDANCAS_POR_PAGINA)
                 if mudou:
                     tentativas[k] = tentativas.get(k, 0) + 1
                     mudancas += 1
                     mudou_algo = True
-                    med = self._medir(cat, hb)
+                    med = self._medir(cat)
                     continue
-            self._assinaturas[k] = self._assinatura_da_pagina(med, k, hb, continuacao)
-            continuacao = self._continua(k, med, sep, hb, continuacao) if tem_nota else 0.0
+            self._assinaturas[k] = self._assinatura_da_pagina(med, k, continuacao)
+            continuacao = self._continua(k, med, sep, continuacao) if tem_nota else 0.0
             k += 1
         # Espacador no primeiro bloco do documento nao serve para nada; e o que nao segue a
         # ultima linha de uma pagina com nota (sobra de texto apagado) tambem sai na conferencia.
         if med.unidades and med.unidades[0].espacador():
             self._marcar(med.unidades[0], False)
-            med = self._medir(cat, hb)
+            med = self._medir(cat)
         return med
 
-    def _espacador_da_pagina(self, med, k: int, hb: float):
+    def _espacador_da_pagina(self, med, k: int):
         """A unidade com espacador que comeca a pagina k+1 (empurrada da pagina k), ou None."""
-        pe = (k + 1) * hb
+        pe = self._fim(k)
         i = bisect.bisect_left(med.topos, pe - FOLGA)
-        while i < len(med.unidades) and med.unidades[i].topo < pe + hb:
+        while i < len(med.unidades) and med.unidades[i].topo < pe + self.layout.mapa.hb:
             u = med.unidades[i]
             if u.espacador() and i > 0 and med.unidades[i - 1].topo < pe - FOLGA:
                 return u
@@ -747,14 +755,14 @@ class ConjuntoDeNotas:
                 cel.setFormat(fmt)
         self.ajustar(aplicar)
 
-    def _linhas_empurradas(self, k: int, med, hb: float) -> bool:
+    def _linhas_empurradas(self, k: int, med) -> bool:
         """Conferencia das linhas de tabela empurradas na pagina k de uma secao mais baixa:
         a linha seguinte que ja' caberia volta; o acrescimo que ficou errado (o texto de cima
         mudou) e' refeito. True se mudou."""
-        pe = self._pe(k, hb)
-        alvo = (k + 1) * hb - 2.0
+        pe = self._pe(k)
+        alvo = self._fim(k) - 2.0
         for u in med.unidades:
-            if u.tabela is None or u.topo >= (k + 1) * hb or u.base <= k * hb:
+            if u.tabela is None or u.topo >= self._fim(k) or u.base <= self._topo(k):
                 continue
             t = u.tabela
             for r in range(t.rows() - 1):
@@ -763,7 +771,7 @@ class ConjuntoDeNotas:
                 if not marcas:
                     continue
                 topo = self._topo_da_linha(t, r)
-                if not (k * hb - FOLGA <= topo < (k + 1) * hb):
+                if not (self._topo(k) - FOLGA <= topo < self._fim(k)):
                     continue
                 extra_tw = marcas[0][1] * 15.0
                 atual_tw = (cels[0].format().toTableCellFormat().bottomPadding()
@@ -778,13 +786,13 @@ class ConjuntoDeNotas:
                     self._definir_empurrao(t, r, 0.0)
                     return True
                 base_com = seguinte_topo
-                if abs(base_com - alvo) > 1.5 and math.floor(seguinte_topo / hb) == k:
+                if abs(base_com - alvo) > 1.5 and self.layout.mapa.pagina_de_y(seguinte_topo) == k:
                     novo = extra_tw + (alvo - base_com)
                     self._definir_empurrao(t, r, max(0.0, novo) / 15.0)
                     return True
         return False
 
-    def _empurrar_linha(self, u, k: int, hb: float, t_falha: float) -> bool:
+    def _empurrar_linha(self, u, k: int, t_falha: float) -> bool:
         """A linha da tabela `u` com a linha de texto que passa do pe' (topo `t_falha`) desce
         para a pagina seguinte: acolchoamento de baixo na linha de antes (0.1.12, secao mais
         baixa; a tabela que comecou antes nao pode descer inteira). True se mudou."""
@@ -800,11 +808,11 @@ class ConjuntoDeNotas:
         if linha is None or linha == 0:
             return False
         anterior = linha - 1
-        if self._topo_da_linha(tabela, anterior) < k * hb - FOLGA:
+        if self._topo_da_linha(tabela, anterior) < self._topo(k) - FOLGA:
             return False  # a linha de cima comecou na pagina anterior: linha mais alta que a pagina
         if any(self._empurrao(c) is not None for c in self._celulas_da_linha(tabela, anterior)):
             return False
-        alvo = (k + 1) * hb - 2.0
+        alvo = self._fim(k) - 2.0
         base = self._topo_da_linha(tabela, linha)
         extra = alvo - base
         if extra <= 0.5:
@@ -812,16 +820,16 @@ class ConjuntoDeNotas:
         self._definir_empurrao(tabela, anterior, extra / 15.0)
         return True
 
-    def _conferir_pagina(self, k, med, sep, hb, continuacao, pode_mudar: bool) -> bool:
+    def _conferir_pagina(self, k, med, sep, continuacao, pode_mudar: bool) -> bool:
         """Espacador da pagina k em dia. True se mudou (o layout muda; medir de novo)."""
         if not pode_mudar:
             return False
-        if self._curta(k, hb) and self._linhas_empurradas(k, med, hb):
+        if self._curta(k) and self._linhas_empurradas(k, med):
             return True
-        pe = self._pe(k, hb)
+        pe = self._pe(k)
         docs = med.docs
-        linhas = self._linhas_da_pagina(med, k, hb)
-        continuacao = min(continuacao, (pe - k * hb) / 2)
+        linhas = self._linhas_da_pagina(med, k)
+        continuacao = min(continuacao, (pe - self._topo(k)) / 2)
         inteiras = 0.0
         falha = None
         for i, (t, b, u) in enumerate(linhas):
@@ -830,15 +838,15 @@ class ConjuntoDeNotas:
                 falha = i
                 break
             inteiras += sum(docs[c].altura() for c in da_linha)
-        atual = self._espacador_da_pagina(med, k, hb)
+        atual = self._espacador_da_pagina(med, k)
         if falha is not None:
             u = linhas[falha][2]
-            empurravel = (u is not linhas[0][2] and u.topo >= k * hb - FOLGA
+            empurravel = (u is not linhas[0][2] and u.topo >= self._topo(k) - FOLGA
                           and not u.quebra_do_usuario())
-            if not empurravel and u.tabela is not None and self._curta(k, hb):
+            if not empurravel and u.tabela is not None and self._curta(k):
                 # Secao mais baixa (0.1.12): a tabela que nao pode descer inteira desce a partir
                 # da linha que passa do pe'.
-                return self._empurrar_linha(u, k, hb, linhas[falha][0])
+                return self._empurrar_linha(u, k, linhas[falha][0])
             if not empurravel or u is atual:
                 return False
             if atual is not None:
@@ -849,7 +857,7 @@ class ConjuntoDeNotas:
             return False
         # Sem falha: o empurrado volta se tudo dele que ficaria na pagina couber.
         ultima_base = max(b for _t, b, _u in linhas)
-        gap = atual.topo - (k + 1) * hb
+        gap = atual.topo - self._fim(k)
         delta = atual.topo - (ultima_base + max(gap, 0.0))
         k2 = k + 1
         if atual.tabela is not None:
@@ -861,7 +869,7 @@ class ConjuntoDeNotas:
         else:
             for t, b in self._linhas(atual):
                 # 0.1.12: o Qt poe linhas ate' o fim da pagina (nao so' ate' o pe' da secao baixa).
-                if t - delta >= (k + 1) * hb - FOLGA:
+                if t - delta >= self._fim(k) - FOLGA:
                     break
                 da_linha = self._notas_da_linha(med, k2, t, b)
                 if not self._cabe(b - delta, pe, continuacao, sep, inteiras, da_linha, docs):
@@ -870,10 +878,10 @@ class ConjuntoDeNotas:
         self._marcar(atual, False)
         return True
 
-    def _continua(self, k, med, sep, hb, continuacao) -> float:
+    def _continua(self, k, med, sep, continuacao) -> float:
         """Altura das notas de rodape da pagina k (e da continuacao) que nao couberam."""
-        pe = self._pe(k, hb)
-        fim_corpo = self._fim_do_corpo(med, k, hb)
+        pe = self._pe(k)
+        fim_corpo = self._fim_do_corpo(med, k)
         vistos = set()
         total = continuacao
         for m, _t, _b in med.por_pagina.get(k, ()):
@@ -957,16 +965,16 @@ class ConjuntoDeNotas:
         self._juntar_ajuste = False
 
     # -- distribuicao -------------------------------------------------------------------------
-    def _distribuir(self, med, sep, hb, props) -> None:
-        qt_paginas = max(1, self.layout.doc.pageCount())
+    def _distribuir(self, med, sep, props) -> None:
+        qt_paginas = self.layout.paginas_do_texto()
         paginas: dict[int, list[Fatia]] = {}
         pendentes: list = []  # (NotaQt, y0) que continuam
         posicao = props["rodape"].posicao or "pageBottom"
         for k in range(qt_paginas):
             if k not in med.por_pagina and not pendentes:
                 continue
-            pe = self._pe(k, hb)
-            fim_corpo = self._fim_do_corpo(med, k, hb)
+            pe = self._pe(k)
+            fim_corpo = self._fim_do_corpo(med, k)
             proprias = []
             for m, _t, _b in med.por_pagina.get(k, ()):
                 d = med.docs[(m.tipo, m.id)]
@@ -988,8 +996,8 @@ class ConjuntoDeNotas:
         continuar_fim = False
         if fila_fim:
             k = qt_paginas - 1
-            fim_corpo = self._fim_do_corpo(med, k, hb)
-            topo_rodape = min((f.y for f in paginas.get(k, [])), default=self._pe(k, hb))
+            fim_corpo = self._fim_do_corpo(med, k)
+            topo_rodape = min((f.y for f in paginas.get(k, [])), default=self._pe(k))
             fatias_fim, fila_fim = self._encher_fim(fila_fim, topo_rodape - fim_corpo, sep, False)
             if fatias_fim:
                 self._posicionar(fatias_fim, fim_corpo)
@@ -998,7 +1006,7 @@ class ConjuntoDeNotas:
         extras = 0
         while (pendentes or fila_fim) and extras < MAX_EXTRAS:
             n = qt_paginas + extras
-            topo, pe = n * hb, self._pe(n, hb)
+            topo, pe = self._topo(n), self._pe(n)
             util = pe - topo
             fatias, pendentes = self._encher(pendentes, [], util, sep)
             usado = sum(f.altura for f in fatias)
@@ -1199,11 +1207,10 @@ def desenhar_notas(painter, layout, n: int, transf, editada: NotaQt | None = Non
     if not fatias:
         return
     ef = layout.efetiva_da(n)
-    hb = layout.hb
     largura = float(ef.corpo_largura_tw())
     painter.save()
     painter.setWorldTransform(transf)
-    painter.translate(ef.margem_esq_tw, ef.margem_sup_tw - n * hb)
+    painter.translate(ef.margem_esq_tw, ef.margem_sup_tw - layout.mapa.topo(n))
     for f in fatias:
         if f.tipo in ("separador", "continuacao"):
             comprimento = largura if f.tipo == "continuacao" else min(LARGURA_SEPARADOR_TW,

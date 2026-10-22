@@ -8,14 +8,15 @@ por zoom (25, 100 e 400%). Toda checagem tem uma contraprova que tem de ser acus
 
 from __future__ import annotations
 
+import math
 import random
 
 from ajudantes import checa, checa_igual, drenar_eventos, pular, preparar_qt, resumir, secao, usar_fonte_windows
 
 QT = preparar_qt()
 
-from editdoc.modelo.folhas import (Mapa, alinhar_ao_dispositivo, limitar_zoom,  # noqa: E402
-                                   passo_de_zoom, teto_de_zoom)
+from editdoc.modelo.folhas import (Mapa, MapaFolhas, alinhar_ao_dispositivo,  # noqa: E402
+                                   limitar_zoom, passo_de_zoom, teto_de_zoom)
 from editdoc.modelo.pagina import CORPO_MINIMO_TW, PAPEIS, Pagina  # noqa: E402
 
 
@@ -225,10 +226,36 @@ def testar_layout_qt() -> None:
     painel.close()
 
 
+def testar_folhas_qt() -> None:
+    secao("folha x pagina do Qt (0.1.20): a camada tem a identidade de antes (sem Qt)")
+    hb = 15840.0
+    mapa = MapaFolhas(lambda: hb)
+    rng = random.Random(20)
+    ys = ([rng.uniform(-500.0, 60 * hb) for _ in range(2000)]
+          + [n * hb for n in range(60)] + [n * hb - 0.5 for n in range(1, 60)])
+    checa(all(mapa.topo(n) == n * hb and mapa.fim(n) == (n + 1) * hb for n in range(60)),
+          "topo e fim: n * altura e (n + 1) * altura, como antes")
+    checa(all(mapa.pagina_de_y(y) == math.floor(y / hb) for y in ys),
+          "pagina do Qt de um ponto: piso de y / altura, sem limite")
+    checa(all(mapa.pagina_de_y(n * hb, 1e-6) == n and mapa.pagina_de_y(n * hb - 0.5, 1e-6) == n - 1
+              for n in range(1, 60)),
+          "a divisa exata cai na pagina de baixo (folga de 1e-6), como antes")
+    checa(all(mapa.folha_de_y(y, 50) == min(max(math.floor(y / hb), 0), 49) for y in ys),
+          "folha do ponto: limitada a [0, folhas - 1]")
+    checa(all(mapa.folha_da_pagina(n) == n for n in range(60)),
+          "a folha n e' a pagina n do Qt (identidade, uma folha por pagina)")
+    # Contraprova: uma faixa deslocada tem de ser acusada.
+    checa(not all(MapaFolhas(lambda: hb).topo(n) == (n + 1) * hb for n in range(60)),
+          "contraprova: topo deslocado de uma pagina e' acusado")
+    checa(not all(MapaFolhas(lambda: hb).pagina_de_y(n * hb) == n - 1 for n in range(1, 60)),
+          "contraprova: a divisa empurrada para a pagina de cima e' acusada")
+
+
 def main() -> int:
     testar_pagina()
     testar_zoom()
     testar_mapa()
+    testar_folhas_qt()
     testar_alinhamento_hidpi()
     if not QT:
         return pular("PySide6 nao esta instalado neste venv")

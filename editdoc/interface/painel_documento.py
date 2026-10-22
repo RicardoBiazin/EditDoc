@@ -1419,7 +1419,8 @@ class PainelDocumento(VistaPaginas):
             posto = g.em(n, sx, sy, atras=True)
             if posto is not None:
                 cfg = self.layout_pag.efetiva_da(n)
-                ponto = QPointF(sx - cfg.margem_esq_tw, sy - cfg.margem_sup_tw + n * self.layout_pag.hb)
+                ponto = QPointF(sx - cfg.margem_esq_tw,
+                                sy - cfg.margem_sup_tw + self.layout_pag.mapa.topo(n))
                 no_corpo = 0 <= ponto.x() <= cfg.corpo_largura_tw() and                     0 <= sy - cfg.margem_sup_tw <= cfg.corpo_altura_tw()
                 exato = self.layout_pag.doc.documentLayout().hitTest(
                     ponto, Qt.HitTestAccuracy.ExactHit) if no_corpo else -1
@@ -1672,7 +1673,8 @@ class PainelDocumento(VistaPaginas):
         lay = self.layout_pag
         n = lay.pagina_de_y(r.top())
         ef = lay.efetiva_da(n)
-        return n, (r.left() + ef.margem_esq_tw, r.top() - n * lay.hb + lay.topo_da_pagina(n),
+        return n, (r.left() + ef.margem_esq_tw,
+                   r.top() - lay.mapa.topo(n) + lay.topo_da_pagina(n),
                    r.width(), r.height())
 
     def _documentos_do_arquivo(self) -> list:

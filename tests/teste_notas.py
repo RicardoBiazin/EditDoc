@@ -366,10 +366,10 @@ def _sobreposicoes(layout) -> list:
     g = layout.notas
     hb = layout.hb
     from editdoc.ponte_qt import notas as pq
-    med = g._medir(pq.catalogo(layout.doc), hb)
+    med = g._medir(pq.catalogo(layout.doc))
     ruins = []
     for k, fatias in g.paginas.items():
-        linhas = g._linhas_da_pagina(med, k, hb)
+        linhas = g._linhas_da_pagina(med, k)
         fim = max((b for _t, b, _u in linhas), default=k * hb)
         if fatias and fim > min(f.y for f in fatias) + 0.5:
             ruins.append(k)
@@ -388,7 +388,7 @@ def testar_pagina() -> None:
         hb = layout.hb
         checa(g.paginas, "ha' area de notas")
         checa_igual(_sobreposicoes(layout), [], "o corpo nunca entra na area de notas")
-        med = g._medir(pq.catalogo(layout.doc), hb)
+        med = g._medir(pq.catalogo(layout.doc))
         fora = []
         for m, t, _b in med.refs:
             # As notas depois da longa esperam a continuacao dela (como no Word).
@@ -443,9 +443,9 @@ def testar_pagina() -> None:
             if u.bloco is not None:
                 QTextCursor(u.bloco).setBlockFormat(pq.sem_espacador(u.bloco.blockFormat()))
         cat = pq.catalogo(layout.doc)
-        g._distribuir(g._medir(cat, hb), g._altura_separador(), hb,
+        g._distribuir(g._medir(cat), g._altura_separador(),
                       {t: cat.propriedades(t) for t in mn.TIPOS})
-        med = g._medir(cat, hb)
+        med = g._medir(cat)
         adiadas = [m.id for m, t, _b in med.refs if m.tipo == "rodape" and m.id < 7
                    and (not g.fatias_de(med.docs[(m.tipo, m.id)])
                         or g.fatias_de(med.docs[(m.tipo, m.id)])[0][0] != int(t // hb))]
@@ -468,7 +468,7 @@ def testar_reinicio_por_pagina_na_tela() -> None:
     try:
         layout = janela.painel.layout_pag
         from editdoc.ponte_qt import notas as pq
-        med = layout.notas._medir(pq.catalogo(layout.doc), layout.hb)
+        med = layout.notas._medir(pq.catalogo(layout.doc))
         por_pagina: dict = {}
         for m, t, _b in med.refs:
             por_pagina.setdefault(int(t // layout.hb), []).append(layout.doc._numeros_notas[
