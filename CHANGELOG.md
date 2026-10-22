@@ -1,3 +1,26 @@
+## 0.1.19 - 2026-10-22
+
+A faixa amarela de avisos só aparece quando salvar faria o arquivo perder algo. Antes ela listava
+tudo o que o EditDoc não edita, inclusive recursos preservados sem perda (caixas de texto, formas,
+equações, imagens flutuantes, objetos opacos, revisões preservadas), e o aviso parecia um problema
+a resolver. Agora a faixa mostra só os avisos com perda ao salvar, os que o Salvar já pede para
+confirmar (quebra de tipo desconhecido, nota ilegível, controle de conteúdo achatado, formatação
+não preservada...).
+
+Decisão de UX: os avisos sem perda não geram faixa; ficam na lista completa, que abre pelo botão
+Detalhes (quando a faixa aparece) e por Arquivo > Objetos preservados (item novo, que abre a mesma
+caixa). A lista separa os dois grupos: "Sai do arquivo ao salvar" e "Não se perdem ao salvar".
+Avisos de só leitura (uma caixa de texto com tabela dentro, por exemplo) seguem a mesma regra: não
+perdem nada ao salvar, então ficam só na lista. Depois de um salvamento, a faixa some e a lista
+mantém o que continua no arquivo (o que só era preservado).
+
+Testes: `teste_documento` ganhou `testar_faixa_so_com_perda` (documento só com objetos preservados
+não mostra faixa e o item do menu abre a lista; com perda, a faixa mostra a quebra e não a equação;
+depois do salvamento, a faixa some e a equação continua na lista). Três expectativas antigas
+mudaram de lugar, sem retirar verificação: a faixa não fala mais da equação (`teste_documento`), a
+faixa de caixas de texto não aparece (`teste_objetos_opacos`) e o texto da lista completa é checado
+no lugar da faixa.
+
 ## 0.1.18 - 2026-10-22
 
 Histerese da quebra de página do motivo 3 ("o parágrafo começa a página por não caber"). Antes,

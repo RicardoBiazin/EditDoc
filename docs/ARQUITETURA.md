@@ -1104,6 +1104,18 @@ limites, data absurda, fora do lugar do esquema); NOTA, desde a 0.1.10, é só a
 aviso: o que não volta tem aviso próprio (PARTE_PERDIDA, MACROS, ASSINATURA, COMENTARIO,
 NOTA, MINIATURA). COMENTARIO desde a 0.1.6 é só o comentário que não pode ser lido.
 
+**Faixa e lista (decisão da 0.1.19).** A faixa amarela mostra só os avisos com `perde_ao_salvar`:
+exatamente os que o Salvar pede para confirmar. Um aviso sem perda (objeto preservado, caixa de
+texto, forma, equação, imagem flutuante, revisão preservada, e também os de só leitura, como uma
+caixa de texto com tabela dentro, que o EditDoc não edita) não gera faixa, porque nada do que ele
+descreve sai do arquivo ao salvar; a faixa avisaria de um problema que não existe. Esses avisos
+continuam todos na lista completa (`BarraAviso.avisos()`, `texto_da_lista`): ela abre pelo botão
+Detalhes da faixa e pelo item Arquivo > Objetos preservados. Depois de um salvamento, saem da
+janela só os avisos com perda; os que só preservam continuam, porque o objeto continua no arquivo.
+Quem quiser um aviso na faixa muda o `perde_ao_salvar` do catálogo (em `formato_docx/avisos.py`),
+não a faixa; o `perde_ao_salvar` continua sendo a única regra de quem entra na faixa e no diálogo de
+perda.
+
 Conferência que falha (0.1.11): o arquivo gravado não substitui o original. A janela grava a
 cópia de recuperação, explica sem jargão (`dialogos_modais.pedir_falha_na_conferencia`; o
 motivo técnico vai para o log) e oferece salvar os mesmos bytes, sem a conferência, em outro

@@ -592,11 +592,15 @@ def testar_janela() -> None:
         gerente = GerenteDeJanelas(configuracao.padrao())
         with dialogos(avisar=proibido("avisar")):
             janela = gerente.abrir(str(arquivo))
+        # 0.1.19: caixa de texto e forma nao perdem nada ao salvar, entao a faixa NAO aparece
+        # (antes a faixa listava as caixas). O aviso continua na lista completa (Detalhes e
+        # Arquivo > Objetos preservados), com o texto novo da 0.1.5 ("...pode ser editado").
+        checa(janela.barra_aviso.isHidden() and janela.barra_aviso.texto_da_faixa() == "",
+              "sem perda ao salvar, a faixa nao aparece para as caixas de texto")
         texto = janela.barra_aviso.texto_completo()
-        # 0.1.5: texto novo do aviso (o da caixa e' editavel); a checagem continua a mesma.
         checa("4 caixas de texto ou formas são preservadas. O texto de uma caixa de texto pode"
               in texto and "sai do arquivo" not in texto,
-              "a barra diz que as caixas sao preservadas, e nao que saem do arquivo")
+              "a lista completa diz que as caixas sao preservadas, e nao que saem do arquivo")
         painel = janela.painel
         painel.setFocus()
         cursor = painel.textCursor()

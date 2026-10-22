@@ -47,6 +47,7 @@ class BotaoArquivo(QToolButton):
         for id_ in ("imprimir", "visualizar_impressao"):
             menu.addAction(comandos.acao(id_))
         menu.addSeparator()
+        menu.addAction(comandos.acao("objetos_preservados"))
         menu.addAction(comandos.acao("recuperar"))
         menu.addAction(comandos.acao("opcoes"))
         menu.addSeparator()

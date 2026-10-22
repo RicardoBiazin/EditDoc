@@ -44,6 +44,9 @@ DEFINICOES = (
     Definicao("exportar_pdf", "PDF...", (), dica="Exportar o documento como PDF"),
     Definicao("exportar_txt", "Texto sem formatação (.txt)...", (),
               dica="Exportar só o texto do documento"),
+    # Recursos que o documento tem e o EditDoc nao edita (0.1.19): a faixa so' mostra a perda.
+    Definicao("objetos_preservados", "Objetos preservados...", (),
+              dica="Lista dos recursos do documento que o EditDoc não edita"),
     # Preferencias e recuperacao (M8).
     Definicao("opcoes", "Opções...", (), dica="Preferências do EditDoc"),
     Definicao("recuperar", "Recuperar documentos...", (),
@@ -400,7 +403,8 @@ FORMATACAO_RASTREADA = {
 
 #: Comandos de arquivo: quem os executa e' a janela. Ver `ao_arquivo` em Comandos.
 ARQUIVO = ("novo", "abrir", "salvar", "salvar_como", "fechar", "imprimir",
-           "visualizar_impressao", "exportar_pdf", "exportar_txt", "opcoes", "recuperar")
+           "visualizar_impressao", "exportar_pdf", "exportar_txt", "objetos_preservados",
+           "opcoes", "recuperar")
 
 
 def _nada() -> None:

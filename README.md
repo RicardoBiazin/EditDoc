@@ -245,7 +245,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.18-win64.zip` da página
+1. Baixe `EditDoc-0.1.19-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -313,11 +313,12 @@ andam entre o documento, a faixa, a barra de busca, os painéis abertos e o zoom
 
 O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 
-- **Política de perda ao abrir `.docx`**: tudo o que o arquivo tem e o EditDoc não edita
-  gera um aviso na barra amarela, com o botão Detalhes. Se salvar apagaria alguma coisa
-  (revisão acima dos limites, controle de conteúdo de linha de tabela, formatação que o EditDoc
-  não conhece...), o primeiro Salvar pede
-  confirmação e oferece "Salvar cópia". **Não** se perdem: caixas de texto, formas,
+- **Política de perda ao abrir `.docx`**: a faixa amarela aparece só quando salvar apagaria
+  alguma coisa (revisão acima dos limites, controle de conteúdo de linha de tabela, formatação
+  que o EditDoc não conhece...); o primeiro Salvar pede confirmação e oferece "Salvar cópia". O
+  que o arquivo tem e o EditDoc não edita, mas não perde ao salvar, não gera faixa (desde a
+  0.1.19): fica na lista de **Arquivo > Objetos preservados**, que também abre pelo botão Detalhes
+  da faixa. **Não** se perdem: caixas de texto, formas,
   gráficos, SmartArt, objetos OLE, equações e imagens flutuantes ou em formato que a tela
   não mostra (desde a 0.1.2); hiperlinks, marcadores, campos de qualquer tipo (sumário,
   referências, data...) e as partes do arquivo que o EditDoc não edita (desde a 0.1.3);
@@ -470,7 +471,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.18-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.19-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

@@ -55,7 +55,7 @@ from editdoc.formato_docx.escritor import escrever_com_avisos
 from editdoc.interface import (acessibilidade, dialogo_comentario, dialogo_estilo, dialogos_modais,
                                impressao, tema)
 from editdoc.interface.atualizador import AtualizadorDeEstado
-from editdoc.interface.barra_aviso import BarraAviso
+from editdoc.interface.barra_aviso import BarraAviso, mostrar_lista
 from editdoc.interface.barra_busca import BarraBusca
 from editdoc.interface.botao_arquivo import BotaoArquivo
 from editdoc.interface.comandos import (COMENTARIO, LINK, LISTA_NUMERADA, QUEBRA_DAS_ACOES, REVISAO,
@@ -152,6 +152,7 @@ class JanelaPrincipal(QMainWindow):
                                      "exportar_txt": self.exportar_txt,
                                      "opcoes": self.opcoes,
                                      "recuperar": self._recuperar,
+                                     "objetos_preservados": self.mostrar_objetos_preservados,
                                  }, ao_layout={
                                      "papel": self._mudar_papel,
                                      "orientacao": self._mudar_orientacao,
@@ -356,6 +357,11 @@ class JanelaPrincipal(QMainWindow):
             tema.aplicar(gravado["tema"])
         self.statusBar().showMessage("Opções gravadas.", 4000)
         return True
+
+    def mostrar_objetos_preservados(self) -> None:
+        """Arquivo > Objetos preservados: a lista completa de recursos do documento (0.1.19).
+        A faixa amarela so' mostra os avisos que o salvar faria perder; os outros ficam aqui."""
+        mostrar_lista(self, self._avisos)
 
     def _recuperar(self) -> None:
         if self._gerente is not None:
@@ -1023,8 +1029,10 @@ class JanelaPrincipal(QMainWindow):
             self._assinatura = assinatura(alvo)
             self._nome_recuperado = self._original_recuperado = None
             self.recuperacao.salvo()
-            self._avisos = []
-            self.barra_aviso.mostrar([])
+            # Salvo: o que o arquivo perdia ja se perdeu (sai da faixa). O que so' e' preservado
+            # continua no documento e continua na lista de Objetos preservados.
+            self._avisos = [a for a in self._avisos if not a.perde_ao_salvar]
+            self.barra_aviso.mostrar(self._avisos)
             self.painel.documento_corpo().setModified(False)
             self._atualizar_titulo()
             try:

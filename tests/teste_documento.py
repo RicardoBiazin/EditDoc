@@ -238,8 +238,15 @@ def testar_barra_de_aviso(tmp: pathlib.Path) -> None:
     with dialogos(avisar=proibido("avisar")):
         janela = gerente.abrir(str(arquivo))
     checa(janela is not None, "o arquivo com tabela abre")
-    checa(not janela.barra_aviso.isHidden(), "a barra de aviso aparece")
-    checa("equação" in janela.barra_aviso.texto_completo().lower(), "o aviso fala da equação")
+    # 0.1.19: a faixa so' mostra o que o salvar perde (a quebra de tipo desconhecido). A equacao,
+    # que e' preservada, saiu da faixa e fica na lista completa (antes, a faixa a listava).
+    checa(not janela.barra_aviso.isHidden(), "a barra de aviso aparece (a quebra perde ao salvar)")
+    checa("quebra" in janela.barra_aviso.texto_da_faixa().lower(),
+          "a faixa fala da quebra, o recurso que o salvar perde")
+    checa("equação" not in janela.barra_aviso.texto_da_faixa().lower(),
+          "a equacao preservada nao vai para a faixa (0.1.19)")
+    checa("equação" in janela.barra_aviso.texto_completo().lower(),
+          "a lista completa (Detalhes) tem a equacao")
     checa("tabela" not in janela.barra_aviso.texto_completo().lower(),
           "a tabela nao gera aviso: desde o M4 ela e' editada como tabela")
     checa("celula" in janela.painel.toPlainText(), "o texto da tabela foi preservado")
@@ -252,6 +259,55 @@ def testar_barra_de_aviso(tmp: pathlib.Path) -> None:
           "Detalhes mostra a lista completa, com a quebra de tipo desconhecido")
     limpa = gerente.novo()
     checa(limpa.barra_aviso.isHidden(), "contraprova: documento sem aviso nao mostra a barra")
+    janela_limpa(gerente)
+
+
+def testar_faixa_so_com_perda(tmp: pathlib.Path) -> None:
+    secao("0.1.19: faixa so' com perda; recurso preservado fica em Arquivo > Objetos preservados")
+    gerente = GerenteDeJanelas(configuracao.padrao())
+    # So' objetos preservados (caixas, forma, grafico, imagem flutuante...): nenhum aviso perde
+    # algo ao salvar, entao a faixa nao aparece. A lista completa tem todos.
+    arquivo = gravar(tmp / "preservados.docx", fx.docx_com_objetos())
+    with dialogos(avisar=proibido("avisar")):
+        janela = gerente.abrir(str(arquivo))
+    checa(janela is not None, "o arquivo com so' objetos preservados abre")
+    checa(janela.barra_aviso.isHidden(), "sem perda ao salvar, a faixa nao aparece")
+    checa(janela.barra_aviso.texto_da_faixa() == "", "a faixa nao tem texto")
+    avisos = janela.barra_aviso.avisos()
+    checa(len(avisos) > 0 and not any(a.perde_ao_salvar for a in avisos),
+          "os avisos existem e nenhum perde ao salvar (a lista os guarda)")
+    acao = janela.comandos.acao("objetos_preservados")
+    checa("Objetos preservados" in acao.text(), "a acao tem o nome Objetos preservados")
+    checa(any(a is acao for a in janela.botao_arquivo.menu().actions()),
+          "o item esta no menu Arquivo")
+    listas: list[str] = []
+    with dialogos(mostrar_detalhes=lambda _p, _t, texto: listas.append(texto)):
+        acao.trigger()
+    checa(len(listas) == 1 and "caixa" in listas[0].lower(),
+          "o item abre a lista com as caixas de texto")
+    checa("Não se perdem ao salvar" in listas[0],
+          "a lista separa o que nao se perde ao salvar")
+    checa("Sai do arquivo ao salvar" not in listas[0],
+          "contraprova: sem perda, o grupo 'Sai do arquivo' nao aparece")
+    janela_limpa(gerente)
+
+    # Com perda: a faixa aparece e fala so' da perda; a equacao fica na lista. Ao salvar com a
+    # perda confirmada, a faixa some, a quebra sai da lista e a equacao (ainda no arquivo) fica.
+    perda = gravar(tmp / "perda_e_preservados.docx", docx_com_tabela_e_quebra())
+    with dialogos(avisar=proibido("avisar")):
+        janela = gerente.abrir(str(perda))
+    faixa = janela.barra_aviso.texto_da_faixa().lower()
+    checa(not janela.barra_aviso.isHidden() and "quebra" in faixa,
+          "com perda, a faixa aparece e fala da quebra")
+    checa("equação" not in faixa, "contraprova: a equacao nao esta na faixa")
+    janela.painel.moveCursor(janela.painel.textCursor().MoveOperation.End)
+    janela.painel.insertPlainText(" X")
+    with dialogos(pedir_perda=lambda *_a: "salvar"):
+        checa(janela.salvar() is True, "salvar com a perda confirmada grava")
+    checa(janela.barra_aviso.isHidden(), "salvo: a perda saiu e a faixa some")
+    lista = janela.barra_aviso.texto_completo().lower()
+    checa("equação" in lista, "salvo: a equacao continua na lista (continua no arquivo)")
+    checa("quebra" not in lista, "salvo: a quebra que se perdeu sai da lista")
     janela_limpa(gerente)
 
 
@@ -467,6 +523,7 @@ def main() -> int:
         testar_recusa_de_extensoes(tmp)
         testar_arquivo_grande_e_invalido(tmp)
         testar_barra_de_aviso(tmp)
+        testar_faixa_so_com_perda(tmp)
         testar_perda_confirmada(tmp)
         testar_falha_de_gravacao(tmp)
         testar_arquivo_alterado_no_disco(tmp)

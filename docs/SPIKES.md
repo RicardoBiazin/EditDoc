@@ -1379,6 +1379,57 @@ Qualidade: `testar_reducao_suave` (tests/teste_imagens.py) pinta listras vertica
 de tinta (0 é o ideal) fica em 0,005 com o hint. Contraprova: a mesma imagem pelo QPainter sem o
 hint dá 1,000 (0,000 com o hint), e a árvore antes da mudança reprova o teste na tela (1,000).
 
+## 0.1.19: colunas de texto na tela, no PDF e na impressão (spike, adiado)
+
+Spike feito em 22/10/2026, só leitura de código (nenhuma linha do EditDoc alterada, nenhuma medida
+nova de tempo). Base: o spike da 0.1.14 (um `QTextDocument` com `pageSize` de uma coluna, as N
+páginas do Qt dobradas numa folha, layout de 2 a 4 ms) e o código da 0.1.18.
+
+Meta pedida: `w:cols` igual (num, space, equalWidth), quebra de coluna (`w:br type="column"`),
+`w:sep`, e seção contínua com colunas no meio da página.
+
+### Mecanismo avaliado
+
+- Dobrar páginas do Qt em folhas (o spike da 0.1.14). O Qt continua com uma altura de página, e
+  cada folha passa a ser N páginas do Qt lado a lado. O custo está em todo lugar que supõe
+  "folha n = Qt page n" (ver contagem abaixo).
+- Uma coluna por `QTextFrame` ou por `QTextDocument` por seção: descartado (cursor, seleção,
+  desfazer e localizar atravessando colunas teriam de ser refeitos; já era o caso da 0.1.12).
+- Colunas como pintura pura sobre o texto de uma coluna: não existe, o fluxo do texto é do Qt.
+
+### Custo de integração (contagem no código da 0.1.18, `editdoc/` sem testes)
+
+| Área | Onde o pressuposto mora | Efeito |
+|---|---|---|
+| Mapa e tiles | `LayoutPaginado.hb` (11 arquivos), `pagina_de_y` (4), `numero_paginas` (6), `VistaPaginas._tile`, `desenhar_folha` | Um tile passa a mostrar N faixas; o `Mapa` vira folha → páginas do Qt |
+| Cursor e caret | `retangulo_cursor` (5 arquivos), `pagina_do_cursor` (3), `ajustar_para_pagina` (3), `_retangulo_do_caret` | O x do caret vem da coluna, não só do y |
+| Hit-test | `painel_documento.posicao_em` e os `hitTest` de `posicao_em`, arraste e alças (4 pontos só nele), `objetos.py:185`, `notas.py:1094`, `paginacao.py:450` (que testa `pagina * hb`), `vista_paginas.py:94,1536` | Cada ponto de clique tem de virar (folha, coluna, y) e voltar |
+| Seleção e arraste de objeto | `_arraste`, `_geometria_do_arraste`, `flutuante_das_faixas_em` | Dependem de hit-test e de folha |
+| Objetos flutuantes | `flutuantes.Contexto.topos/folhas` e `_folha_para_flutuantes` | O relativo à página passa a ser relativo à coluna |
+| Notas de rodapé | área de notas por folha (`interface/notas.py`), `paginacao.py` (compensação de notas) | A nota fica no pé da folha, não da coluna |
+| Campos | `campos_da_folha`, PAGE, NUMPAGES, SECTIONPAGES (10 arquivos do pacote citam os campos) | O número de página é da folha; NUMPAGES conta folhas |
+| Paginação (0.1.17/0.1.18) | `interface/paginacao.py` (694 linhas): assinatura por página, histerese do motivo 3, espaçador das notas, `_avaliar` | Toda a regra de quebra é por página do Qt; com colunas, a "página" da regra vira coluna e a altura da folha muda |
+| Seção contínua no meio da folha | `ConjuntoDeSecoes.mapear`, `secao_da_folha`, `topo_da_pagina` | A seção contínua começa numa coluna, e a altura da coluna não é a da folha: precisa de páginas do Qt de alturas diferentes, e o balanceamento da última folha é iterativo |
+| Quebra de coluna no meio do parágrafo | `leitor.py:533` (vira `MarcaQuebra("coluna")`), `modelo/documento.py:274` | Hoje é caractere de objeto; o Qt não quebra coluna. Teria de partir o parágrafo, como a quebra de página |
+| Impressão e PDF | `impressao.py` (509 linhas), `preparar_para_impressao`, `leitor_pdf` dos testes | A folha impressa tem N colunas; o PDF e a impressão repetem o mapa |
+| Desfazer | comandos de edição e `formato do quadro raiz` | Pouco afetado: colunas são formato de seção (já passam pelo `ConjuntoDeSecoes`) |
+| Gravação | `formato_docx/secoes.py` (w:cols em c14n) | Já preserva w:cols; a escrita de `w:br type="column"` e de `w:sep` seria nova |
+
+Conclusão do spike: o layout do texto em colunas do Qt funciona (a medida da 0.1.14 continua
+valendo), mas o que muda é o mapa folha → página do Qt, e ele está em cursor, hit-test, tiles,
+notas, campos, paginação com compensação, impressão e PDF. Não há como fazer isso como "um
+ajuste na pintura".
+
+### Veredito
+
+Não entra na 0.1.19. Risco alto para o arquivo real (a paginação da 0.1.17/0.1.18 foi medida
+página a página contra o Word; mexer no mapa a põe em risco) e sem como medir a interação com
+o cursor e a impressão sem uma sessão de tela no Windows. O aviso de colunas fica como está. Caminho
+para uma versão própria, na ordem: (1) separar no `ConjuntoDeSecoes` a folha da página do Qt, sem
+colunas (nada muda, testes atuais passam); (2) colunas iguais só em seção de quebra de página
+(folha = N páginas do Qt, sem seção contínua); (3) quebra de coluna no parágrafo e `w:sep`;
+(4) seção contínua com colunas no meio da folha, por último.
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com
@@ -1404,7 +1455,8 @@ hint dá 1,000 (0,000 com o hint), e a árvore antes da mudança reprova o teste
   tabelas, ou layout próprio das tabelas de baixo (reescritas grandes).
 - 0.1.14: abrir no Word, sem reparo, um arquivo com linha e coluna excluídas com o controle ligado,
   um movimento (recortar e colar) e as rejeições de tabela, célula e seção.
-- 0.1.14: colunas de texto na tela e no PDF (spike feito, adiado: ver "0.1.14").
+- 0.1.14: colunas de texto na tela e no PDF (spike feito, adiado: ver "0.1.14"; reavaliado na
+  0.1.19, adiado de novo: ver "0.1.19", começando pela separação folha × página do Qt).
 - 0.1.13: abrir no Word, sem reparo, um arquivo com alterações controladas gravado pelo EditDoc
   (digitar, apagar, formatar e Enter com o controle ligado, dois autores; aceitar e rejeitar
   parte delas) e conferir que o Word mostra as mesmas revisões, autores e datas.
