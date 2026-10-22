@@ -1,3 +1,21 @@
+## 0.1.18 - 2026-10-22
+
+Histerese da quebra de página do motivo 3 ("o parágrafo começa a página por não caber"). Antes,
+a quebra ligava e desligava a cada tecla quando o layout da página de cima mudava: num plano real
+o mesmo parágrafo ia e voltava até 4 vezes numa tecla. Agora a quebra liga só se o parágrafo
+precisa descer e desliga só com 720 twips de folga no pé da página de cima. Nada muda no arquivo
+gravado; o oráculo do Word (quebras e páginas dos `.docx` de teste) fica igual.
+
+Medido (docs/SPIKES.md, "0.1.18"): numa tecla do plano real, as mudanças de quebra caíram de 9
+para 6 e o ida e volta no mesmo parágrafo sumiu. Os picos de tempo continuam acima do que a meta
+pedia (16 ms): o custo por mudança é do relayout do Qt, e a saída para isso é decidir as quebras
+sem o Qt (não feito nesta versão).
+
+Qualidade de imagem: uma imagem reduzida na página saía serrilhada (listras finas viravam 0 % ou
+100 % de tinta por coluna). O corpo agora pinta com `SmoothPixmapTransform`. O custo no gate ficou
+dentro do ruído (SPIKES, "0.1.18"). O teste `testar_reducao_suave` (tests/teste_imagens.py) mede o
+desvio na tela e tem contraprova sem a suavização.
+
 ## 0.1.17 - 2026-10-16
 
 Paginação mais perto da do Word, medida contra o próprio Word: cada `w:lastRenderedPageBreak` que

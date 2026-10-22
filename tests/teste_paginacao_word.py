@@ -615,6 +615,41 @@ def acerto_das_quebras(lay) -> tuple[int, int]:
     return par, lin
 
 
+def testar_histerese(j, cap: int) -> None:
+    """0.1.18: a quebra do motivo 3 so' sai com folga. Na faixa em que o paragrafo ainda cabe
+    na pagina de cima, mas com pouca folga, a decisao de tirar a quebra (`_precisa` com margem)
+    tem de ficar com a quebra; so' com folga de sobra ela sai. Contraprova: sem a folga
+    (margem 0, a 0.1.17) a mesma faixa tira a quebra, e o teste acusa."""
+    secao("histerese da quebra do motivo 3 (0.1.18): a faixa estreita fica como esta'")
+    from editdoc.interface import paginacao as ip
+    achados = {}
+    for k in range(1, 8):
+        corpo = fillers(cap - k) + p("P", ppr='<w:spacing w:before="480"/>') + fillers(30)
+        lay = abrir(j, docx(corpo))
+        P = bloco_com(lay, "P")
+        cp = lay.paginacao
+        u = cp._unidade_de(bloco=P)
+        ant = cp._unidade_de(bloco=P.previous())
+        if u.paginas != ant.paginas or u.paginas[0] != 0:
+            continue
+        sem = cp._precisa(u, ant, 0.0)
+        com = cp._precisa(u, ant, ip.HISTERESE_TW)
+        if not sem and com:
+            achados.setdefault("estreita", (k, sem, com))
+        if not sem and not com:
+            achados.setdefault("folga", (k, sem, com))
+    checa("estreita" in achados,
+          "ha uma faixa em que o paragrafo cabe e a folga de 720 twips nao cabe")
+    if "estreita" in achados:
+        k, sem, com = achados["estreita"]
+        checa(com is True,
+              f"faixa estreita (k={k}): sem sobra suficiente o paragrafo continua empurrado")
+        checa(sem is False,
+              f"faixa estreita (k={k}): sem folga (0 twips) a quebra sai; so' a folga a segura")
+    checa("folga" in achados,
+          "com folga de sobra (k maior) a quebra sai, como antes")
+
+
 # -- desempenho -------------------------------------------------------------------------------
 
 def testar_custo_por_tecla(j) -> None:
@@ -659,6 +694,7 @@ def main() -> int:
         testar_gravacao(j)
         testar_desfazer_e_copiar(j)
         testar_oraculo(j)
+        testar_histerese(j, cap)
         testar_custo_por_tecla(j)
     finally:
         j.painel.documento_corpo().setModified(False)

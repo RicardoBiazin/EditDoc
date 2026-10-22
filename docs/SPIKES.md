@@ -1251,6 +1251,134 @@ Os 12 `.docx` (cópias temporárias, plataforma `windows`): abrir → salvar com
 salvar → reabrir: todos gravam, sem aviso, conferência e validador passando, sem diferença c14n
 entre a 1ª e a 2ª gravação, mesmas páginas nas três aberturas, documento sem "alterado" ao abrir.
 
+## 0.1.18: tirar os trancos da paginação (medição e histerese da quebra do motivo 3)
+
+A 0.1.18 foi planejada para fazer a recomputação da paginação parar cedo. Antes de mudar código,
+mediu-se onde vai o tempo de uma tecla com quebra que muda. O que entrou está em "Histerese" no
+fim desta seção.
+
+### O que já converge
+
+`ConjuntoDePaginacao._regras_desde` já para quando a assinatura de cada página (o começo dela:
+bloco, linha, topo) volta a bater com o plano anterior, a partir da página editada e da última
+mudança (`_inicios`). Por tecla, o paginador confere de 1 a 14 páginas (300 teclas no plano real,
+média de 1 a 2). A cadeia de "manter com o próximo" já é avaliada inteira em `_manter_com_proximo`
+e `_precisa`, não só o próximo bloco. O que falta convergir não é o paginador.
+
+### Onde vai o tempo (offscreen, `teste_desempenho` como base, janela 1000 × 800)
+
+Medição por tecla (`medir_tecla`, scratchpad fora do repositório): `keyClick` (insertText e o
+layout que o Qt refaz) e a pintura, com o paginador dentro da pintura. Uma rodada por ponto, 80 a
+400 teclas; o p95 é do total (tecla + pintura).
+
+| Documento (ponto) | teclas | p95 total | pico | teclas com quebra mudando |
+|---|---|---|---|---|
+| manual sintético (corpo) | 400 | 7,3 ms | 15,7 ms | 4 |
+| manual sintético (início, antes da capa) | 120 | 11,0 ms | 34,4 ms | 1 |
+| manual sintético (sumário) | 120 | 9,6 ms | 26,3 ms | 2 |
+| manual com capa cheia (início) | 200 | 12,7 ms | 29,5 ms | 0 |
+| manual real (1/3) | 300 | 7,1 ms | 15,0 ms | 1 |
+| plano sintético (1/3) | 400 | 24,8 ms | 39,0 ms | 2 |
+| plano sintético (célula) | 200 | 16,8 ms | 35,4 ms | 2 |
+| plano sintético (início) | 200 | 24,2 ms | 32,9 ms | 0 |
+| plano real (documento de referência, 1/3) | 300 | 16,6 ms | **73,3 ms** | 3 |
+| plano de ação real (1/3) | 300 | 4,5 ms | 7,0 ms | 0 |
+
+No plano real, a tecla de pico (9 mudanças de quebra) gastou 39 ms no paginador e 12 ms no
+`insertText`; a de 6 mudanças gastou 33 ms. A média do paginador, sem os picos, é 1 a 3 ms por tecla
+(`cProfile`: 0,88 s em 309 chamadas de `atualizar_secoes`).
+
+Separação entre o paginador e o Qt (perfil, plano real, 300 teclas): `insertText` 4,1 s (o layout
+das tabelas que o Qt refaz, como já medido em 0.1.14); `setBlockFormat` 0,5 s; `endEditBlock` 0,14 s
+em 25 chamadas (cerca de 6 ms cada: é o relayout que o Qt faz quando um formato de bloco muda);
+o paginador (`regras` + `compensar`) 0,8 s no total. Cada mudança de quebra custa um relayout do Qt
+de ~5 ms; por isso o pico é proporcional ao número de mudanças, não ao número de blocos conferidos.
+
+### Causa dos picos: ida e volta de quebras
+
+O rastro das mudanças (`rastro_ajustes`, scratchpad) mostra o que o paginador faz em um pico:
+
+- tecla 57: liga quebra no bloco 216, liga em 422, desliga em 426, liga em 446, liga em 500,
+  desliga em 517, desliga em 549, liga em 549, desliga em 549: 9 mudanças, 4 delas no mesmo
+  bloco 549;
+- tecla 249: liga 215, liga 260, liga 379, liga em 549, desliga em 549, liga em 549: 6 mudanças.
+
+O bloco 549 vai e volta. O motivo 3 ("o parágrafo começa a página, tem espaço antes e não cabe")
+liga a quebra; na conferência seguinte, `_avaliar` pergunta por `_precisa` (o bloco ainda precisa
+descer, simulado sem a quebra) e desliga, porque sem a quebra o bloco cabe no pé da página de cima;
+a mudança seguinte nas páginas de cima faz de novo o bloco começar a página. Isso é um ponto fixo
+que não fecha. O `MAX_POR_BLOCO = 3` limita a volta, mas cada volta custa um relayout.
+
+### O que isso diz sobre a meta
+
+- A convergência por assinatura de página já existe, e não é ela que custa.
+- O custo que sobra é o relayout do Qt a cada mudança de quebra (~5 ms), e o número de mudanças.
+  Os picos de 54 ms e 122 ms da 0.1.17 não foram reproduzidos nesta rodada; o de 73 ms no plano
+  real é o maior medido, e as mudanças do mesmo bloco de ida e volta são a parte evitável.
+- Para cair de 73 ms para 16 ms, a saída provável é decidir as quebras em Python (simulação sem
+  o Qt) e aplicar as mudanças de uma vez num bloco de edição, com a conferência só no fim. Isso é
+  reescrita do modelo de quebras, não um ajuste de parada, e mexe nos números de páginas que a
+  0.1.17 mediu contra o Word: não foi feito nesta rodada.
+### Histerese da quebra do motivo 3 (entrou)
+
+A causa do ping-pong: o motivo 3 liga a quebra quando o bloco já começa a página sem ela
+(`primeiro`), e `_precisa` a desliga quando o bloco caberia na página de cima. Com o layout da
+página de cima mudando a cada tecla, o bloco 549 do plano real ia e voltava (liga, desliga, liga,
+desliga, na tecla 57). Agora:
+
+- liga (motivo 3) só se `_precisa(bloco, anterior)` diz que o bloco precisa descer (o mesmo
+  critério de antes, sem folga);
+- desliga só se `_precisa(..., margem=HISTERESE_TW)` diz que sobram 720 twips no pé da página de
+  cima (`HISTERESE_TW`, `interface/paginacao.py`; zero volta ao comportamento da 0.1.17).
+
+Entre as duas faixas a quebra fica como está. Medido (scratchpad, mesmos scripts):
+
+| Medida | 0.1.17 (`HISTERESE_TW=0`) | 0.1.18 (720) |
+|---|---|---|
+| tecla 57 do plano real: mudanças de quebra | 9 (bloco 549: 4) | 6 (549: 0) |
+| tecla 249 do plano real: mudanças de quebra | 6 | 3 |
+| páginas do plano real depois de 300 teclas (1/3) | 16 | 15 |
+| oráculo dos .docx de Downloads (páginas; par, lin de cada) | igual | igual |
+
+O oráculo não muda em nenhum dos 15 `.docx` de Downloads (páginas e acerto por parágrafo e linha);
+a contagem de páginas ao abrir, no ambiente desta rodada, dá 46 no manual (a 0.1.17 registrou 49
+no Windows; não foi reproduzido aqui: sem diferença entre 0 e 720). O gate (intercalado, zero e
+720, mesma rodada): manual sintético corpo 7,8 e 7,6 ms; capa cheia no início 14,0 e 14,8 ms (p95
+total); sem piora fora do ruído.
+
+Não atingido. Numa rodada tranquila, a tecla 57 do plano real gastou 73 ms no total (39 ms no
+paginador); nesta rodada, com a máquina carregada, a mesma tecla gastou ~170 ms (80 a 88 ms no
+paginador) com 9 mudanças e ~140 ms (80 ms) com 6. A redução de 9 para 6 mudanças deu só ~8 % no
+paginador com a máquina carregada, então o custo por mudança não é só o número delas. Não há
+medida tranquila do depois: as duas rodadas de 0 e 720 foram feitas carregadas. A meta de 16 ms
+continua exigindo decidir as quebras sem o Qt (ver acima).
+
+Contraprova: `testar_histerese` (tests/teste_paginacao_word.py) usa uma fixture em código com a
+faixa estreita (o parágrafo cabe com pouca folga); com `HISTERESE_TW = 0` a suíte acusa. Não
+consegui uma fixture sintética que oscile de verdade (as que tentei não oscilam); a oscilação
+medida é a do plano real, que não entra no repositório.
+
+### Qualidade de imagem reduzida (entrou)
+
+O corpo (`desenhar_folha`, `interface/vista_paginas.py`) não pedia `SmoothPixmapTransform`: uma
+imagem reduzida amostrava o pixel mais próximo e saía serrilhada. Agora o hint vai antes do
+`draw` do corpo, dentro do save/restore. Gate (`medir_tecla`, scratchpad fora do repositório;
+antes = cópia da árvore sem o hint, depois = com o hint; 3 rodadas intercaladas, 400 teclas cada;
+p95 do total, em ms):
+
+| Ponto | antes (r1, r2, r3) | depois (r1, r2, r3) | mediana antes / depois |
+|---|---|---|---|
+| manual sintético (corpo) | 8,6; 8,0; 7,5 | 7,9; 8,9; 7,5 | 8,0 / 7,9 |
+| manual com capa cheia (início) | 16,5; 16,8; 16,3 | 16,5; 17,3; 16,2 | 16,5 / 16,5 |
+| documento simples (corpo) | 6,7; 7,4; 6,5 | 6,8; 6,5; 7,7 | 6,7 / 6,8 |
+
+Nenhum ponto passa de 1,5 ms de diferença entre as medianas: sem regressão fora do ruído.
+
+Qualidade: `testar_reducao_suave` (tests/teste_imagens.py) pinta listras verticais de 1 px
+(vermelho e branco) reduzidas a 1/4 pelo painel real. O desvio das colunas em relação à metade
+de tinta (0 é o ideal) fica em 0,005 com o hint. Contraprova: a mesma imagem pelo QPainter sem o
+hint dá 1,000 (0,000 com o hint), e a árvore antes da mudança reprova o teste na tela (1,000).
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com

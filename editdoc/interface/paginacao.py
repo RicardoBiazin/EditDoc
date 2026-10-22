@@ -53,6 +53,9 @@ MAX_MUDANCAS = 64
 MAX_POR_BLOCO = 3
 #: Folga de arredondamento entre o simulado e o layout do Qt (twips).
 FOLGA = 0.5
+#: Histerese da quebra do motivo 3 (0.1.18): a quebra so' sai com esta folga (twips) sobrando no
+#: pe' da pagina de cima. Zero volta ao comportamento da 0.1.17 (contraprova do teste).
+HISTERESE_TW = 720.0
 
 
 def _inteiro(flags) -> int:
@@ -536,7 +539,10 @@ class ConjuntoDePaginacao:
         if pq.eh_regra(fmt):
             if fmt.property(pq.PROP_QUEBRA_REGRA) == 2:
                 return None if self._flag(fmt, "pageBreakBefore") else (u.bloco, False, 2)
-            if anterior is not None and not self._precisa(u, anterior):
+            # 0.1.18: a quebra do motivo 3 (o paragrafo comeca a pagina por nao caber) so' sai
+            # com folga: sem ela, o bloco vai e volta a cada ajuste de pagina de cima.
+            margem = HISTERESE_TW if fmt.property(pq.PROP_QUEBRA_REGRA) == 3 else 0.0
+            if anterior is not None and not self._precisa(u, anterior, margem):
                 return (u.bloco, False, 1)
             return None
         if pq.tem_quebra_antes(fmt) or self._estrutural(fmt):
@@ -553,8 +559,11 @@ class ConjuntoDePaginacao:
         acao = self._manter_com_proximo(u, anterior)
         if acao is not None:
             return acao
+        # 0.1.18: liga so' se o bloco precisa descer (o mesmo criterio de `_precisa` que o desliga,
+        # sem folga); desliga so' com a folga HISTERESE_TW. Entre as duas, a quebra fica como esta'.
         if "topo" in self.partes and anterior is not None and primeiro and \
-                (pq.antes_real(fmt) or 0.0) > pq.FOLGA:
+                (pq.antes_real(fmt) or 0.0) > pq.FOLGA and \
+                (HISTERESE_TW <= 0 or self._precisa(u, anterior)):
             return (u.bloco, True, 3)
         return None
 
@@ -615,9 +624,12 @@ class ConjuntoDePaginacao:
         lay = bloco.layout()
         return [pq.avanco_e_corte(fmt, lay.lineAt(i)) for i in range(lay.lineCount())]
 
-    def _precisa(self, u: _Unidade, anterior: _Unidade) -> bool:
+    def _precisa(self, u: _Unidade, anterior: _Unidade, margem_tw: float = 0.0) -> bool:
         """O bloco empurrado pelas regras ainda precisa descer? Simula o bloco sem a quebra,
-        logo depois da unidade de cima, com as alturas das linhas dele."""
+        logo depois da unidade de cima, com as alturas das linhas dele.
+
+        `margem_tw` (0.1.18, histerese): cabendo inteiro, so' conta como "nao precisa" se sobrar
+        pelo menos essa folga no pe' da pagina; senao continua empurrado."""
         bloco = u.bloco
         fmt = bloco.blockFormat()
         hb = self.layout.hb
@@ -643,6 +655,8 @@ class ConjuntoDePaginacao:
         # cabe inteiro: o "manter com o proximo" pede a cadeia inteira e a primeira linha (duas,
         # com o controle de viuvas) do primeiro paragrafo depois dela
         y = y0 + sum(av for av, _c in alturas)
+        if margem_tw and pe - y < margem_tw:
+            return True
         atual, fa = bloco, fmt
         for _ in range(64):
             if not self._flag(fa, "keepNext"):

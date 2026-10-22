@@ -352,6 +352,88 @@ def testar_tela_e_zoom() -> None:
     painel.close()
 
 
+def _listras_qimage(largura: int = 400, altura: int = 200):
+    """Listras verticais de 1 px, vermelho e branco: reduzida, sem suavizacao, sai serrilhada."""
+    from PySide6.QtGui import QColor, QImage
+
+    img = QImage(largura, altura, QImage.Format.Format_RGB32)
+    vermelho, branco = QColor(220, 30, 30), QColor(255, 255, 255)
+    for x in range(largura):
+        cor = vermelho if x % 2 == 0 else branco
+        for y in range(altura):
+            img.setPixelColor(x, y, cor)
+    return img
+
+
+def _desvio_da_reducao(img) -> float:
+    """Desvio das colunas em relacao a media ideal (metade de tinta), na caixa da tinta.
+
+    Cada coluna da imagem reduzida devia ter 50 % de tinta vermelha (listras de 1 px). Sem
+    suavizacao, a amostragem cai sempre na mesma cor e a coluna vai a 0 % ou 100 %: o desvio
+    fica perto de 0,5. Com suavizacao, a coluna faz a media das listras e fica perto de 0.
+    """
+    def tinta(c) -> float:
+        return min(1.0, max(0, c.red() - c.green()) / 190.0)
+
+    recorte = img.copy(0, 0, min(img.width(), 700), min(img.height(), 450))
+    pontos = [(x, y) for y in range(recorte.height()) for x in range(recorte.width())
+              if tinta(recorte.pixelColor(x, y)) > 0.016]
+    if not pontos:
+        return 1.0
+    x0 = min(x for x, _ in pontos)
+    x1 = max(x for x, _ in pontos)
+    y0 = min(y for _, y in pontos)
+    y1 = max(y for _, y in pontos)
+    desvios = []
+    for x in range(x0, x1 + 1):
+        media = sum(tinta(recorte.pixelColor(x, y)) for y in range(y0, y1 + 1)) / (y1 - y0 + 1)
+        desvios.append(abs(media - 0.5))
+    return sum(desvios) / len(desvios)
+
+
+def _desvio_pintor(suave: bool) -> float:
+    """Contraprova: a mesma reducao pelo QPainter, com e sem SmoothPixmapTransform."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    canvas = QImage(300, 200, QImage.Format.Format_RGB32)
+    canvas.fill(QColor(255, 255, 255))
+    pintor = QPainter(canvas)
+    pintor.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, suave)
+    pintor.drawImage(QRectF(10, 10, 100, 50), _listras_qimage())
+    pintor.end()
+    return _desvio_da_reducao(canvas)
+
+
+def testar_reducao_suave() -> None:
+    secao("imagem reduzida: a suavizacao do corpo deixa as listas finas sem serrilhado")
+    from editdoc.edicao import imagens as ed_imagens
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+
+    dados = QByteArray()
+    buf = QBuffer(dados)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    _listras_qimage().save(buf, "PNG")
+    buf.close()
+
+    painel = _painel()
+    ed_imagens.inserir_bytes(painel, bytes(dados.data()))
+    pos = painel.textCursor().position() - 1
+    checa(ed_imagens.redimensionar(painel, pos, 100, 50), "a listra de 400 x 200 px vai a 100 x 50")
+    painel.clearFocus()
+    drenar_eventos(2)
+    tela = painel.viewport().grab().toImage()
+    desvio_tela = _desvio_da_reducao(tela)
+    desvio_sem = _desvio_pintor(suave=False)
+    desvio_com = _desvio_pintor(suave=True)
+    checa(desvio_tela < 0.15,
+          f"na tela, a listra reduzida fica perto da media ideal (desvio {desvio_tela:.3f})")
+    checa(desvio_com < 0.15 and desvio_sem > 0.3,
+          f"contraprova: sem a suavizacao o desvio e {desvio_sem:.3f}, com ela {desvio_com:.3f}")
+    painel.document().setModified(False)
+    painel.close()
+
+
 def testar_edicao() -> None:
     secao("edicao: inserir, clicar seleciona, alca redimensiona, desfazer, colar, digitar depois")
     from PySide6.QtCore import QPointF, Qt
@@ -511,6 +593,7 @@ def main() -> int:
         return pular("Segoe UI nao esta instalada")
     testar_ponte_qt()
     testar_tela_e_zoom()
+    testar_reducao_suave()
     testar_edicao()
     with pasta_temporaria("editdoc-teste-imagens-") as tmp:
         testar_janela(tmp)

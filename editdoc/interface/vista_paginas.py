@@ -303,6 +303,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         selecoes.append(sel)
     if selecoes:
         ctx.selections = selecoes
+    # Imagem reduzida sem suavizacao sai serrilhada (0.1.18): o Qt amostra o pixel mais proximo.
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
     layout.doc.documentLayout().draw(painter, ctx)
     # Numeros e marcadores das listas (0.1.4): pintados aqui, na funcao unica da folha.
     pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)

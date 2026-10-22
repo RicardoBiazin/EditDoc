@@ -1080,6 +1080,11 @@ depois do último, a linha de tabela que não se parte (`cantSplit`) e a altura 
 não entram; cabeçalho, rodapé e notas não são compensados; a quebra de página seguida de uma quebra
 de seção (próxima página) dá uma página a mais (o Word não a cria).
 
+Histerese (0.1.18): a quebra do motivo 3 (o parágrafo começa a página por não caber) liga só se o
+parágrafo precisa descer e desliga só com `HISTERESE_TW` (720 twips) de folga na página de cima. O
+paginador já para cedo pela assinatura das páginas (`_regras_desde`); o custo que sobra é o
+relayout do Qt por mudança de quebra (docs/SPIKES.md, "0.1.18").
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a
