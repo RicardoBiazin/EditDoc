@@ -1,3 +1,9 @@
+## 0.1.24 - 2026-10-24
+
+Higiene do repositório: os scripts de medição em `spikes/` apontavam para uma pasta de
+rascunho com o nome de usuário do Windows no caminho. Agora usam a pasta temporária do
+sistema (`tempfile.gettempdir()`). Nenhuma mudança no programa.
+
 ## 0.1.23 - 2026-10-24
 
 Atualização de dependência: PySide6 (Essentials) de 6.11.2 para 6.12.0, fixada em `requirements.txt`.

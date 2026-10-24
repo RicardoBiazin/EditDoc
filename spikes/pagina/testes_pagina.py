@@ -14,6 +14,7 @@ import os
 import random
 import subprocess
 import sys
+import tempfile
 import time
 import hashlib
 
@@ -38,8 +39,7 @@ from exportacao import exportar_pdf, criar_previa, contar_paginas_pdf, pintar_pa
 
 SAIDA = os.environ.get(
     "SPIKE_SAIDA",
-    r"C:\Users\GRRR03~1\AppData\Local\Temp\claude\g--Drives-compartilhados-Ricardo-Biazin-Python"
-    r"\a62504b4-5c1f-485b-a564-e5755b35ed5a\scratchpad\spike-pagina",
+    os.path.join(tempfile.gettempdir(), "editdoc-spike-pagina"),
 )
 os.makedirs(SAIDA, exist_ok=True)
 

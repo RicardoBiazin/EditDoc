@@ -19,6 +19,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
 import zipfile
@@ -37,8 +38,7 @@ import leitor  # noqa: E402
 from leitor import ErroDocx  # noqa: E402
 from modelo import Documento, Paragrafo, Run  # noqa: E402
 
-SCRATCH = Path(r"C:\Users\GRRR03~1\AppData\Local\Temp\claude\g--Drives-compartilhados-Ricardo-Biazin-Python"
-               r"\a62504b4-5c1f-485b-a564-e5755b35ed5a\scratchpad\spike-docx")
+SCRATCH = Path(tempfile.gettempdir()) / "editdoc-spike-docx"
 SAIDAS_BASE = Path(os.environ.get("EDITDOC_SPIKE_SAIDAS", str(SCRATCH)))
 SAIDAS = SAIDAS_BASE
 
