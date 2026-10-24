@@ -377,6 +377,16 @@ class ConjuntoDeSecoes:
             yield bloco.position(), bloco, None
             bloco = bloco.next()
 
+    def _quebra_do_usuario_logo_antes(self, pos: int) -> bool:
+        """True quando o paragrafo de cima da quebra de secao so' tem a quebra de pagina do
+        usuario (0.1.22). Essa quebra fica no fim dele, e a pagina seguinte ja' comeca ali: a
+        quebra derivada da secao (no paragrafo da secao) nao entra, senao a pagina em branco
+        (o Word poe o paragrafo so' com a quebra e a quebra de secao na mesma pagina)."""
+        doc = self.layout.doc
+        anterior = doc.findBlock(pos).previous()
+        return anterior.isValid() and anterior.length() <= 1 \
+            and pq.quebra_so_depois(anterior.blockFormat())
+
     def conferir_formatos(self, forcar: bool = False) -> bool:
         """Quebras de pagina, pagina em branco e recuos escondidos em dia. True se mudou algum
         formato (o layout muda). So' confere o trecho editado, a nao ser que a estrutura mude."""
@@ -399,7 +409,8 @@ class ConjuntoDeSecoes:
         branco = set()
         for i, info in enumerate(self.lista[:-1]):
             seguinte = self.lista[i + 1]
-            if mod_secoes.comeca_em_pagina_nova(seguinte.secao.tipo, info.pagina, seguinte.pagina):
+            if mod_secoes.comeca_em_pagina_nova(seguinte.secao.tipo, info.pagina, seguinte.pagina) \
+                    and not self._quebra_do_usuario_logo_antes(info.pos):
                 quebras_depois.add(doc.findBlock(info.pos).position())
             if i + 1 in self._branco:
                 inicio, _b, _t = self._unidade_depois(info.pos)

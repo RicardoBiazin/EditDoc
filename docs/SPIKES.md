@@ -1502,6 +1502,98 @@ arquivo salvo (c14n da regressão). O próximo passo é o 2 (colunas iguais só 
 que é o primeiro com folha ≠ página do Qt de verdade; ele continua adiado até a sessão de tela no
 Windows.
 
+## 0.1.22: página em branco antes da quebra de seção (quebra de página no próprio parágrafo)
+
+O defeito, na 0.1.17 já anotado como "não corrigido" (arquivo 9, "a página em branco"): um parágrafo que
+só tem `w:br type="page"` seguido do parágrafo com o `w:sectPr` (quebra de seção "próxima página").
+Confirmado no código e no documento de referência (SIM, Aptos ausente nesta máquina): o SIM tem o
+parágrafo só-quebra (bloco 9) e o parágrafo com o `sectPr` (bloco 10), e no `w:body` o `lastRenderedPageBreak`
+do Word cai no "Sumário" (o bloco 11): o Word põe a quebra e a seção na página da capa.
+
+Causa: `formato_docx/leitor._paragrafos` lê o parágrafo só-quebra como `quebra_antes` dele mesmo, e
+`ponte_qt/para_qt` grava isso como `PageBreak_AlwaysBefore`: o Qt começa uma página nesse parágrafo (vazio).
+O `sectPr` vira `PageBreak_AlwaysAfter` (quebra derivada, `interface/secoes.conferir_formatos`), e a
+seção seguinte começa numa página depois: a página do parágrafo só-quebra fica sozinha.
+
+Medido na 0.1.20 (Windows, `QT_QPA_PLATFORM=windows`): SIM com 15 páginas; a página 2 contém só o
+parágrafo só-quebra e o `sectPr`, e o Sumário começa na 3.
+
+### O que mudou
+
+- Parágrafo só-quebra (sem runs, sem `sectPr` no mesmo `w:p`): `PageBreak_AlwaysAfter` (`para_qt`).
+  Ele fica na página de cima, como no Word. Com texto (digitado depois), o `de_qt` separa o texto
+  e um parágrafo só-quebra depois dele, para o arquivo voltar igual.
+- Quebra do usuário no fim (`ponte_qt/secoes.quebra_so_depois`): não é a quebra derivada da seção.
+  `interface/secoes.conferir_formatos` não liga a quebra derivada da seção quando o parágrafo de
+  cima é só-quebra (`_quebra_do_usuario_logo_antes`): a quebra do usuário já termina a página.
+- Regras do Word (`interface/paginacao._avaliar`): o bloco que vem depois de uma quebra do usuário no
+  fim do parágrafo não recebe quebra das regras (viúva, manter com o próximo, topo). Sem isso a
+  quebra das regras entrava logo depois e a página em branco voltava (o Contrato ia de 6 a 7 páginas).
+- Linha "Quebra de página" (`interface/vista_paginas._blocos_com_quebra`): para a quebra no fim, a
+  linha vai no fim do parágrafo que a leva (a lista guarda o bloco seguinte, que a linha desenha acima).
+- Enter, copiar e colar: o Enter tira a quebra do bloco novo (como antes). O HTML do Qt leva
+  `page-break-after` e o colar devolve a quebra (medido no teste).
+
+Nada disso muda o arquivo gravado: o `w:br type="page"` continua no mesmo parágrafo; `c14n` igual à 0.1.20
+nos 14 `.docx` de Downloads (regressão abrir-salvar-reabrir-salvar).
+
+### Páginas e acerto das quebras (oráculo `lastRenderedPageBreak`, Windows, 14 arquivos de Downloads)
+
+Acerto = (mesmo parágrafo / mesma linha) da página que o Word começa, por marca do Word.
+
+| Arquivo | quebras do Word | páginas antes | páginas depois | acerto antes (par/lin) | acerto depois (par/lin) |
+|---|---|---|---|---|---|
+| doc_01 | 0 | 4 | 4 | 0/0 | 0/0 |
+| doc_02 | 0 | 4 | 4 | 0/0 | 0/0 |
+| doc_03 | 0 | 5 | 5 | 0/0 | 0/0 |
+| doc_04 | 0 | 5 | 5 | 0/0 | 0/0 |
+| doc_05 | 0 | 5 | 5 | 0/0 | 0/0 |
+| doc_06 | 0 | 6 | 6 | 0/0 | 0/0 |
+| doc_07 | 0 | 49 | 49 | 0/0 | 0/0 |
+| doc_08 | 0 | 49 | 49 | 0/0 | 0/0 |
+| doc_09 | 0 | 49 | 49 | 0/0 | 0/0 |
+| doc_10 | 2 | 3 | 3 | 2/2 | 2/2 |
+| doc_11 | 3 | 4 | 4 | 3/3 | 3/3 |
+| doc_12 | 23 | 26 | 26 | 1/1 | 1/1 |
+| doc_13 | 1 | 2 | 2 | 1/0 | 1/0 |
+| doc_14 (SIM) | 13 | 15 | 13 | 0/0 | 1/1 |
+
+O SIM: Word = 14 páginas. Com a correção, o Qt põe a capa numa página, o sumário na 2, e o "1. Histórico" na 3
+(como o Word, pelas marcas 1 e 2). A partir daí as páginas do EditDoc condensam mais texto que as do Word
+(o Word começa a página 4 no bloco 109, "Anexo IV"; o EditDoc a começa no 121): a fonte Aptos não existe nesta máquina e o
+fallback tem a linha mais baixa (já anotado na 0.1.17). A contagem de 13 não é a de 14 do Word por isso,
+e não é só a quebra. Uma variante intermediária, sem a regra que impede a quebra das regras logo depois da quebra do
+usuário, dava 14 páginas, mas com uma página em branco entre o sumário e o histórico, que o Word não tem:
+foi descartada.
+
+### Gate de desempenho (p95 da digitação, 80 teclas com pintura, uma medida por processo)
+
+Árvore base = 0.1.20 (`git archive HEAD`), árvore nova = 0.1.22, alternadas, offscreen, um processo por medida (ms):
+
+| Rodada | manual base | manual novo | simples base | simples novo |
+|---|---|---|---|---|
+| 1 | 5,93 | 5,65 | 6,81 | 6,91 |
+| 2 | 6,09 | 5,65 | 6,74 | 7,37 |
+| 3 | 5,65 | 5,49 | 6,60 | 7,94 |
+| 4 (novo primeiro) | - | - | 7,01 | 6,47 |
+| 5 (novo primeiro) | - | - | 7,31 | 7,02 |
+| 6 (novo primeiro) | - | - | 6,91 | 6,65 |
+| 7 (novo primeiro) | - | - | 6,45 | 6,88 |
+
+Diferença máxima do novo sobre a base: 1,34 ms num simples (rodada 3), abaixo de 1,5 ms; nas rodadas 4 a 7
+a diferença oscila de -0,54 a +0,43 ms. Manual: negativo nas três. Dentro do ruído.
+
+### Contrapartes e limites
+
+- Copiar só a marca de um parágrafo só-quebra (seleção de 1 caractere) não leva a quebra, nas duas árvores
+  (medido: 0.1.20 e 0.1.22). Já era assim; não foi tratado.
+- Ctrl+Enter num parágrafo vazio continua como antes (a quebra no bloco novo, `PageBreak_AlwaysBefore`).
+  Ao salvar e reabrir, o mesmo trecho vira parágrafo só-quebra (no fim). Pode haver uma linha de diferença
+  entre a tela da sessão e a tela depois de reabrir. Não medido.
+- A linha "Quebra de página" de um parágrafo só-quebra fica no fim dele (o bloco seguinte começa a página).
+- Não conferido no Word: abrir o SIM salvo pela 0.1.22 (esperado 14 páginas no Word, sem a página em branco) e
+  o arquivo com quebra digitada no parágrafo só-quebra.
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com
@@ -1509,6 +1601,8 @@ Windows.
   real que abria com 4 páginas e reabria com 6 foi resolvido na 0.1.16.
 - 0.1.16: paginação mais perto da do Word: feita na 0.1.17 (ver "0.1.17"). Conferir no Word: a
   fonte do texto sem formatação num arquivo sem `styles.xml` (Times New Roman 10).
+- 0.1.22: abrir no Word, sem reparo, o SIM salvo pela 0.1.22 (esperado 14 páginas e sem página em branco
+  entre a capa e o sumário) e um arquivo com texto digitado no parágrafo só com a quebra (ver "0.1.22").
 - 0.1.17: a viúva de três linhas ou mais (descer uma linha só), a quebra de página seguida de
   quebra de seção "próxima página" (página a mais), a altura das linhas de tabela e o espaço no
   começo e no fim da célula; conferir no Word a soma dos espaços (o oráculo não a separou) e a

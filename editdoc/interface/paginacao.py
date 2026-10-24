@@ -534,6 +534,13 @@ class ConjuntoDePaginacao:
         if u.tabela is not None:
             return self._manter_com_proximo(u, anterior)
         fmt = u.bloco.blockFormat()
+        if anterior is not None and anterior.bloco is not None and \
+                pq_secoes.quebra_so_depois(anterior.bloco.blockFormat()):
+            # 0.1.22: o paragrafo de cima termina a pagina (a quebra do usuario fica no fim dele).
+            # Este bloco ja' comeca a pagina: uma quebra das regras aqui faria pagina em branco.
+            if pq.eh_regra(fmt):
+                return (u.bloco, False, fmt.property(pq.PROP_QUEBRA_REGRA))
+            return None
         if pq.eh_regra(fmt):
             if fmt.property(pq.PROP_QUEBRA_REGRA) == 2:
                 return None if self._flag(fmt, "pageBreakBefore") else (u.bloco, False, 2)

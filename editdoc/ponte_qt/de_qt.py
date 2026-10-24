@@ -184,8 +184,11 @@ def paragrafo_do_formato(bf, res, em_celula: bool = False) -> Paragrafo:
         p.nivel = NIVEL_CORPO if nivel is None else nivel
     # O espacador da area das notas (0.1.10) nao e' quebra do usuario: nao volta ao arquivo.
     # A quebra derivada da secao (0.1.12) tambem nao e' do usuario.
-    p.quebra_antes = bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore) \
-        and not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)         and not pq_paginacao.eh_regra(bf)  # 0.1.17: a quebra das regras do Word nao e' do usuario
+    # 0.1.22: a quebra que fica no fim do paragrafo (so' a quebra do usuario) tambem vale.
+    p.quebra_antes = (bool(bf.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+                      and not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf)
+                      and not pq_paginacao.eh_regra(bf)) or pq_secoes.quebra_so_depois(bf)
+    # (0.1.17: a quebra das regras do Word nao e' do usuario; o espacador das notas tambem nao.)
     p.extras = pq_props.extras_de_ppr(bf)
     pq_revisoes.ler_paragrafo(bf, p)  # 0.1.13
     return p
@@ -314,6 +317,15 @@ def _blocos(iterador, largura_corpo_tw: int, em_celula: bool = False, res=None) 
                 if em_celula:
                     paragrafo.quebra_antes = False
                     paragrafo.secao = None
+                if paragrafo.quebra_antes and bloco.length() > 1 and \
+                        pq_secoes.quebra_so_depois(bloco.blockFormat()):
+                    # 0.1.22: texto com a quebra no fim (digitado depois da quebra so'):
+                    # o texto vem antes, e a quebra vira um paragrafo so' com ela.
+                    paragrafo.quebra_antes = False
+                    saida.append(paragrafo)
+                    saida.append(Paragrafo(runs=[], quebra_antes=True))
+                    it += 1
+                    continue
                 saida.append(paragrafo)
         it += 1
     return saida

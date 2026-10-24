@@ -1,3 +1,30 @@
+## 0.1.22 - 2026-10-22
+
+Correção da página em branco antes da quebra de seção. Um parágrafo que só tem a quebra de página
+(`w:br type="page"`) seguido do parágrafo com o `w:sectPr` (quebra de seção "próxima página") gerava
+duas quebras seguidas no Qt: o parágrafo da quebra começava uma página e a seção seguinte começava
+na outra. O Word deixa o parágrafo da quebra e o da seção na página de cima, e a seção seguinte na
+página de baixo. No documento de referência (SIM, 15 páginas na 0.1.20, com a Aptos ausente nesta
+máquina) isso era a página em branco entre a capa e o sumário.
+
+O que mudou: a quebra de página do parágrafo que só tem a quebra fica no FIM dele (`PageBreak_AlwaysAfter`,
+não mais no começo). Quando o parágrafo de cima da quebra de seção é só a quebra do usuário, a quebra
+derivada da seção não entra (a quebra do usuário já termina a página). Um bloco que vem depois de uma
+quebra do usuário no fim do parágrafo não recebe quebra das regras do Word (senão a página em branco
+voltava). O arquivo gravado não muda: o parágrafo só com a quebra continua com o `w:br type="page"`
+no mesmo lugar, e a releitura dá o mesmo modelo. Texto digitado num parágrafo que tem a quebra no fim
+vira dois parágrafos ao gravar (o texto e, depois, o parágrafo só com a quebra), e a tela mostra a
+mesma coisa.
+
+Medido (docs/SPIKES.md, "0.1.22"): dos 14 .docx de Downloads, só o SIM muda, de 15 para 13 páginas
+(Word: 14, com a fonte Aptos ausente aqui); o acerto das quebras no SIM vai de 0/0 para 1/1. Nos
+outros 13 a contagem e o acerto são os mesmos, e o arquivo salvo tem o mesmo c14n da 0.1.20 nos 14.
+
+Testes: `teste_quebras` ganhou cinco verificações de paginação e de tela (quebra só no fim, só no
+meio, antes de seção, quebra normal, Enter, copiar, colar, rótulo e digitar), com contraprovas. A
+suíte tem 3411 verificações (3391 da base e 20 novas). O gate de desempenho ficou dentro do ruído
+(docs/SPIKES.md, "0.1.22").
+
 ## 0.1.20 - 2026-10-22
 
 Refatoração interna, sem mudança de comportamento. Primeiro passo do caminho para colunas de texto

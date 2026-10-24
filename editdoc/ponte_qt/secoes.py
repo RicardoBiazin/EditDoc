@@ -303,6 +303,15 @@ def eh_derivada(fmt: QTextFormat) -> bool:
     return bool(fmt.property(PROP_QUEBRA_SECAO))
 
 
+def quebra_so_depois(fmt: QTextFormat) -> bool:
+    """Quebra de pagina do USUARIO que fica no fim do paragrafo (0.1.22): PageBreak_AlwaysAfter
+    sem a quebra derivada da secao. O paragrafo que so' tem a quebra (w:br type="page") fica na
+    pagina de cima, como no Word, e a pagina seguinte comeca no paragrafo de baixo. A quebra
+    derivada da secao (PROP_QUEBRA_SECAO) e a do espacador das notas nao contam."""
+    return bool(fmt.pageBreakPolicy() & QTextFormat.PageBreakFlag.PageBreak_AlwaysAfter) \
+        and not eh_derivada(fmt)
+
+
 # -- pintura ---------------------------------------------------------------------------------
 
 class ManipuladorDeQuebra(QPyTextObject):

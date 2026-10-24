@@ -225,6 +225,192 @@ def testar_ponte_qt() -> None:
                 "contraprova: o primeiro paragrafo nao ganha quebra")
 
 
+# ----- 0.1.22: o paragrafo que so' tem a quebra leva a quebra no fim dele --------------------
+
+_SO_QUEBRA = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+_SECAO_NO_PARAGRAFO = ('<w:p><w:pPr><w:sectPr><w:type w:val="nextPage"/>'
+                       '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" '
+                       'w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/>'
+                       '</w:sectPr></w:pPr></w:p>')
+
+
+def _janela_de(corpo_xml: str):
+    from editdoc import configuracao
+    from editdoc.interface.janela_principal import JanelaPrincipal
+    j = JanelaPrincipal(configuracao.padrao())
+    j.resize(1000, 800)
+    j.show()
+    modelo, avisos = ler(_xml_com_corpo(corpo_xml))
+    j.carregar(modelo, avisos, None)
+    drenar_eventos(2)
+    j.painel.layout_pag.atualizar_secoes()
+    drenar_eventos(1)
+    return j
+
+
+def _fechar(j) -> None:
+    j.painel.documento_corpo().setModified(False)
+    j.close()
+    drenar_eventos(1)
+
+
+def _bloco_com(doc, texto: str):
+    bloco = doc.begin()
+    while bloco.isValid():
+        if bloco.text() == texto:
+            return bloco
+        bloco = bloco.next()
+    raise AssertionError(f"bloco {texto!r} nao achado")
+
+
+def testar_so_quebra_no_fim() -> None:
+    secao("0.1.22: paragrafo so' com a quebra: a quebra fica no fim dele, e volta igual ao arquivo")
+    from PySide6.QtGui import QTextDocument, QTextFormat
+
+    from editdoc.ponte_qt import de_qt, para_qt
+    modelo = Documento(paragrafos=[Paragrafo(runs=[Run("a")]),
+                                   Paragrafo(runs=[], quebra_antes=True),
+                                   Paragrafo(runs=[Run("b")])])
+    doc = QTextDocument()
+    para_qt.preencher(doc, modelo)
+    checa_igual(_bloco_com(doc, "").blockFormat().pageBreakPolicy(),
+                QTextFormat.PageBreakFlag.PageBreak_AlwaysAfter,
+                "o paragrafo so' com a quebra leva a quebra no fim (AlwaysAfter)")
+    checa_igual(_textos(de_qt.extrair(doc)), _textos(modelo),
+                "de volta do Qt, o paragrafo so' com a quebra continua no mesmo lugar")
+    dados = escrever(modelo)
+    xml = fx.partes_de(dados)["word/document.xml"]
+    checa_igual(len(re.findall(BR_PAGINA, xml)), 1, "o arquivo leva uma quebra so'")
+    lido, avisos = ler(dados)
+    checa_igual(_textos(lido), _textos(modelo), "o arquivo volta com o paragrafo so' com a quebra")
+    checa(not avisos, "a quebra no fim nao gera aviso")
+    checa_igual(fx.partes_de(escrever(lido))["word/document.xml"], xml,
+                "gravar de novo gera o mesmo document.xml (c14n)")
+
+
+def testar_so_quebra_no_meio() -> None:
+    secao("0.1.22: so' a quebra, sem secao: o paragrafo vazio fica na pagina de cima")
+    from PySide6.QtGui import QTextCursor, QTextFormat
+    j = _janela_de('<w:p><w:r><w:t>primeiro</w:t></w:r></w:p>' + _SO_QUEBRA +
+                   '<w:p><w:r><w:t>segundo</w:t></w:r></w:p>')
+    try:
+        lay = j.painel.layout_pag
+        doc = lay.doc
+        checa_igual(lay.numero_paginas(), 2, "a quebra so' separa duas paginas")
+        checa_igual(lay.pagina_do_cursor(_bloco_com(doc, "").position()), 0,
+                    "o paragrafo so' com a quebra fica na pagina de cima")
+        checa_igual(lay.pagina_do_cursor(_bloco_com(doc, "segundo").position()), 1,
+                    "o paragrafo de baixo comeca a pagina seguinte")
+        # Contraprova: com a quebra ANTES do paragrafo vazio (a representacao de antes), ele vai
+        # para o alto da pagina 2.
+        vazio = _bloco_com(doc, "")
+        bf = vazio.blockFormat()
+        bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+        QTextCursor(vazio).setBlockFormat(bf)
+        drenar_eventos(1)
+        checa_igual(lay.pagina_do_cursor(_bloco_com(doc, "").position()), 1,
+                    "contraprova: com a quebra antes, o paragrafo vazio vai para a pagina 2")
+    finally:
+        _fechar(j)
+
+
+def testar_so_quebra_antes_de_secao() -> None:
+    secao("0.1.22: so' a quebra e a quebra de secao seguinte: duas paginas, sem pagina em branco")
+    from editdoc.interface.secoes import ConjuntoDeSecoes
+    corpo = ('<w:p><w:r><w:t>capa</w:t></w:r></w:p>' + _SO_QUEBRA + _SECAO_NO_PARAGRAFO +
+             '<w:p><w:r><w:t>miolo</w:t></w:r></w:p>')
+    j = _janela_de(corpo)
+    try:
+        lay = j.painel.layout_pag
+        doc = lay.doc
+        checa_igual(lay.numero_paginas(), 2,
+                    "capa, quebra e secao seguinte: duas paginas (sem pagina em branco no meio)")
+        checa_igual(lay.pagina_do_cursor(_bloco_com(doc, "miolo").position()), 1,
+                    "a secao seguinte comeca na pagina 2")
+        # Contraprova: sem a supressao, a quebra da secao vem depois do paragrafo da quebra e a
+        # pagina em branco aparece (3 paginas).
+        original = ConjuntoDeSecoes._quebra_do_usuario_logo_antes
+        ConjuntoDeSecoes._quebra_do_usuario_logo_antes = lambda self, pos: False
+        try:
+            lay.secoes.conferir_formatos(forcar=True)
+            drenar_eventos(1)
+            checa_igual(lay.numero_paginas(), 3,
+                        "contraprova: sem a supressao, a pagina em branco aparece (3 paginas)")
+        finally:
+            ConjuntoDeSecoes._quebra_do_usuario_logo_antes = original
+    finally:
+        _fechar(j)
+
+
+def testar_quebra_normal_sem_secao() -> None:
+    secao("0.1.22: quebra normal sem secao: o texto com a quebra no fim termina a pagina")
+    from PySide6.QtGui import QTextFormat
+    j = _janela_de('<w:p><w:r><w:t>um</w:t><w:br w:type="page"/></w:r></w:p>'
+                   '<w:p><w:r><w:t>dois</w:t></w:r></w:p>')
+    try:
+        lay = j.painel.layout_pag
+        checa_igual(lay.numero_paginas(), 2, "o texto com a quebra gera duas paginas")
+        checa_igual(lay.pagina_do_cursor(_bloco_com(lay.doc, "dois").position()), 1,
+                    "o paragrafo seguinte comeca a pagina 2")
+        # O leitor separa a quebra do fim do texto num paragrafo so' com ela (como ja' fazia).
+        checa(bool(_bloco_com(lay.doc, "").blockFormat().pageBreakPolicy()
+                   & QTextFormat.PageBreakFlag.PageBreak_AlwaysAfter),
+              "a quebra no fim de 'um' fica no paragrafo so' com ela, no fim dele")
+    finally:
+        _fechar(j)
+
+
+def testar_enter_copiar_rotulo_e_digitar() -> None:
+    secao("0.1.22: Enter, copiar e colar, rotulo e digitar com a quebra so' no fim")
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextCursor
+    from PySide6.QtTest import QTest
+
+    from editdoc.ponte_qt import de_qt
+    j = _janela_de('<w:p><w:r><w:t>primeiro</w:t></w:r></w:p>' + _SO_QUEBRA +
+                   '<w:p><w:r><w:t>segundo</w:t></w:r></w:p>')
+    painel = j.painel
+    try:
+        painel.setFocus()
+        doc = painel.document()
+        checa(_bloco_com(doc, "segundo").blockNumber() in painel._blocos_com_quebra(),
+              "o rotulo 'Quebra de pagina' vale para o paragrafo so' com a quebra")
+        # Enter no paragrafo so' com a quebra: a quebra fica nele; o paragrafo novo e' comum.
+        painel.setTextCursor(QTextCursor(_bloco_com(doc, "")))
+        QTest.keyClick(painel, Qt.Key.Key_Return)
+        drenar_eventos(1)
+        checa_igual([p.quebra_antes for p in de_qt.extrair(doc).paragrafos],
+                    [False, True, False, False],
+                    "Enter: a quebra fica no paragrafo vazio; o paragrafo novo nao leva quebra")
+        # Copiar: o trecho com o paragrafo so' com a quebra (no meio dele) leva a quebra para o
+        # colar. (Medido: selecionar so' a marca do paragrafo vazio, sem o texto seguinte, nao
+        # leva o formato dele no HTML; isso nao e' coberto aqui.)
+        cursor = QTextCursor(_bloco_com(doc, "primeiro"))
+        cursor.setPosition(_bloco_com(doc, "segundo").position() + len("segundo"),
+                           QTextCursor.MoveMode.KeepAnchor)
+        painel.setTextCursor(cursor)
+        painel.copy()
+        painel.setTextCursor(QTextCursor(_bloco_com(doc, "segundo")))
+        QTest.keyClick(painel, Qt.Key.Key_End)
+        QTest.keyClick(painel, Qt.Key.Key_Return)
+        painel.paste()
+        drenar_eventos(2)
+        quebras = sum(1 for p in de_qt.extrair(doc).paragrafos if p.quebra_antes)
+        checa_igual(quebras, 2, "colar o paragrafo so' com a quebra traz a quebra junto")
+        # Digitar no paragrafo so' com a quebra: o texto fica antes da quebra (no fim dele).
+        painel.setTextCursor(QTextCursor(_bloco_com(doc, "")))
+        QTest.keyClicks(painel, "xy")
+        drenar_eventos(1)
+        modelo = de_qt.extrair(doc)
+        textos = [("".join(r.texto for r in p.runs), p.quebra_antes) for p in modelo.paragrafos]
+        i = textos.index(("xy", False)) if ("xy", False) in textos else -1
+        checa(i >= 0 and textos[i + 1] == ("", True),
+              f"digitado no paragrafo com a quebra: o texto vem antes da quebra ({textos[:3]})")
+        doc.setModified(False)
+    finally:
+        _fechar(j)
+
+
 def main() -> int:
     testar_leitura_da_quebra()
     testar_escrita_e_volta()
@@ -234,6 +420,11 @@ def main() -> int:
         return pular("Segoe UI nao esta instalada")
     testar_ponte_qt()
     testar_tela()
+    testar_so_quebra_no_fim()
+    testar_so_quebra_no_meio()
+    testar_so_quebra_antes_de_secao()
+    testar_quebra_normal_sem_secao()
+    testar_enter_copiar_rotulo_e_digitar()
     return resumir()
 
 

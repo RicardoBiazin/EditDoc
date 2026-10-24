@@ -106,6 +106,11 @@ Quebra de página: um atributo do parágrafo (`quebra_antes`). No `.docx` é `w:
 começo do parágrafo. Quebra no meio do texto, ao ler, vira dois parágrafos: é a única perda de
 estrutura, e a aparência não muda.
 
+Quebra no fim do parágrafo (0.1.22): o parágrafo que só tem a quebra leva `PageBreak_AlwaysAfter`
+(ele fica na página de cima, como no Word); a quebra de seção não entra logo depois dele. O
+bloco de baixo não recebe quebra das regras. Texto digitado num parágrafo com a quebra no fim vira
+dois parágrafos ao gravar. `ponte_qt/secoes.quebra_so_depois` é o teste; `docs/SPIKES.md`, "0.1.22".
+
 Limites aceitos: o Qt não tem viúva e órfã (fora do M3); uma tabela se divide entre páginas por
 linha; `` não quebra página (usa-se a política de quebra do bloco).
 

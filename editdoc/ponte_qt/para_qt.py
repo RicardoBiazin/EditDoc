@@ -344,7 +344,13 @@ def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
     bf = QTextBlockFormat()
     pq_estilos.aplicar_bloco(bf, efetivo)
     if p.quebra_antes:
-        bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+        # 0.1.22: o paragrafo que so' tem a quebra (w:br type="page") leva a quebra no FIM dele
+        # (AlwaysAfter), como o Word: ele fica na pagina de cima. Com quebra de secao no mesmo
+        # w:p, ou com texto, a quebra continua antes (AlwaysBefore).
+        if not p.runs and p.secao is None:
+            bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysAfter)
+        else:
+            bf.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
     pq_estilos.marcar_estilo(bf, p.estilo, res.estilos)
     listas.marcar_lista(bf, p.lista, p.lista_nivel)
     # Extras (0.1.5): depois do recuo, de que as tabulacoes contam.

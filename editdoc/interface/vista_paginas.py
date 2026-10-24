@@ -1585,6 +1585,10 @@ class VistaPaginas(QAbstractScrollArea):
                 if bool(bf.pageBreakPolicy() & _QUEBRA_ANTES) and \
                         not pq_notas.eh_espacador(bf) and not pq_secoes.eh_derivada(bf) and                         not pq_paginacao.eh_regra(bf):  # 0.1.17: nem a das regras do Word
                     lista.append(bloco.blockNumber())
+                elif pq_secoes.quebra_so_depois(bf) and bloco.next().isValid():
+                    # 0.1.22: a quebra no fim do paragrafo; a linha fica no fim dele, que e'
+                    # onde a pagina termina (a linha desenha no fim do bloco anterior).
+                    lista.append(bloco.next().blockNumber())
                 bloco = bloco.next()
             self._quebras = (chave, lista)
         return self._quebras[1]
