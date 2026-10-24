@@ -1,3 +1,19 @@
+## 0.1.23 - 2026-10-24
+
+Atualização de dependência: PySide6 (Essentials) de 6.11.2 para 6.12.0, fixada em `requirements.txt`.
+Sem mudança de código. Nada muda no que o usuário vê, no arquivo salvo nem nas páginas.
+
+Medido (docs/SPIKES.md, "0.1.23"):
+- Suíte completa: 3411 verificações ok, 0 falhas, igual à 0.1.22.
+- Build com 6.12.0: BUILD OK, autoverificação "EditDoc 0.1.23", fumaça de janela e ZIP ok.
+- Páginas dos 14 .docx de Downloads (oráculo `lastRenderedPageBreak`): iguais à 0.1.22 em todos, com o mesmo
+  acerto das quebras. O SIM continua em 13 páginas (o Word dá 14, pela fonte Aptos ausente nesta máquina).
+- Regressão abrir-salvar-reabrir-salvar nos 14: c14n igual à 0.1.22 e mesmas páginas.
+- Desempenho (p95 da digitação, 3 rodadas intercaladas): diferença de -0,52 a +0,42 ms, dentro do ruído,
+  abaixo do limite de 1,5 ms.
+
+Nenhuma armadilha nova: nada quebrou com a 6.12. O procedimento para testar outra versão do Qt está em CLAUDE.md.
+
 ## 0.1.22 - 2026-10-22
 
 Correção da página em branco antes da quebra de seção. Um parágrafo que só tem a quebra de página

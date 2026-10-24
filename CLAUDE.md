@@ -1,6 +1,6 @@
 # CLAUDE.md: EditDoc
 
-Editor de documentos `.docx` em Python 3.13 + PySide6 6.11.2. Este arquivo é lido
+Editor de documentos `.docx` em Python 3.13 + PySide6 6.12.0. Este arquivo é lido
 antes de qualquer alteração. As regras abaixo existem porque a alternativa já
 causou defeito.
 
@@ -310,3 +310,4 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | faixa de avisos (0.1.19) | A faixa (`BarraAviso`) só aparece com aviso `perde_ao_salvar`. Aviso que só preserva (caixa, equação, imagem flutuante, revisão preservada) fica na lista completa (`texto_completo()`, Detalhes, Arquivo > Objetos preservados), nunca na faixa. Teste que quer ver um aviso preservado checa a lista, e teste que quer ver a faixa checa `texto_da_faixa()`. Novo aviso sem perda não mostra faixa de propósito: se precisar de faixa, o `perde_ao_salvar` do catálogo é que muda. |
 | folha × página do Qt (0.1.20) | Folha (página impressa ou visível, com cabeçalho, rodapé e margens da seção) não é página do QTextDocument. Hoje são a mesma coisa, e isso é **identidade**, não regra. Toda conversão de y em folha, de folha em faixa (`n * hb`, `floor(y / hb)`, `pageCount()` usado como folha) passa por `layout.mapa` (`modelo/folhas.MapaFolhas`). Código novo que escreve `n * hb` ou `floor(y / hb)` quebra a seção que tiver colunas (SPIKES, "0.1.19"). Folha a mais (só notas, depois do texto) não tem página do Qt. |
 | quebra no fim do paragrafo (0.1.22) | O paragrafo que so' tem a quebra (`w:br type="page"`) leva `PageBreak_AlwaysAfter`, nao `AlwaysBefore`: fica na pagina de cima, como no Word. Com `sectPr` no mesmo `w:p`, ou com texto, continua `AlwaysBefore`. A quebra derivada da secao NAO entra logo depois dessa quebra do usuario (`ConjuntoDeSecoes._quebra_do_usuario_logo_antes`), e o bloco de baixo nao recebe quebra das regras (`_avaliar`). Testar com `ponte_qt/secoes.quebra_so_depois` (nao `eh_derivada`: a derivada tambem e' AlwaysAfter). Texto digitado nele vira dois paragrafos ao gravar. |
+| PySide6 6.12 (0.1.23) | Trocar a versao do Qt nao mexeu no codigo: a suite (3411), o oraculo de paginas (14 .docx) e a regressao c14n deram o mesmo da 0.1.22. A fonte dos numeros e' docs/SPIKES.md, "0.1.23". Para testar outra versao sem tocar o `.venv`, criar um venv de teste em caminho curto (`%TEMP%\edNNN`) e repetir as cinco etapas do `build.bat` com o python dele: o `build.bat` fixa o `.venv` do repo. O `teste_base` reprova sem a secao do CHANGELOG da versao atual, mesmo antes do build. |

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="EditDoc" version="0.1.22.0"
+  <assemblyIdentity type="win32" name="EditDoc" version="0.1.23.0"
                     processorArchitecture="amd64"/>
   <description>EditDoc - editor de documentos .docx</description>
 

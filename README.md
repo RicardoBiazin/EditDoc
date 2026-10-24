@@ -245,7 +245,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.22-win64.zip` da página
+1. Baixe `EditDoc-0.1.23-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -446,14 +446,14 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   600 parágrafos).
 - Leitor de tela: o documento é exposto como texto editável com o parágrafo do cursor
   como valor; a navegação por palavra e por linha dentro do texto, pelo leitor de tela,
-  não existe ainda (limite do PySide6 6.11, ver `docs/SPIKES.md`).
+  não existe ainda (limite do PySide6, medido no 6.11; ver `docs/SPIKES.md`).
 - Zoom máximo: 300% em tela normal, 200% em escala 150% e 150% em escala 200%.
 - Desfazer uma mudança de estilo feita durante a edição do cabeçalho fica no desfazer do
   corpo.
 
 ## Compilar a partir do código
 
-Requer Windows 10 ou 11 e Python 3.13.
+Requer Windows 10 ou 11, Python 3.13 e PySide6 6.12.0 (fixado em `requirements.txt`).
 
 ```
 python -m venv .venv
@@ -471,7 +471,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.22-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.23-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

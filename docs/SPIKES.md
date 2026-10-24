@@ -1594,6 +1594,72 @@ a diferença oscila de -0,54 a +0,43 ms. Manual: negativo nas três. Dentro do r
 - Não conferido no Word: abrir o SIM salvo pela 0.1.22 (esperado 14 páginas no Word, sem a página em branco) e
   o arquivo com quebra digitada no parágrafo só-quebra.
 
+## 0.1.23: PySide6 6.12.0 (troca de dependência, sem mudança de código)
+
+Troca de `PySide6-Essentials==6.11.2` por `==6.12.0` (`requirements.txt`; `lxml` e os demais não mudam).
+O projeto usa só o Essentials: o `PySide6_Addons` não entra. O `.spec` não cita versão. Plataforma de
+medição: Windows 11, Python 3.13.17, offscreen para a suíte e o gate, `windows` para o oráculo e a regressão.
+
+Venv de teste em `%TEMP%\ed123` (fora do repo), com `PySide6-Essentials` 6.12.0, shiboken6 6.12.0, lxml 6.1.3,
+python-docx 1.2.0 e pyinstaller 6.22.3. O `.venv` do repo ficou em 6.11.2 até o fim.
+
+### Suíte e build
+
+| Verificação | 0.1.22 (6.11.2) | 0.1.23 (6.12.0) |
+|---|---|---|
+| `tests/rodar_todos.py` (offscreen) | 3411 ok, 0 falhas | 3411 ok, 0 falhas (`teste_base` passou com a seção do CHANGELOG) |
+| Build (suíte, PyInstaller, autoverificação, fumaça, ZIP) | BUILD OK, autoverificação "EditDoc 0.1.22" | BUILD OK, autoverificação "EditDoc 0.1.23"; a `Qt6Core.dll` embutida diz 6.12.0 |
+
+O build da 0.1.23 foi feito com o Python do venv de teste, repetindo as cinco etapas do `build.bat`
+(o `build.bat` fixa o `.venv` do repo). Nenhum `EditDoc.exe` estava aberto.
+
+### Páginas (oráculo `lastRenderedPageBreak`, Windows, 14 `.docx` de Downloads, somente leitura)
+
+Obs.: o enunciado falava em 15 arquivos; a pasta tem 14 `.docx`, e o oráculo e a regressão usam os 14.
+
+| Doc | Quebras do Word | Páginas 0.1.22 | Páginas 0.1.23 | Acerto 0.1.22 (par/lin) | Acerto 0.1.23 (par/lin) |
+|---|---|---|---|---|---|
+| 01 | 0 | 4 | 4 | 0/0 | 0/0 |
+| 02 | 0 | 4 | 4 | 0/0 | 0/0 |
+| 03 | 0 | 5 | 5 | 0/0 | 0/0 |
+| 04 | 0 | 5 | 5 | 0/0 | 0/0 |
+| 05 | 0 | 5 | 5 | 0/0 | 0/0 |
+| 06 | 0 | 6 | 6 | 0/0 | 0/0 |
+| 07 | 0 | 49 | 49 | 0/0 | 0/0 |
+| 08 | 0 | 49 | 49 | 0/0 | 0/0 |
+| 09 | 0 | 49 | 49 | 0/0 | 0/0 |
+| 10 | 2 | 3 | 3 | 2/2 | 2/2 |
+| 11 | 3 | 4 | 4 | 3/3 | 3/3 |
+| 12 | 23 | 26 | 26 | 1/1 | 1/1 |
+| 13 | 1 | 2 | 2 | 1/0 | 1/0 |
+| 14 (SIM) | 13 | 13 | 13 | 1/1 | 1/1 |
+
+Nada piorou. A medição da 0.1.23 foi feita na árvore final; a da 6.12 sobre o código 0.1.22 deu o mesmo.
+
+### Regressão (abrir, salvar, reabrir, salvar; 14 `.docx`)
+
+Em todos os 14: c14n igual à 0.1.22 em todas as partes (comparação por hash da forma canônica, `core.xml`
+sem a data de gravação), mesmo número de páginas na abertura e na reabertura, e salvo 1 igual ao salvo 2.
+
+### Gate de desempenho (p95 da digitação, `gate_p95.py`, 80 teclas com pintura, um processo por medida, ms)
+
+Três rodadas intercaladas (rodada 1 base primeiro, rodada 2 novo primeiro, rodada 3 base primeiro):
+
+| Rodada | manual 0.1.22 | manual 0.1.23 | simples 0.1.22 | simples 0.1.23 |
+|---|---|---|---|---|
+| 1 | 6,42 | 6,31 | 7,88 | 8,30 |
+| 2 | 6,45 | 6,25 | 8,78 | 8,17 |
+| 3 | 6,61 | 6,09 | 7,79 | 7,46 |
+
+Diferença (0.1.23 menos 0.1.22): manual -0,11, -0,20 e -0,52 ms; simples +0,42, -0,61 e -0,33 ms. A maior
+diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até quase 1 ms entre rodadas. Dentro do ruído.
+
+### Limites
+
+- Não medido no Windows com o Word: a paginação do SIM segue em 13 páginas (o Word dá 14), pela mesma causa
+  de fonte ausente anotada na 0.1.22.
+- A leitura de tela (limite do PySide6) não foi reavaliada na 6.12.
+
 ## Pendências
 
 - 0.1.15: a tecla antes das tabelas do plano (20 a 28 ms do `QTextDocumentLayout`) só sai com
