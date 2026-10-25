@@ -1702,3 +1702,45 @@ diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até 
   layout incremental próprio da tabela, ou adiar o relayout para depois da tecla.
 - M8: usar o EditDoc com NVDA e com o Narrador (nomes, "Página X de Y", dicas de tecla) e
   conferir o tema escuro na tela real (no offscreen o esquema de cores não muda).
+
+## 0.1.25: margem interna da célula (w:tcMar) na tela
+
+Diagnóstico por quebra (scripts no scratchpad, fora do repositório; `diag.py`, `geo.py`). Para cada quebra
+do Word (`w:lastRenderedPageBreak`), o bloco e a tabela onde o Word começa a página e o bloco e a tabela
+onde o EditDoc começa a mesma página. O oráculo só bate com a referência na plataforma `windows`
+(`QT_QPA_PLATFORM=windows`): em `offscreen`, o manual dá 46 páginas em vez de 49.
+
+Os rótulos doc_NN seguem a ordem de nome em string (case-sensitive), não a ordem de Path do Windows.
+
+Causa achada no doc_14: a quebra 3 do Word cai dentro de uma tabela de 10 linhas (stakeholders). 359
+células trazem `w:tcMar` de 50 twips em topo e base (e 90 na esquerda e na direita). A tela usava só a
+margem da tabela (`w:tblCellMar`, 10 twips), então a linha ficava mais curta que a do Word e a quebra
+caía 11 blocos depois.
+
+O que entrou: `formato_docx/propriedades.margens_da_celula_tw` lê o `w:tcMar` dos extras da célula, e
+`ponte_qt/para_qt.aplicar_formatos_das_celulas` usa essa margem lado a lado, com a margem da tabela como
+fallback. O `w:tcMar` continua nos extras e volta ao arquivo como veio: a gravação não muda.
+
+Medido (oráculo, Windows, 14 arquivos de Downloads, páginas | par/lin):
+- doc_14: 13 | 1/1 -> 14 | 3/3 (Word: 14 páginas).
+- Os outros 13: iguais a 0.1.24.
+- Regressão abrir-salvar-reabrir-salvar: c14n igual à 0.1.24 nos 14; salvo1 == salvo2 em todos.
+- Suíte completa: 3416 verificações ok, 0 falhas. Novas: 6 em `teste_paginacao_word`
+  (`testar_margem_da_celula`); a contraprova com a correção desligada dá 3 falhas.
+- Gate p95 (offscreen, 3 rodadas intercaladas base x nova): manual dentro do ruído (-0,35 a +0,49 ms);
+  simples +0,36 a +1,04 ms (abaixo de 1,5 ms); plano com dispersão grande (31 a 49 ms nos dois lados),
+  a direção inverte na rodada 2 (-6,9 ms). Não consistente pelo critério; fica como ressalva, sem
+  nova rodada.
+
+Não entrou (diagnosticado, fica para a próxima versão):
+- Altura mínima de linha (`w:trHeight`). A tela não aplica (`Linha.altura_tw` só é guardada). O Qt não tem
+  altura de linha em `QTextTableCellFormat`; a emulação seria por preenchimento inferior da célula, com a
+  altura natural da linha. O experimento de altura natural pela geometria dos blocos de célula deu valores
+  inconsistentes (`blockBoundingRect` dentro de célula não serve direto), então não foi implementado. Suspeita
+  para o doc_12: a quebra 1 diverge (bloco 36 no Word, 37 no EditDoc) fora de tabela, depois de uma tabela
+  inicial com `trHeight` (440, 379, 413, 418, 540 twips).
+- Espaço antes do primeiro e depois do último parágrafo da célula (o Qt ignora). Não medido isoladamente.
+- Viúva de três linhas ou mais (o Qt desce uma linha só). Não apareceu como causa nas quebras medidas.
+
+Experimento descartado: folga uniforme na margem de baixo de todas as tabelas (0, 150 e 300 twips). Com
+folga, piora os docs 10 a 14 (doc_10 3 -> 5 páginas; doc_14 13 -> 16). O erro não é uniforme por tabela.

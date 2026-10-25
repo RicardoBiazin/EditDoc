@@ -1,3 +1,23 @@
+## 0.1.25 - 2026-10-24
+
+Fidelidade de paginação em tabelas: a margem interna de cada célula (`w:tcMar`) passa a valer na
+tela. Antes só valia a margem da tabela (`w:tblCellMar`), e a célula que traz a sua própria
+(topo, base, esquerda, direita) ficava com a margem errada: a tabela ficava mais curta que a do
+Word, e a quebra de página caía depois do ponto onde o Word a põe. Nenhuma mudança no arquivo
+salvo: o `w:tcMar` continua nos extras da célula e volta como veio.
+
+Medido (docs/SPIKES.md, "0.1.25"; oráculo `lastRenderedPageBreak` sobre os 14 `.docx` de Downloads,
+Windows):
+- Um arquivo (doc_14) passa de 13 para 14 páginas, igual às 14 do Word; o acerto das quebras sobe de
+  1/1 para 3/3 (mesmo parágrafo / mesma linha). Os outros 13 arquivos ficam iguais, em páginas e em acerto.
+- Regressão abrir-salvar-reabrir-salvar: c14n igual à 0.1.24 nos 14.
+- Suíte: 6 verificações novas em `teste_paginacao_word` (margem de célula, com contraprova: sem a
+  correção, 3 falham).
+
+Não entrou (diagnosticado, fica para a próxima versão): altura mínima de linha (`w:trHeight`), que a
+tela ignora; espaço antes do primeiro e depois do último parágrafo da célula, que o Qt não aplica;
+e a viúva de três linhas ou mais.
+
 ## 0.1.24 - 2026-10-24
 
 Higiene do repositório: os scripts de medição em `spikes/` apontavam para uma pasta de

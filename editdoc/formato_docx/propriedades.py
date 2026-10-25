@@ -151,6 +151,27 @@ def filhos_de(texto: str | None) -> list:
         return []
 
 
+def margens_da_celula_tw(texto: str | None) -> tuple | None:
+    """(sup, esq, inf, dir) em twips do w:tcMar guardado nos extras da celula (0.1.25), ou None.
+
+    O lado que o arquivo nao traz fica None: vale a margem da tabela, como no Word. O tcMar
+    fica nos extras (o modelo nao o representa e o escritor o devolve como veio): a tela le
+    daqui para a altura da celula, e o arquivo nao muda.
+    """
+    for f in filhos_de(texto):
+        if _local(f) != (W, "tcMar"):
+            continue
+        lados: dict[str, int] = {}
+        for nome, lado in (("top", "sup"), ("start", "esq"), ("left", "esq"),
+                           ("bottom", "inf"), ("end", "dir"), ("right", "dir")):
+            el = f.find(q(nome))
+            valor = None if el is None else el.get(q("w"))
+            if valor is not None and valor.lstrip("-").isdigit() and lado not in lados:
+                lados[lado] = int(valor)
+        return tuple(lados.get(lado) for lado in ("sup", "esq", "inf", "dir"))
+    return None
+
+
 def namespaces_usados(texto: str | None) -> dict[str, str]:
     """prefixo -> namespace das extensoes do Word usadas nos extras (para a raiz da parte)."""
     saida: dict[str, str] = {}

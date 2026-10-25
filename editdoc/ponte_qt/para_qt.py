@@ -59,6 +59,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QTextBlockFormat, QTextCharFor
                            QTextCursor, QTextDocument, QTextFormat, QTextFrameFormat, QTextLength,
                            QTextTable, QTextTableCellFormat, QTextTableFormat)
 
+from editdoc.formato_docx.propriedades import margens_da_celula_tw
 from editdoc.modelo.documento import (Borda, BordasCelula, BordasTabela, Celula, Documento,
                                       Paragrafo, Tabela, bordas_padrao)
 from editdoc.modelo.estilos import CAMPOS_CARACTERE, CAMPOS_PARAGRAFO, NIVEL_CORPO
@@ -283,10 +284,14 @@ def aplicar_formatos_das_celulas(tabela: QTextTable) -> None:
             _aplicar_borda(fmt, "Bottom", propria.inf or (bordas.inf if fim_r else bordas.horizontal))
             _aplicar_borda(fmt, "Left", propria.esq or (bordas.esq if c == 0 else bordas.vertical))
             _aplicar_borda(fmt, "Right", propria.dir or (bordas.dir if fim_c else bordas.vertical))
-            fmt.setTopPadding(sup)
-            fmt.setLeftPadding(esq)
-            fmt.setBottomPadding(inf)
-            fmt.setRightPadding(dir_)
+            # w:tcMar da celula vence o w:tblCellMar da tabela lado a lado (0.1.25).
+            proprias = margens_da_celula_tw(ler_json(fmt, PROP_CELULA).get("extras")) or (None,) * 4
+            topo, lado_e, base, lado_d = (px_de_twips(v) if v is not None else geral
+                                          for v, geral in zip(proprias, (sup, esq, inf, dir_)))
+            fmt.setTopPadding(topo)
+            fmt.setLeftPadding(lado_e)
+            fmt.setBottomPadding(base)
+            fmt.setRightPadding(lado_d)
             celula.setFormat(fmt)
 
 

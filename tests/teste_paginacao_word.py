@@ -366,6 +366,52 @@ def testar_tabela(j) -> None:
           f"{medidas[True][1] - medidas[False][1]:.0f}")
 
 
+#: Mesma tabela de TABELA, com margem interna da tabela (tblCellMar) e a da celula (tcMar) em todos
+#: os lados: a celula tem de valer a sua (300/600 twips), como no Word.
+TABELA_TCMAR = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblCellMar><w:top w:w="0" '
+                'w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/>'
+                '<w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>'
+                '<w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" '
+                'w:type="dxa"/><w:tcMar><w:top w:w="300" w:type="dxa"/><w:left w:w="600" '
+                'w:type="dxa"/><w:bottom w:w="300" w:type="dxa"/><w:right w:w="600" '
+                'w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>celula</w:t></w:r></w:p>'
+                '</w:tc></w:tr></w:tbl>')
+
+
+def _quadro_tabela(lay):
+    from PySide6.QtGui import QTextTable
+    for f in lay.doc.rootFrame().childFrames():
+        if isinstance(f, QTextTable):
+            return f
+    return None
+
+
+def testar_margem_da_celula(j) -> None:
+    secao("margem da celula (w:tcMar) vence a da tabela (w:tblCellMar), em px96")
+    lay = abrir(j, docx(p("Antes") + TABELA_TCMAR + p("Depois")))
+    tab = _quadro_tabela(lay)
+    checa(tab is not None, "a tabela com tcMar existe no documento")
+    fmt = tab.cellAt(0, 0).format().toTableCellFormat()
+    lados = (fmt.topPadding(), fmt.leftPadding(), fmt.bottomPadding(), fmt.rightPadding())
+    checa(lados == (20.0, 40.0, 20.0, 40.0), f"tcMar 300/600 twips = 20/40 px: {lados}")
+    alto_com = lay.doc.documentLayout().frameBoundingRect(tab).height()
+    lay = abrir(j, docx(p("Antes") + TABELA + p("Depois")))
+    tab = _quadro_tabela(lay)
+    fmt = tab.cellAt(0, 0).format().toTableCellFormat()
+    sem = (fmt.topPadding(), fmt.leftPadding(), fmt.bottomPadding(), fmt.rightPadding())
+    checa(sem == (0.0, 7.2, 0.0, 7.2),
+          f"contraprova: sem tcMar vale a margem padrao (108 twips = 7,2 px): {sem}")
+    alto_sem = lay.doc.documentLayout().frameBoundingRect(tab).height()
+    # A altura do quadro sai em unidades de 1440 dpi (px96 x 15). So' o topo e a base mudam a
+    # altura da linha: 300 + 300 twips = 40 px96 = 600 unidades a mais.
+    unidades = 15.0
+    diferenca = alto_com - alto_sem
+    checa(abs(diferenca - 40 * unidades) < 2,
+          f"a altura da linha cresce com o tcMar de cima e de baixo: {diferenca:.1f} unidades")
+    checa(diferenca > 30 * unidades,
+          f"a diferenca passa de 30 px (sem o tcMar, a tela daria 0): {diferenca:.1f}")
+
+
 def testar_imagem_na_linha(j) -> None:
     secao("imagem com entrelinha 1,5: o multiplo vale sobre a linha do texto, nao a da imagem")
     img = fx.imagem(fx.png(40, 40), largura_cm=3.0, altura_cm=3.0)
@@ -689,6 +735,7 @@ def main() -> int:
         testar_manter_com_o_proximo(j, cap)
         testar_espaco_no_topo(j, cap)
         testar_tabela(j)
+        testar_margem_da_celula(j)
         testar_imagem_na_linha(j)
         testar_marca_de_paragrafo(j)
         testar_gravacao(j)

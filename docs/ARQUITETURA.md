@@ -111,6 +111,11 @@ Quebra no fim do parágrafo (0.1.22): o parágrafo que só tem a quebra leva `Pa
 bloco de baixo não recebe quebra das regras. Texto digitado num parágrafo com a quebra no fim vira
 dois parágrafos ao gravar. `ponte_qt/secoes.quebra_so_depois` é o teste; `docs/SPIKES.md`, "0.1.22".
 
+Margem da célula (0.1.25): `w:tcMar` da célula vale na tela lado a lado sobre a margem da tabela
+(`w:tblCellMar`). O `w:tcMar` fica nos extras da célula (o modelo não o representa); a leitura é
+`formato_docx/propriedades.margens_da_celula_tw`, e a tela aplica em `ponte_qt/para_qt.aplicar_formatos_das_celulas`.
+A altura mínima de linha (`w:trHeight`) ainda não entra na tela: `docs/SPIKES.md`, "0.1.25".
+
 Limites aceitos: o Qt não tem viúva e órfã (fora do M3); uma tabela se divide entre páginas por
 linha; `` não quebra página (usa-se a política de quebra do bloco).
 
