@@ -19,21 +19,27 @@ dos blocos e das tabelas do corpo, o que faz o Qt chegar ao layout do Word:
    comecava no plano anterior: controle de linhas viuvas e orfas (ligado por padrao), manter
    linhas juntas, manter com o proximo e quebra antes do estilo. O paragrafo que tem de descer
    ganha a quebra das regras (PROP_QUEBRA_REGRA); a que deixou de ser precisa sai.
+3. Altura da linha de tabela (0.1.26, `_alturas_das_linhas`, parte "altura"): o w:trHeight
+   (atLeast; exact quando o conteudo cabe; auto nao conta) vai no acolchoamento das celulas, sobre
+   o do arquivo, num passo depois dos formatos, porque depende do layout delas.
 
 Os ajustes entram no desfazer como os das secoes e das notas: um passo anotado depois do passo
 do usuario (`ConjuntoDeNotas.ajustar`). Nada disso muda o arquivo gravado: o `de_qt` le' os
 valores de verdade (`ponte_qt/paginacao.py`).
 
 Limites (docs/ARQUITETURA.md): a viuva de um paragrafo com tres linhas ou mais na pagina de cima
-pediria descer UMA linha, o que o layout do Qt nao faz (fica como esta'); o espaco antes do
-primeiro paragrafo de uma celula e o depois do ultimo (o Qt os ignora) e as linhas de tabela
-(cantSplit, cabecalho repetido) nao entram; cabecalho, rodape e notas nao sao compensados.
+pediria descer UMA linha, o que o layout do Qt nao faz (fica como esta'; na 0.1.26 o prototipo
+pelo espaco antes nao mudou nenhuma quebra do oraculo); o espaco antes do primeiro paragrafo de
+uma celula e o depois do ultimo (o Qt os ignora; medido na 0.1.26, somar piora o oraculo), a
+linha exata mais baixa que o conteudo (o Qt nao corta) e as linhas de tabela (cantSplit,
+cabecalho repetido) nao entram; cabecalho, rodape e notas nao sao compensados.
 """
 
 from __future__ import annotations
 
 
-from PySide6.QtGui import QTextBlockFormat, QTextCursor, QTextFormat, QTextTable
+from PySide6.QtGui import (QTextBlockFormat, QTextCharFormat, QTextCursor, QTextFormat,
+                           QTextTable, QTextTableCell)
 
 from editdoc import log_interno
 from editdoc.modelo import paginacao as mod
@@ -42,7 +48,8 @@ from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import paginacao as pq
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt import secoes as pq_secoes
-from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
+from editdoc.ponte_qt.para_qt import (PROP_CELULA, PROP_ESTRUTURAL, acolchoamento_base,
+                                     ler_json)
 
 log = log_interno.obter(__name__)
 
@@ -84,7 +91,7 @@ class ConjuntoDePaginacao:
 
     #: As partes (os testes e a medicao ligam uma de cada vez): entrelinha da fonte, espaco
     #: somado entre paragrafos, vazio e espacos junto da tabela, regras de quebra.
-    PARTES = frozenset({"linha", "espaco", "tabela", "regras", "topo"})
+    PARTES = frozenset({"linha", "espaco", "tabela", "regras", "topo", "altura"})
 
     def __init__(self, layout) -> None:
         self.layout = layout
@@ -129,7 +136,7 @@ class ConjuntoDePaginacao:
         """Grava os formatos novos num passo anotado do desfazer."""
         def aplicar(_c) -> None:
             for alvo, fmt in mudancas:
-                if isinstance(alvo, QTextTable):
+                if isinstance(alvo, (QTextTable, QTextTableCell)):
                     alvo.setFormat(fmt)
                 else:
                     QTextCursor(alvo).setBlockFormat(fmt)
@@ -347,10 +354,109 @@ class ConjuntoDePaginacao:
             pq.definir_margens_da_tabela(novo, topo, base)
             if novo != fmt:
                 mudancas.append((tabela, novo))
-        if not mudancas:
-            return False
-        self._aplicar(mudancas)
-        return True
+        if mudancas:
+            self._aplicar(mudancas)
+        # A altura da linha (0.1.26) depende do layout das celulas com os formatos de agora: vem
+        # depois, num passo a parte so' quando muda (raro: a tabela com w:trHeight editada).
+        if sujo is None:
+            faixa = None
+        else:
+            faixa = (primeiro.position(), ultimo.position() + ultimo.length())
+        alturas = self._alturas_das_linhas(faixa)
+        if alturas:
+            self._aplicar(alturas)
+        return bool(mudancas or alturas)
+
+    # -- altura da linha de tabela (0.1.26) ------------------------------------------------------
+    def _alturas_das_linhas(self, faixa) -> list:
+        """O w:trHeight das linhas (atLeast; exact quando o conteudo cabe) no acolchoamento das
+        celulas: o Qt nao tem altura de linha. Cada celula de uma linha so' (sem mescla vertical)
+        ganha o que falta para a linha ter a altura do arquivo, embaixo (no meio: metade em cima;
+        alinhada embaixo: em cima), sobre o acolchoamento do arquivo (`acolchoamento_base`). A
+        linha sem altura volta ao acolchoamento do arquivo. `faixa` (posicoes): so' as linhas que a
+        edicao tocou; None = todas."""
+        doc = self.layout.doc
+        mudancas = []
+        for tabela in _tabelas(doc.rootFrame(), faixa):
+            linhas = range(tabela.rows())
+            if faixa is not None:
+                # so' as linhas da faixa (a tecla numa tabela grande nao passa por todas)
+                de = tabela.cellAt(max(faixa[0], tabela.firstPosition()))
+                ate = tabela.cellAt(min(faixa[1], tabela.lastPosition()))
+                if de.isValid() and ate.isValid():
+                    linhas = range(de.row(), ate.row() + ate.rowSpan())
+            for r in linhas:
+                cels = _celulas_da_linha(tabela, r)
+                if not cels:
+                    continue
+                if faixa is not None and (cels[-1].lastPosition() < faixa[0]
+                                          or cels[0].firstPosition() > faixa[1]):
+                    continue
+                formatos = [c.format() for c in cels]
+                if any(f.hasProperty(pq_notas.PROP_LINHA_EMPURRADA) for f in formatos):
+                    continue  # a linha empurrada da secao (0.1.12) cuida do acolchoamento
+                dado = ler_json(formatos[0], PROP_CELULA)
+                alvo = dado.get("altura_tw")
+                if not isinstance(alvo, (int, float)) or dado.get("altura_auto") or \
+                        "altura" not in self.partes:
+                    alvo = None
+                    if not any(f.hasProperty(pq.PROP_WORD_ALTURA) for f in formatos):
+                        continue  # sem altura e sem acrescimo: nada a fazer (o caso comum)
+                for cel in cels:
+                    fmt = cel.format().toTableCellFormat()
+                    base = acolchoamento_base(tabela, fmt)
+                    cima, baixo = base[0], base[2]
+                    if alvo is not None and cel.rowSpan() == 1:
+                        natural = self._altura_da_celula(tabela, cel, fmt, cima, baixo)
+                        falta = (float(alvo) - natural) / 15.0 if natural is not None else 0.0
+                        if falta > pq.FOLGA:
+                            va = fmt.verticalAlignment()
+                            if va == QTextCharFormat.VerticalAlignment.AlignMiddle:
+                                cima, baixo = cima + falta / 2.0, baixo + falta / 2.0
+                            elif va == QTextCharFormat.VerticalAlignment.AlignBottom:
+                                cima += falta
+                            else:
+                                baixo += falta
+                    acrescimo = abs(cima - base[0]) > pq.FOLGA or abs(baixo - base[2]) > pq.FOLGA
+                    if abs(fmt.topPadding() - cima) > pq.FOLGA or \
+                            abs(fmt.bottomPadding() - baixo) > pq.FOLGA or \
+                            fmt.hasProperty(pq.PROP_WORD_ALTURA) != acrescimo:
+                        fmt.setTopPadding(cima)
+                        fmt.setBottomPadding(baixo)
+                        if acrescimo:
+                            fmt.setProperty(pq.PROP_WORD_ALTURA, True)
+                        else:
+                            fmt.clearProperty(pq.PROP_WORD_ALTURA)
+                        mudancas.append((cel, fmt))
+        return mudancas
+
+    def _altura_da_celula(self, tabela, cel, fmt, cima: float, baixo: float) -> float | None:
+        """Altura natural (twips) da celula no Qt com o acolchoamento `cima`/`baixo` (px96): as
+        linhas dos blocos (o avanco, como o Qt soma), o maior entre o espaco depois e o antes de
+        dois blocos vizinhos e meia borda de cima e de baixo (borda colapsada). None se a celula
+        tem tabela dentro ou bloco ainda sem layout (fica sem acrescimo)."""
+        doc = self.layout.doc
+        bloco = doc.findBlock(cel.firstPosition())
+        fim = cel.lastPosition()
+        total = 0.0
+        anterior = None
+        while bloco.isValid() and bloco.position() <= fim:
+            dentro = QTextCursor(bloco).currentTable()
+            if dentro is None or dentro.firstPosition() != tabela.firstPosition():
+                return None
+            if bloco.isVisible():
+                lay = bloco.layout()
+                if lay is None or lay.lineCount() == 0:
+                    return None
+                bf = bloco.blockFormat()
+                if anterior is not None:
+                    total += max(anterior.bottomMargin(), bf.topMargin()) * 15.0
+                total += sum(pq.avanco_e_corte(bf, lay.lineAt(i))[0]
+                             for i in range(lay.lineCount()))
+                anterior = bf
+            bloco = bloco.next()
+        borda = (fmt.topBorder() + fmt.bottomBorder()) / 2.0
+        return total + (cima + baixo + borda) * 15.0
 
     def _desligar(self) -> bool:
         """Contraprova: tira toda compensacao e quebra das regras."""
@@ -366,6 +472,11 @@ class ConjuntoDePaginacao:
             fmt = quadro.format()
             if fmt.hasProperty(pq.PROP_WORD_ANTES) or fmt.hasProperty(pq.PROP_WORD_DEPOIS):
                 mudancas.append((quadro, pq.sem_compensacao(fmt)))
+        partes, self.partes = self.partes, set()
+        try:
+            mudancas += self._alturas_das_linhas(None)  # sem "altura": o acolchoamento do arquivo
+        finally:
+            self.partes = partes
         self._sujo = None
         self._desde = None
         if not mudancas:
@@ -692,8 +803,27 @@ class ConjuntoDePaginacao:
         return True
 
 
-def _tabelas(quadro):
+def _celulas_da_linha(tabela, r: int) -> list:
+    """As celulas que comecam na linha r (a mesclada conta uma vez, na linha e coluna dela)."""
+    cels = []
+    c = 0
+    while c < tabela.columns():
+        cel = tabela.cellAt(r, c)
+        if cel.row() == r and cel.column() == c:
+            cels.append(cel)
+            c += max(1, cel.columnSpan())
+        else:
+            c += 1
+    return cels
+
+
+def _tabelas(quadro, faixa=None):
+    """As tabelas dentro do quadro, em todos os niveis; com `faixa` (posicoes), so' as que a
+    cruzam (o quadro fora dela nem e' aberto)."""
     for filho in quadro.childFrames():
+        if faixa is not None and (filho.lastPosition() < faixa[0] or
+                                  filho.firstPosition() > faixa[1]):
+            continue
         if isinstance(filho, QTextTable):
             yield filho
-        yield from _tabelas(filho)
+        yield from _tabelas(filho, faixa)

@@ -245,7 +245,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.25-win64.zip` da página
+1. Baixe `EditDoc-0.1.26-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -387,8 +387,8 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   fonte: Arial e Times ficam 3 % a 4 % mais altos), mostra o parágrafo vazio junto de uma tabela
   e aplica o controle de linhas viúvas e órfãs, "manter com o próximo", "manter linhas juntas" e
   "quebra de página antes" do estilo. Ficam diferentes: a viúva de um parágrafo com três linhas ou
-  mais na página de cima (o Word desce uma linha; o EditDoc deixa como está), a altura das
-  linhas de tabela e o espaço no começo e no fim de uma célula, e uma quebra de página seguida de
+  mais na página de cima (o Word desce uma linha; o EditDoc deixa como está), o espaço no começo e
+  no fim de uma célula (a altura das linhas de tabela segue a do Word desde a 0.1.26), e uma quebra de página seguida de
   uma quebra de seção "próxima página" (o EditDoc mostra uma página a mais). Nada disso muda o
   arquivo gravado, que reabre com a mesma paginação de quando foi aberto.
 - O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
@@ -431,8 +431,10 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   Num documento com milhares de itens, Enter e Backspace entre parágrafos levam mais
   (medido: 50 ms com 3000 itens), porque a numeração é recalculada.
 - Tabelas: digitar numa tabela muito grande fica lento (o Qt refaz a tabela a cada tecla;
-  acima de 5000 células a tabela abre como parágrafos, com aviso); a altura de linha do
-  arquivo é guardada, mas a tela não a aplica; "Dividir células" só desfaz mescla.
+  acima de 5000 células a tabela abre como parágrafos, com aviso); "Dividir células" só desfaz
+  mescla. A altura de linha do arquivo vale na tela, no PDF e na impressão desde a 0.1.26
+  ("pelo menos", "exatamente" e "automática"), mas a linha "exatamente" mais baixa que o texto
+  não corta o texto como o Word: fica com a altura do texto.
 - A quebra de página não acompanha a do Word linha a linha (não há viúva e órfã, e a
   medida das fontes é a do Qt). O número de páginas pode diferir em documentos longos.
 - Cabeçalho e rodapé que passam da margem (desde a 0.1.8): o corpo de cada página começa
@@ -471,7 +473,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.25-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.26-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

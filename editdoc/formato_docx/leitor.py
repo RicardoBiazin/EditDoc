@@ -1627,6 +1627,7 @@ def _linha(tr, tcs: list, ctx: _Contexto) -> Linha:
                 if valor is not None and 0 < valor <= PAPEL_MAXIMO_TW:
                     linha.altura_tw = valor
                     linha.altura_exata = _atr(f, "hRule") == "exact"
+                    linha.altura_auto = _atr(f, "hRule") == "auto"  # 0.1.26
             elif loc in ("gridBefore", "gridAfter"):
                 c.somar("FORMATACAO")  # a grade da linha: o leitor completa com celula vazia
             # ins, del e trPrChange (0.1.13): extras da linha, sem o w:id.

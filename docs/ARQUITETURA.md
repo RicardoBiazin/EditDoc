@@ -114,7 +114,26 @@ dois parágrafos ao gravar. `ponte_qt/secoes.quebra_so_depois` é o teste; `docs
 Margem da célula (0.1.25): `w:tcMar` da célula vale na tela lado a lado sobre a margem da tabela
 (`w:tblCellMar`). O `w:tcMar` fica nos extras da célula (o modelo não o representa); a leitura é
 `formato_docx/propriedades.margens_da_celula_tw`, e a tela aplica em `ponte_qt/para_qt.aplicar_formatos_das_celulas`.
-A altura mínima de linha (`w:trHeight`) ainda não entra na tela: `docs/SPIKES.md`, "0.1.25".
+
+Altura da linha de tabela (0.1.26): o `w:trHeight` vale na tela, no PDF e na impressão. O Qt não
+tem altura de linha; `interface/paginacao.ConjuntoDePaginacao._alturas_das_linhas` (parte
+"altura" da compensação) põe no acolchoamento de cada célula de uma linha só (sem mescla vertical)
+o que falta para a linha ter a altura do arquivo: embaixo na célula alinhada em cima, metade em
+cima e metade embaixo na do meio, em cima na de baixo. A altura natural é a do layout das linhas
+da célula (o avanço de cada linha, o maior entre o espaço depois e o antes de dois blocos
+vizinhos, o acolchoamento do arquivo e meia borda de cima e de baixo), então o passo vem depois
+dos formatos compensados, num passo anotado à parte. A base é o acolchoamento do arquivo
+(`ponte_qt/para_qt.acolchoamento_base`: `w:tcMar` sobre `w:tblCellMar`); a célula com acréscimo
+leva `PROP_WORD_ALTURA` e a linha sem altura e sem a marca nem é conferida na tecla. `hRule="auto"`
+não conta (o leitor guarda `Linha.altura_auto` e o escritor grava `auto` de novo; até a 0.1.25
+virava `atLeast`). Limites: a linha exata mais baixa que o conteúdo fica com a altura do conteúdo
+(o Qt não corta); a célula com tabela dentro não ganha acréscimo; a linha empurrada da seção
+(`PROP_LINHA_EMPURRADA`, 0.1.12) fica como está. `docs/SPIKES.md`, "0.1.26".
+
+Medidos na 0.1.26 e não adotados (`docs/SPIKES.md`, "0.1.26"): o espaço antes do primeiro e o
+depois do último parágrafo da célula no acolchoamento (piora o oráculo) e a viúva de três linhas
+ou mais descendo uma linha pelo espaço antes do parágrafo (funciona, mas não muda nenhuma quebra
+medida).
 
 Limites aceitos: o Qt não tem viúva e órfã (fora do M3); uma tabela se divide entre páginas por
 linha; `` não quebra página (usa-se a política de quebra do bloco).

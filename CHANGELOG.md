@@ -1,3 +1,30 @@
+## 0.1.26 - 2026-10-27
+
+Altura da linha de tabela (`w:trHeight`) na tela, no PDF e na impressão. Até a 0.1.25 a altura que o
+arquivo pede para a linha era guardada, mas a tela mostrava só a altura do texto: uma linha de
+cabeçalho com "pelo menos 0,8 cm" aparecia com a altura de uma linha de texto. Agora a linha "pelo
+menos" (e a "exatamente", quando o texto cabe) tem a altura do arquivo, com o texto no alto, no meio
+ou embaixo, como o alinhamento vertical da célula pede; a "automática" continua com a altura do texto.
+
+O arquivo salvo não muda nos documentos medidos. Uma correção no salvar: a linha com altura
+"automática" (`hRule="auto"`) era gravada como "pelo menos" (`atLeast`); agora volta como veio.
+
+Medido (docs/SPIKES.md, "0.1.26"; oráculo `lastRenderedPageBreak` dos 14 `.docx` de Downloads,
+Windows):
+- Os 14 ficam iguais à 0.1.25 em páginas e em acerto das quebras (doc_12: 26 páginas, 1/1). A altura
+  das linhas não era a causa da primeira quebra do doc_12: com ela, o parágrafo da divisa ainda cabe
+  na página 1 (faltam 98 twips).
+- Espaço antes do primeiro e depois do último parágrafo da célula: medido e não adotado (o doc_14
+  piora de 3/3 para 2/2).
+- Viúva de três linhas ou mais (descer uma linha): o protótipo resolveu 5 dos 8 casos dos 14
+  arquivos, mas não mudou nenhuma quebra do oráculo; não entrou.
+- Regressão abrir-salvar-reabrir-salvar: c14n igual à 0.1.25 nos 14; salvo1 == salvo2 em todos.
+- Desempenho (p95 da digitação, 3 rodadas intercaladas): sem piora consistente (-1,31 a +1,02 ms). A
+  ressalva da 0.1.25 (documento simples +0,4 a +1 ms) era ruído: o documento simples não tem tabela,
+  e a 0.1.24 contra a 0.1.25 deu -0,09 a +1,42 ms sem direção.
+- Suíte: 3432 verificações ok, 0 falhas; 16 novas em `teste_paginacao_word` (`testar_altura_da_linha`),
+  com contraprova (sem a altura na tela, 7 falham).
+
 ## 0.1.25 - 2026-10-24
 
 Fidelidade de paginação em tabelas: a margem interna de cada célula (`w:tcMar`) passa a valer na

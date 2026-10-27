@@ -1670,9 +1670,14 @@ diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até 
 - 0.1.22: abrir no Word, sem reparo, o SIM salvo pela 0.1.22 (esperado 14 páginas e sem página em branco
   entre a capa e o sumário) e um arquivo com texto digitado no parágrafo só com a quebra (ver "0.1.22").
 - 0.1.17: a viúva de três linhas ou mais (descer uma linha só), a quebra de página seguida de
-  quebra de seção "próxima página" (página a mais), a altura das linhas de tabela e o espaço no
-  começo e no fim da célula; conferir no Word a soma dos espaços (o oráculo não a separou) e a
-  linha da imagem com entrelinha múltipla (imagem + meia linha do texto, deduzido do arquivo 10).
+  quebra de seção "próxima página" (página a mais) e o espaço no começo e no fim da célula (a
+  altura das linhas de tabela entrou na 0.1.26; a viúva e o espaço da célula foram medidos na
+  0.1.26 e não entraram: ver "0.1.26"); conferir no Word a soma dos espaços (o oráculo não a
+  separou) e a linha da imagem com entrelinha múltipla (imagem + meia linha do texto, deduzido do
+  arquivo 10).
+- 0.1.26: a primeira quebra do doc_12 (Word bloco 36, EditDoc 37) continua sem causa achada; e o
+  doc_14, mais alto que o do Word nas tabelas (quebras antes das do Word), com a fonte Aptos 9 nas
+  células (ver "0.1.26").
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,
@@ -1744,3 +1749,85 @@ Não entrou (diagnosticado, fica para a próxima versão):
 
 Experimento descartado: folga uniforme na margem de baixo de todas as tabelas (0, 150 e 300 twips). Com
 folga, piora os docs 10 a 14 (doc_10 3 -> 5 páginas; doc_14 13 -> 16). O erro não é uniforme por tabela.
+
+## 0.1.26: altura da linha de tabela, espaço na célula e viúva de três linhas
+
+Oráculo `w:lastRenderedPageBreak` dos 14 `.docx` de Downloads (rótulos doc_NN, ordem de nome em string),
+plataforma `windows`, scripts no scratchpad (fora do repositório): `oraculo.py` (páginas, acerto e, por
+quebra, o bloco e a linha do Word e do EditDoc), `geo.py` (geometria das unidades e das linhas de tabela),
+`sonda_linha.py` (altura da linha de tabela no Qt), `exp_*.py` (experimentos aplicados por cima do layout).
+
+Referência 0.1.25 (páginas | par/lin): doc_01..09 = 4, 4, 5, 5, 5, 6, 49, 49, 49 (sem quebras do Word);
+doc_10 3 | 2/2; doc_11 4 | 3/3; doc_12 26 | 1/1 (Word: 24 páginas, 23 quebras); doc_13 2 | 1/0;
+doc_14 14 | 3/3.
+
+### Frente 1: `w:trHeight` (entrou)
+
+Nos 14, `w:trHeight` só aparece sem `hRule` (o Word lê como "pelo menos"): 1 linha no doc_10, 1 no doc_11 e
+10 no doc_12. Nenhum tem `exact` nem `auto` (as duas regras têm fixture em código).
+
+Sonda do Qt (tabela de borda colapsada, plataforma `windows`): a altura da linha é o acolchoamento de cima
+e de baixo, mais o avanço das linhas da célula (com a entrelinha compensada: 276 twips em Arial 12, não os
+268 do retângulo do bloco), mais meia borda de cima e meia de baixo (sz 4: 10 twips; sz 12: 30; sz 24:
+60). É a conta de `_altura_da_celula`; o acréscimo no acolchoamento dá a altura pedida com erro < 1,5
+twip (`testar_altura_da_linha`).
+
+Diagnóstico da primeira quebra do doc_12 (Word começa a página 2 no bloco 36, o EditDoc no 37): a tabela
+inicial (8 linhas, `trHeight` 440, 379, 413, 418, 540, 60, 260, 260) fica 363 twips mais alta com a
+altura do arquivo (linhas 0, 1 e 4 eram mais baixas que o pedido). O bloco 36 desce de 13605 para 13968,
+mas a linha dele ainda cabe (topo + altura = 14236, pé da página 14334): faltam 98 twips. A suspeita da
+0.1.25 não se confirmou sozinha. Um primeiro experimento (acolchoamento medido pelo retângulo do bloco,
+sem o avanço da entrelinha 1,5) acertava a quebra 1, mas exagerava 270 twips (linha 4: 254 em vez de
+116) e perdia a quebra 3: foi descartado por medir errado, não adotado.
+
+Resultado com a implementação (páginas | par/lin, e o detalhe por quebra): os 14 iguais à 0.1.25, quebra
+por quebra (doc_10..14 com o mesmo bloco e linha em cada quebra). Entrou porque a regra da frente era
+"melhorar ou ficar igual em todos" e a altura da linha na tela fica como a do Word (fidelidade visual).
+
+Salvar: o leitor lia `hRule="auto"` como "pelo menos" e o escritor gravava `atLeast`. Agora
+`Linha.altura_auto` guarda o auto e o escritor o devolve (a conferência compara). Nos 14 não há `auto`: a
+regressão dá c14n igual à 0.1.25.
+
+Custo por tecla (`_alturas_das_linhas`, mediana em 86 teclas): manual 0,004 ms, simples 0,003 ms,
+plano 0,08 ms (0,23 ms na primeira versão, que lia o JSON e o acolchoamento de todas as linhas da tabela
+editada; agora só as linhas da faixa, e a linha sem altura e sem a marca `PROP_WORD_ALTURA` sai sem ler
+o acolchoamento).
+
+### Frente 2: espaço antes/depois do parágrafo na célula (não entrou)
+
+Experimento: somar no acolchoamento da célula o espaço antes do primeiro parágrafo e o depois do último
+(o Qt os ignora). Nos 14, só o doc_14 tem o caso (362 células, todas com 20 twips depois do último
+parágrafo; nenhuma com espaço antes). Variantes: antes e depois, só antes, só depois.
+- antes e depois / só depois: doc_14 3/3 -> 2/2 (piora); os outros 13 iguais.
+- só antes: igual em todos (não há o caso).
+
+O doc_14 já fica mais alto que o do Word nas tabelas (as quebras do EditDoc vêm antes das do Word, por
+exemplo a 5: Word na linha 10 da tabela, EditDoc na 9); as células usam Aptos 9, e somar o espaço depois
+aumenta a diferença. A regra do Word (o depois do último parágrafo da célula conta) não foi negada, mas
+o oráculo não a pede enquanto a altura das linhas do doc_14 não bater.
+
+### Frente 3: viúva de três linhas ou mais (não entrou)
+
+Contagem nos 14 (parágrafo partido entre páginas com 3+ linhas em cima e 1 embaixo, controle de viúvas
+ligado): doc_07, doc_08 e doc_09 com 2 casos cada, doc_12 com 2 (blocos 153 e 165). Protótipo: o bloco
+ganha no espaço antes (propriedade própria, o valor de verdade continua em PROP_WORD_ANTES) o bastante para
+a penúltima linha de cima passar do pé da página, no meio da faixa em que só ela desce; com histerese.
+Resolveu 5 dos 8 casos (os 2 do doc_12 e 1 em cada um dos docs 07 a 09).
+
+Oráculo: os 14 iguais em páginas e em acerto. No doc_12 as quebras 8 e 9 mudam de linha (153/3 -> 153/2,
+165/4 -> 165/3), mas o Word as põe nos blocos 169 e 178 (o EditDoc já está 16 blocos adiantado ali). Pela
+regra da frente ("implementar se o oráculo pedir"), não entrou; o código foi desfeito.
+
+### Regressão, desempenho e suíte
+
+- Abrir-salvar-reabrir-salvar nos 14: c14n igual à 0.1.25; salvo1 == salvo2; páginas abertas e reabertas
+  iguais.
+- Gate p95 (offscreen, 3 rodadas intercaladas base 0.1.25 x 0.1.26, ms): manual 7,91/6,87, 6,16/6,41,
+  6,40/7,28; simples 7,90/7,70, 8,58/7,67, 7,49/7,44; plano 24,62/25,64, 26,01/24,70, 24,81/24,96. Sem
+  piora consistente (a direção inverte em todos), nenhum ponto acima de 1,5 ms.
+- Ressalva da 0.1.25 (simples +0,4 a +1 ms): o documento simples não tem tabela, e a mudança da 0.1.25
+  (`aplicar_formatos_das_celulas`) não roda nele. 5 rodadas intercaladas 0.1.24 x 0.1.25 no simples:
+  +1,42, -0,09, +0,04, -0,04, +0,28 ms. Era ruído.
+- Suíte completa: 3432 verificações ok, 0 falhas (3416 + 16 de `testar_altura_da_linha`). Contraprova: sem
+  `_alturas_das_linhas` 7 falham; com o leitor lendo `auto` como `atLeast` (o da 0.1.25), 7 falham.
+- Build: BUILD OK, autoverificação "EditDoc 0.1.26", fumaça de janela e ZIP.

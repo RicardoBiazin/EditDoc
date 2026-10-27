@@ -412,6 +412,117 @@ def testar_margem_da_celula(j) -> None:
           f"a diferenca passa de 30 px (sem o tcMar, a tela daria 0): {diferenca:.1f}")
 
 
+def _tabela_alturas(linhas) -> str:
+    """Tabela de duas colunas com bordas; `linhas`: (trPr, alinhamento vertical, paragrafos da
+    primeira celula). A ultima linha (sem altura) fica de fecho, para medir a de cima."""
+    bordas = "".join(f'<w:{lado} w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                     for lado in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    corpo = ""
+    for i, (tr_pr, va, n) in enumerate(list(linhas) + [("", None, 1)]):
+        valign = f'<w:vAlign w:val="{va}"/>' if va else ""
+        pars = "".join(f"<w:p><w:r><w:t>R{i}p{k}</w:t></w:r></w:p>" for k in range(n))
+        corpo += (f"<w:tr>{f'<w:trPr>{tr_pr}</w:trPr>' if tr_pr else ''}"
+                  f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>{valign}</w:tcPr>{pars}</w:tc>'
+                  f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>'
+                  f"<w:p><w:r><w:t>X{i}</w:t></w:r></w:p></w:tc></w:tr>")
+    return (f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>{bordas}</w:tblBorders>'
+            f'</w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+            f"{corpo}</w:tbl>")
+
+
+def _topos_das_linhas(lay, tab) -> list[float]:
+    """Topo de cada linha (twips): o do primeiro bloco da celula da coluna 2 (alinhada em cima,
+    uma linha so'), menos o acolchoamento de cima dela."""
+    dl = lay.doc.documentLayout()
+    topos = []
+    for r in range(tab.rows()):
+        cel = tab.cellAt(r, 1)
+        topos.append(dl.blockBoundingRect(cel.firstCursorPosition().block()).top()
+                     - cel.format().toTableCellFormat().topPadding() * 15.0)
+    return topos
+
+
+def testar_altura_da_linha(j) -> None:
+    secao("altura da linha de tabela (w:trHeight, 0.1.26): atLeast, exact, auto e o alinhamento")
+    linhas = [('<w:trHeight w:val="900"/>', None, 1),               # 0: atLeast (sem hRule)
+              ('<w:trHeight w:val="900" w:hRule="exact"/>', None, 1),  # 1: exata, o conteudo cabe
+              ('<w:trHeight w:val="900" w:hRule="auto"/>', None, 1),   # 2: auto, o Word ignora
+              ('<w:trHeight w:val="200" w:hRule="atLeast"/>', None, 1),  # 3: o conteudo e' maior
+              ('<w:trHeight w:val="1200"/>', "center", 1),            # 4: no meio
+              ('<w:trHeight w:val="1200"/>', "bottom", 1)]            # 5: embaixo
+    dados = docx(p("Antes") + _tabela_alturas(linhas) + p("Depois"))
+    lay = abrir(j, dados)
+    tab = _quadro_tabela(lay)
+    topos = _topos_das_linhas(lay, tab)
+    alturas = [topos[r + 1] - topos[r] for r in range(len(linhas))]
+    natural = alturas[2]
+    checa(abs(alturas[0] - 900) < 1.5, f"atLeast 900 sem hRule: a linha tem 900 ({alturas[0]:.1f})")
+    checa(abs(alturas[1] - 900) < 1.5, f"exact 900 com o conteudo menor: 900 ({alturas[1]:.1f})")
+    checa(natural < 400, f"auto: o valor nao conta, fica a altura do conteudo ({natural:.1f})")
+    checa(abs(alturas[3] - natural) < 1.5,
+          f"atLeast 200 com o conteudo maior: a do conteudo ({alturas[3]:.1f})")
+    checa(abs(alturas[4] - 1200) < 1.5 and abs(alturas[5] - 1200) < 1.5,
+          f"no meio e embaixo: 1200 ({alturas[4]:.1f}, {alturas[5]:.1f})")
+    dl = lay.doc.documentLayout()
+
+    def folga_de_cima(r):
+        return dl.blockBoundingRect(tab.cellAt(r, 0).firstCursorPosition().block()).top() - topos[r]
+
+    cima_topo, cima_meio, cima_base = folga_de_cima(0), folga_de_cima(4), folga_de_cima(5)
+    checa(cima_topo < 30, f"alinhada em cima: o texto fica no alto ({cima_topo:.1f})")
+    checa(abs(cima_meio - (1200 - natural) / 2 - cima_topo) < 3,
+          f"no meio: o texto desce metade do que sobra ({cima_meio:.1f})")
+    checa(abs(cima_base - (1200 - natural) - cima_topo) < 3,
+          f"embaixo: o texto desce tudo o que sobra ({cima_base:.1f})")
+    # Editar: o conteudo que passa da altura faz a linha crescer; desfazer volta a 900.
+    painel = j.painel
+    cur = QTextCursor(lay.doc)
+    cur.setPosition(tab.cellAt(0, 0).lastCursorPosition().position())
+    painel.setTextCursor(cur)
+    painel.setFocus()
+    for _ in range(4):
+        QTest.keyClick(painel, Qt.Key.Key_Return)
+        QTest.keyClick(painel, Qt.Key.Key_A)
+    drenar_eventos()
+    painel.viewport().repaint()
+    drenar_eventos()
+    topos = _topos_das_linhas(lay, tab)
+    checa(topos[1] - topos[0] > 900 + 400,
+          f"cinco paragrafos na celula: a linha cresce alem de 900 ({topos[1] - topos[0]:.1f})")
+    for _ in range(8):
+        QTest.keyClick(painel, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    drenar_eventos()
+    painel.viewport().repaint()
+    drenar_eventos()
+    topos = _topos_das_linhas(lay, tab)
+    checa(abs(topos[1] - topos[0] - 900) < 1.5,
+          f"desfeito: a linha volta a 900 ({topos[1] - topos[0]:.1f})")
+    lay.doc.setModified(False)
+    # Nada muda no arquivo: o acolchoamento nao vai para o tcMar; o hRule volta como veio.
+    com = escrever(j._modelo_atual())
+    conferencia.conferir(com, j._modelo_atual())
+    xml = fx.partes_de(com)["word/document.xml"].decode("utf-8")
+    checa("tcMar" not in xml, "o acrescimo nao vira w:tcMar no arquivo")
+    checa(xml.count('w:hRule="auto"') == 1 and xml.count('w:hRule="exact"') == 1,
+          "hRule auto e exact voltam como vieram")
+    checa(xml.count('w:hRule="atLeast"') == 4, "e os outros saem atLeast (a 0.1.25 gravava o auto"
+          " como atLeast)")
+    lay2 = abrir(j, dados, ligado=False)
+    sem = escrever(j._modelo_atual())
+    checa_igual(fx.partes_de(com)["word/document.xml"], fx.partes_de(sem)["word/document.xml"],
+                "o document.xml e' o mesmo com e sem a altura na tela")
+    # Contraprova: sem a parte "altura" a linha de 900 fica com a altura do conteudo.
+    lay2 = abrir(j, dados, partes=ConjuntoDePaginacao.PARTES - {"altura"})
+    tab2 = _quadro_tabela(lay2)
+    t2 = _topos_das_linhas(lay2, tab2)
+    checa(abs((t2[1] - t2[0]) - natural) < 1.5,
+          f"contraprova: sem a altura na tela, a linha de 900 tem a do conteudo ({t2[1] - t2[0]:.1f})")
+    lay2 = abrir(j, dados)
+    t3 = _topos_das_linhas(lay2, _quadro_tabela(lay2))
+    checa(abs((t3[1] - t3[0]) - 900) < 1.5, "e ligada de novo, volta a 900")
+    lay2.doc.setModified(False)
+
+
 def testar_imagem_na_linha(j) -> None:
     secao("imagem com entrelinha 1,5: o multiplo vale sobre a linha do texto, nao a da imagem")
     img = fx.imagem(fx.png(40, 40), largura_cm=3.0, altura_cm=3.0)
@@ -736,6 +847,7 @@ def main() -> int:
         testar_espaco_no_topo(j, cap)
         testar_tabela(j)
         testar_margem_da_celula(j)
+        testar_altura_da_linha(j)
         testar_imagem_na_linha(j)
         testar_marca_de_paragrafo(j)
         testar_gravacao(j)

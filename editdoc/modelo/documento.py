@@ -456,8 +456,9 @@ class Celula:
 class Linha:
     celulas: list[Celula] = field(default_factory=list)
     cabecalho: bool = False  # w:tblHeader: repete no alto de cada pagina
-    altura_tw: int | None = None  # w:trHeight (guardada; a tela nao aplica)
+    altura_tw: int | None = None  # w:trHeight (a tela aplica desde a 0.1.26)
     altura_exata: bool = False  # hRule="exact"; senao, "atLeast"
+    altura_auto: bool = False  # hRule="auto" (0.1.26): o Word ignora o valor
     # Propriedades da linha que o modelo nao representa (0.1.5): cantSplit, jc, hidden...
     extras: str | None = None
 

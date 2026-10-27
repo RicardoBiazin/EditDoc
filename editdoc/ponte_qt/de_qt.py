@@ -417,6 +417,7 @@ def _tabela(qt: QTextTable, largura_corpo_tw: int, res) -> Tabela:
             altura = dado_linha.get("altura_tw")
             linha.altura_tw = altura if isinstance(altura, int) else None
             linha.altura_exata = bool(dado_linha.get("altura_exata"))
+            linha.altura_auto = bool(dado_linha.get("altura_auto"))
             extras = dado_linha.get("extras_linha")
             linha.extras = extras if isinstance(extras, str) and extras else None
         tabela.linhas.append(linha)

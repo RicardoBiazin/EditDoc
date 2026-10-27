@@ -1263,7 +1263,7 @@ def _resolver_linha_prop(tabela, r: int, linha: str, aceitar: bool) -> bool:
         if velha is None:
             return False
         novo = {"extras_linha": velha.extras, "altura_tw": velha.altura_tw,
-                "altura_exata": velha.altura_exata}
+                "altura_exata": velha.altura_exata, "altura_auto": velha.altura_auto}
         # O cabecalho repetido e' o headerRowCount da tabela: so' muda na beirada.
         tf = tabela.format()
         n = tf.headerRowCount()

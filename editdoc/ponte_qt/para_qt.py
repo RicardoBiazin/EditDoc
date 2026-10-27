@@ -204,6 +204,8 @@ def json_da_celula(celula: Celula, linha=None) -> str:
     if linha is not None:
         dado["altura_tw"] = linha.altura_tw
         dado["altura_exata"] = linha.altura_exata
+        if linha.altura_auto:
+            dado["altura_auto"] = True  # 0.1.26 (so' quando ha': o JSON das outras nao muda)
         dado["extras_linha"] = linha.extras
     return json.dumps(dado, sort_keys=True)
 
@@ -260,6 +262,20 @@ def _aplicar_borda(fmt: QTextTableCellFormat, lado: str, borda: Borda | None) ->
     getattr(fmt, f"set{lado}BorderBrush")(QBrush(cor))
 
 
+def acolchoamento_da_celula(fmt: QTextFormat, gerais: tuple) -> tuple[float, ...]:
+    """(cima, esquerda, baixo, direita) do acolchoamento da celula, px96, como o arquivo pede: o
+    w:tcMar da celula vence o w:tblCellMar da tabela (`gerais`, px96) lado a lado (0.1.25). E' a
+    base sobre a qual a altura da linha (w:trHeight, 0.1.26) soma o que falta."""
+    proprias = margens_da_celula_tw(ler_json(fmt, PROP_CELULA).get("extras")) or (None,) * 4
+    return tuple(px_de_twips(v) if v is not None else geral for v, geral in zip(proprias, gerais))
+
+
+def acolchoamento_base(tabela: QTextTable, fmt: QTextFormat) -> tuple[float, ...]:
+    """`acolchoamento_da_celula` com as margens da propria tabela."""
+    return acolchoamento_da_celula(fmt, tuple(px_de_twips(v)
+                                              for v in margens_da_tabela_em(tabela.format())))
+
+
 def aplicar_formatos_das_celulas(tabela: QTextTable) -> None:
     """Refaz o desenho das bordas e das margens de todas as celulas.
 
@@ -269,7 +285,7 @@ def aplicar_formatos_das_celulas(tabela: QTextTable) -> None:
     """
     tf = tabela.format()
     bordas = bordas_da_tabela_em(tf)
-    sup, esq, inf, dir_ = (px_de_twips(v) for v in margens_da_tabela_em(tf))
+    gerais = tuple(px_de_twips(v) for v in margens_da_tabela_em(tf))
     linhas, colunas = tabela.rows(), tabela.columns()
     for r in range(linhas):
         for c in range(colunas):
@@ -284,10 +300,7 @@ def aplicar_formatos_das_celulas(tabela: QTextTable) -> None:
             _aplicar_borda(fmt, "Bottom", propria.inf or (bordas.inf if fim_r else bordas.horizontal))
             _aplicar_borda(fmt, "Left", propria.esq or (bordas.esq if c == 0 else bordas.vertical))
             _aplicar_borda(fmt, "Right", propria.dir or (bordas.dir if fim_c else bordas.vertical))
-            # w:tcMar da celula vence o w:tblCellMar da tabela lado a lado (0.1.25).
-            proprias = margens_da_celula_tw(ler_json(fmt, PROP_CELULA).get("extras")) or (None,) * 4
-            topo, lado_e, base, lado_d = (px_de_twips(v) if v is not None else geral
-                                          for v, geral in zip(proprias, (sup, esq, inf, dir_)))
+            topo, lado_e, base, lado_d = acolchoamento_da_celula(fmt, gerais)
             fmt.setTopPadding(topo)
             fmt.setLeftPadding(lado_e)
             fmt.setBottomPadding(base)

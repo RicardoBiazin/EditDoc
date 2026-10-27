@@ -827,7 +827,8 @@ def _tabela(pai, tabela: Tabela, ctx: _Ctx) -> None:
         if linha.altura_tw is not None:
             h = etree.SubElement(tr_pr, q("trHeight"))
             h.set(q("val"), str(int(linha.altura_tw)))
-            h.set(q("hRule"), "exact" if linha.altura_exata else "atLeast")
+            h.set(q("hRule"), "exact" if linha.altura_exata else
+                  "auto" if linha.altura_auto else "atLeast")
         if linha.cabecalho:
             etree.SubElement(tr_pr, q("tblHeader"))
         fx_props.montar_extras_tabela(tr_pr, linha.extras)  # 0.1.5

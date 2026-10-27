@@ -263,7 +263,7 @@ def _itens(blocos, saida: list, onde: str, efetivas: _Efetivas | None = None,
                           bloco.estilo, _tabela_layout(bloco) if efetivas else None))
             for i, linha in enumerate(bloco.linhas):
                 saida.append((f"{onde}linha {i + 1}", "linha", len(linha.celulas), linha.cabecalho,
-                              (linha.altura_tw, linha.altura_exata, linha.extras)
+                              (linha.altura_tw, linha.altura_exata, linha.altura_auto, linha.extras)
                               if efetivas else None))
                 for j, celula in enumerate(linha.celulas):
                     lugar = f"{onde}celula {i + 1},{j + 1}: "

@@ -17,6 +17,9 @@ tem outro, so' para o layout do Qt chegar ao do Word:
 - PROP_QUEBRA_REGRA (bloco): a quebra de pagina das regras do Word (linhas viuvas e orfas, manter
   com o proximo, manter linhas juntas, quebra antes do estilo). Nao e' quebra do usuario: o
   `de_qt`, o rotulo "Quebra de pagina", o Enter e o copiar a ignoram, como o espacador das notas.
+- PROP_WORD_ALTURA (celula, 0.1.26): o acolchoamento de cima ou de baixo tem o que falta para a
+  linha ter a altura do w:trHeight (`interface/paginacao._alturas_das_linhas`). O arquivo nao
+  muda: o acolchoamento nao volta ao modelo (a margem da celula vem dos extras).
 
 O valor "real" vazio quer dizer "o bloco nao tinha a propriedade". Se alguem troca o valor do
 formato (formatacao, estilo), o valor novo e' do usuario: a propriedade so' vale enquanto o
@@ -39,6 +42,10 @@ PROP_WORD_DEPOIS = _USUARIO + 46
 PROP_WORD_LINHA = _USUARIO + 47
 PROP_QUEBRA_REGRA = _USUARIO + 48
 PROP_WORD_VISIVEL = _USUARIO + 49
+#: Celula (0.1.26): o acolchoamento tem o acrescimo da altura da linha (w:trHeight) sobre o do
+#: arquivo. So' marca (o valor de verdade sai do tcMar/tblCellMar, `para_qt.acolchoamento_base`):
+#: a linha sem altura e sem a marca nem e' conferida a cada tecla.
+PROP_WORD_ALTURA = _USUARIO + 50
 #: Todas as propriedades da compensacao (o copiar e a rejeicao de formatacao as conhecem).
 PROPS_DE_PAGINACAO = (PROP_WORD_ANTES, PROP_WORD_DEPOIS, PROP_WORD_LINHA, PROP_QUEBRA_REGRA,
                       PROP_WORD_VISIVEL)
