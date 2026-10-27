@@ -135,6 +135,24 @@ depois do último parágrafo da célula no acolchoamento (piora o oráculo) e a 
 ou mais descendo uma linha pelo espaço antes do parágrafo (funciona, mas não muda nenhuma quebra
 medida).
 
+Recuo esquerdo negativo (0.1.27, `interface/desvio.py`): o `QTextDocumentLayout` não aceita recuo
+esquerdo negativo (a linha começa no x 0 do quadro, com a largura do corpo). `D` = o maior recuo
+negativo do primeiro nível do corpo (parágrafo: esquerdo mais primeira linha; tabela: `w:tblInd`),
+limitado pela menor margem esquerda das seções. O QTextDocument fica `D` mais largo e a página
+efetiva ganha `margem_esq_tw - D` e `desvio_tw = D` (`modelo/pagina.com_desvio`): tudo que já põe
+o corpo na folha pela efetiva (pintura, caret, seleção, clique, flutuantes, PDF, impressão) fica
+certo sem mudar. Cada bloco e tabela do primeiro nível ganha `D` no recuo esquerdo
+(`PROP_RECUO_DESLOCADO` = + 51, "extra;total;tinha"; tabela em px96, pelo `recuo_tw` do JSON). O
+recuo do usuário é `estilos.recuo_esquerdo_real` (de_qt, régua, faixa, tabulações, listas);
+quem grava recuo usa `estilos.definir_recuo_esquerdo`. A coluna do arquivo (régua, notas,
+referência "coluna" dos flutuantes, largura das faixas com seções, largura útil do `de_qt` e dos
+objetos) soma `desvio_tw` de volta. `D` só cresce numa edição; ao abrir vale o do documento.
+Limite: com seções de margens diferentes, `D` é um só (o da menor margem).
+
+Faixa com tabela (0.1.27): o Qt também esconde o parágrafo vazio logo depois de uma tabela no
+cabeçalho e no rodapé; `FaixaQt.altura` soma a altura dele (espaço antes + linha + espaço depois),
+e o rodapé fica com a altura do Word. `docs/SPIKES.md`, "0.1.27".
+
 Limites aceitos: o Qt não tem viúva e órfã (fora do M3); uma tabela se divide entre páginas por
 linha; `` não quebra página (usa-se a política de quebra do bloco).
 

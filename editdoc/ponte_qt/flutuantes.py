@@ -391,7 +391,10 @@ class Gerente:
         if QTextCursor(bloco).currentTable() is not None:
             coluna_x, coluna_w = r.left() + dx, r.width()
         else:
-            coluna_x, coluna_w = float(ctx.efetiva_da(n).margem_esq_tw), ctx.corpo_largura(n)
+            # A coluna e' a do arquivo (0.1.27: sem o deslocamento do recuo negativo).
+            ef = ctx.efetiva_da(n)
+            coluna_x = float(ef.margem_esq_tw + ef.desvio_tw)
+            coluna_w = ctx.corpo_largura(n) - ef.desvio_tw
         ref = mf.Referencia(pagina=ctx.pagina_da(n), indice=n, paragrafo_y=topo + dy,
                             linha_y=linha_y if linha_y is not None else topo + dy,
                             coluna_x=coluna_x, coluna_w=coluna_w, caractere_x=car_x)

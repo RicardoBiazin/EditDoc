@@ -59,6 +59,10 @@ class Pagina:
     pares_impares: bool = False
     formato_numero: str = "decimal"  # um de FORMATOS_NUMERO (modelo/campos.py)
     numero_inicial: int | None = None  # None = continua (comeca em 1)
+    #: So' na pagina efetiva da tela (0.1.27, `interface/desvio.py`): o corpo do QTextDocument
+    #: comeca `desvio_tw` antes da margem esquerda (recuo negativo). A margem do arquivo e'
+    #: `margem_esq_tw + desvio_tw`. Zero na pagina do arquivo (nunca vai para o .docx).
+    desvio_tw: int = 0
 
     def corpo_largura_tw(self) -> int:
         return self.largura_tw - self.margem_esq_tw - self.margem_dir_tw
@@ -107,6 +111,16 @@ class Pagina:
     def com_margens(self, sup: int, inf: int, esq: int, dir_: int) -> "Pagina":
         return replace(self, margem_sup_tw=sup, margem_inf_tw=inf,
                        margem_esq_tw=esq, margem_dir_tw=dir_)
+
+
+def com_desvio(pagina: Pagina, desvio_tw: int) -> Pagina:
+    """A pagina efetiva com o corpo do layout `desvio_tw` twips mais largo para a esquerda
+    (0.1.27): a margem esquerda diminui, a do arquivo fica em `margem_esq_tw + desvio_tw`."""
+    desvio_tw = int(desvio_tw)
+    if desvio_tw == pagina.desvio_tw:
+        return pagina
+    return replace(pagina, margem_esq_tw=pagina.margem_esq_tw + pagina.desvio_tw - desvio_tw,
+                   desvio_tw=desvio_tw)
 
 
 def pagina_padrao() -> Pagina:

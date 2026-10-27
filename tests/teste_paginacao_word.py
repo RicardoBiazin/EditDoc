@@ -22,6 +22,7 @@ fixture com a compensacao desligada, ou sem a propriedade, da' o layout antigo).
 
 from __future__ import annotations
 
+import math
 import os
 import pathlib
 import statistics
@@ -523,6 +524,176 @@ def testar_altura_da_linha(j) -> None:
     lay2.doc.setModified(False)
 
 
+TEXTO_LONGO = " ".join(f"palavra{i}" for i in range(80))
+#: Tabela com w:tblInd negativo (a celula fica antes da margem no Word).
+TABELA_NEGATIVA = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblInd w:w="-300" '
+                   'w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr>'
+                   '<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r>'
+                   '<w:t>celneg</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+
+
+def _x_e_largura(lay, bloco) -> tuple[float, float]:
+    """(x na folha, largura) da primeira linha do bloco, em twips."""
+    ef = lay.efetiva_da(0)
+    r = lay.doc.documentLayout().blockBoundingRect(bloco)
+    linha = bloco.layout().lineAt(0)
+    return r.left() + linha.x() + ef.margem_esq_tw, linha.width()
+
+
+def _medir_recuo(j, dados, ligado: bool) -> dict:
+    j.painel.layout_pag.desvio_negativo.ligado = ligado
+    try:
+        lay = abrir(j, dados)
+        out = {"lay": lay}
+        for nome in ("Negativo", "Normal", "celneg", "Pendente"):
+            out[nome] = _x_e_largura(lay, bloco_com(lay, nome))
+        neg = bloco_com(lay, "Negativo")
+        out["linhas"] = neg.layout().lineCount()
+        out["caret_x"] = lay.retangulo_cursor(neg.position()).x() + lay.efetiva_da(0).margem_esq_tw
+        return out
+    finally:
+        j.painel.layout_pag.desvio_negativo.ligado = True
+
+
+def testar_recuo_negativo(j) -> None:
+    """0.1.27: o Qt ignora o recuo esquerdo negativo (a linha comeca na margem, com a largura do
+    corpo). O documento fica mais largo e os blocos e tabelas do primeiro nivel deslocados: a
+    linha comeca na margem menos o recuo e tem a largura do Word. Contraprova: com o deslocamento
+    desligado, a linha volta para a margem e fica estreita."""
+    secao("recuo esquerdo negativo (0.1.27): posicao e largura da linha, tabela, caret, regua")
+    corpo = (p("Negativo " + TEXTO_LONGO, ppr='<w:ind w:left="-567"/><w:jc w:val="both"/>')
+             + p("Normal " + TEXTO_LONGO) + TABELA_NEGATIVA
+             + p("Pendente " + TEXTO_LONGO, ppr='<w:ind w:left="200" w:hanging="400"/>')
+             + p("Fim"))
+    dados = docx(corpo)
+    com = _medir_recuo(j, dados, True)
+    lay = com["lay"]
+    arq = lay.pagina_arquivo
+    margem, largura = float(arq.margem_esq_tw), float(arq.corpo_largura_tw())
+    checa(abs(lay.desvio - 567) < 0.5, f"o desvio e' o maior recuo negativo: {lay.desvio}")
+    checa(abs(lay.efetiva_da(0).margem_esq_tw - (margem - 567)) < 0.5 and
+          lay.efetiva_da(0).desvio_tw == 567, "a pagina efetiva comeca o corpo 567 antes da margem")
+    x, w = com["Negativo"]
+    checa(abs(x - (margem - 567)) < 1, f"recuo -567: a linha comeca em margem - 567 ({x:.1f})")
+    checa(abs(w - (largura + 567)) < 1, f"e tem a largura do Word, corpo + 567 ({w:.1f})")
+    x, w = com["Normal"]
+    checa(abs(x - margem) < 1 and abs(w - largura) < 1,
+          f"sem recuo: na margem e com a largura do corpo ({x:.1f}, {w:.1f})")
+    x, _w = com["Pendente"]
+    checa(abs(x - (margem - 200)) < 1,
+          f"recuo 200 com deslocamento 400: a primeira linha em margem - 200 ({x:.1f})")
+    checa(abs(com["caret_x"] - (margem - 567)) < 30,
+          f"o caret do comeco do paragrafo fica no comeco da linha ({com['caret_x']:.1f})")
+    # Clique: o ponto do comeco da linha (coordenadas do documento) cai no paragrafo.
+    from PySide6.QtCore import QPointF
+    neg = bloco_com(lay, "Negativo")
+    r = lay.doc.documentLayout().blockBoundingRect(neg)
+    ponto = QPointF(r.left() + neg.layout().lineAt(0).x() + 20, r.top() + 50)
+    pos = lay.doc.documentLayout().hitTest(ponto, Qt.HitTestAccuracy.FuzzyHit)
+    checa(0 <= pos - neg.position() <= 1, f"o clique no comeco da linha acha o paragrafo ({pos})")
+    # O usuario continua vendo o recuo de verdade: regua, faixa e gravacao.
+    cur = QTextCursor(lay.doc)
+    cur.setPosition(neg.position())
+    j.painel.setTextCursor(cur)
+    checa_igual(j.painel.recuos_do_paragrafo()[0], -567, "a regua mostra o recuo -567")
+    checa_igual(pq_estilos.props_de_bloco(neg.blockFormat()).get("recuo_esquerdo_tw"), -567,
+                "o paragrafo volta ao modelo com -567")
+    checa("recuo_esquerdo_tw" not in pq_estilos.props_de_bloco(bloco_com(lay, "Normal").blockFormat()),
+          "o paragrafo sem recuo nao ganha recuo no modelo")
+    checa(abs(lay.largura_das_notas() - largura) < 0.5, "as notas ficam com a largura do corpo")
+    gravado = escrever(j._modelo_atual())
+    conferencia.conferir(gravado, j._modelo_atual())
+    xml = fx.partes_de(gravado)["word/document.xml"].decode("utf-8")
+    checa('w:left="-567"' in xml and 'w:tblInd w:w="-300"' in xml,
+          "o arquivo gravado tem os recuos de verdade")
+    checa(xml.count("w:ind ") == 2, f"so' os dois paragrafos com recuo gravam w:ind ({xml.count('w:ind ')})")
+    lay.doc.setModified(False)
+    sem = _medir_recuo(j, dados, False)
+    checa_igual(fx.partes_de(escrever(j._modelo_atual()))["word/document.xml"],
+                fx.partes_de(gravado)["word/document.xml"],
+                "o document.xml e' o mesmo com e sem o deslocamento")
+    xs, ws = sem["Negativo"]
+    checa(abs(xs - (margem - 567)) >= 1 and abs(ws - (largura + 567)) >= 1,
+          f"contraprova: sem o deslocamento o Qt poe a linha na margem ({xs:.1f}) e estreita ({ws:.1f})")
+    checa(sem["linhas"] > com["linhas"],
+          f"contraprova: e o paragrafo quebra em mais linhas ({sem['linhas']} > {com['linhas']})")
+    checa(abs((com["celneg"][0] - sem["celneg"][0]) + 300) < 1,
+          f"a tabela com tblInd -300 fica 300 twips mais a esquerda que sem o deslocamento "
+          f"({com['celneg'][0] - sem['celneg'][0]:.1f})")
+    sem["lay"].doc.setModified(False)
+    # Editar o recuo pela faixa (Aumentar recuo) mantem o deslocamento e o valor de verdade.
+    lay = abrir(j, dados)
+    neg = bloco_com(lay, "Negativo")
+    cur = QTextCursor(lay.doc)
+    cur.setPosition(neg.position())
+    j.painel.setTextCursor(cur)
+    j.painel.definir_recuos_do_paragrafo(-300, 0)
+    drenar_eventos()
+    lay.atualizar_secoes()
+    neg = bloco_com(lay, "Negativo")
+    checa_igual(j.painel.recuos_do_paragrafo()[0], 0,
+                "a regua grava o recuo dela (sem negativo, como antes): 0")
+    x, w = _x_e_largura(lay, neg)
+    checa(abs(x - margem) < 1 and abs(w - largura) < 1,
+          f"com o deslocamento mantido, o recuo 0 poe a linha na margem ({x:.1f}, {w:.1f})")
+    lay.doc.setModified(False)
+
+
+#: Rodape com uma tabela e dois paragrafos vazios (o caso do doc_12).
+RODAPE_TABELA = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>'
+                 '<w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" '
+                 'w:type="dxa"/></w:tcPr><w:p><w:r><w:t>rodape</w:t></w:r></w:p></w:tc></w:tr>'
+                 '</w:tbl><w:p/><w:p/>')
+
+
+def testar_rodape_com_tabela(j) -> None:
+    """0.1.27: o Qt esconde o paragrafo vazio logo depois da tabela tambem no rodape; o Word o
+    conta. A faixa soma a altura dele: rodape = tabela + 2 linhas. Contraprova: a altura do Qt
+    sozinha tem uma linha a menos."""
+    secao("rodape com tabela e paragrafo vazio (0.1.27): a altura da faixa conta o vazio escondido")
+    dados = fx.docx_com_xml(
+        fillers(5), '<w:footerReference w:type="default" r:id="rId81"/>',
+        partes_extra={"word/footer81.xml": fx.parte_faixa(RODAPE_TABELA, "ftr"),
+                      "word/styles.xml": ESTILOS.encode("utf-8")},
+        relacoes_extra=[("rId81", fx.RT_FOOTER, "footer81.xml")],
+        tipos_extra=[("/word/footer81.xml", fx.CT_FOOTER)])
+    lay = abrir(j, dados)
+    faixa = lay.faixa_da_folha("rodape", 0)
+    checa(faixa is not None, "o rodape existe")
+    dl = faixa.doc.documentLayout()
+    tabela = faixa.doc.rootFrame().childFrames()[0]
+    alto_tabela = dl.frameBoundingRect(tabela).height()
+    ultimo = faixa.doc.lastBlock()
+    linha = ultimo.layout().lineAt(0).height()
+    qt = float(dl.documentSize().height())
+    checa(abs(qt - (alto_tabela + linha)) < 2,
+          f"contraprova: o Qt da' a tabela e UMA linha ({qt:.1f} = {alto_tabela:.1f} + {linha:.1f})")
+    checa(abs(faixa.altura() - (alto_tabela + 2 * linha)) < 2,
+          f"a faixa tem a tabela e as duas linhas vazias ({faixa.altura():.1f})")
+    checa(abs(faixa.escondida() - linha) < 2, f"o vazio escondido vale uma linha ({faixa.escondida():.1f})")
+    arq = lay.pagina_arquivo
+    esperado = max(arq.margem_inf_tw, arq.rodape_tw + math.ceil(faixa.altura()))
+    checa_igual(lay.pagina.margem_inf_tw, esperado,
+                "o corpo termina acima do rodape inteiro (margem de baixo efetiva)")
+    hb_com = lay.hb
+    lay.doc.setModified(False)
+    # Contraprova: sem somar o vazio escondido (a 0.1.26), a faixa fica uma linha mais baixa e o
+    # corpo uma linha mais alto.
+    from editdoc.interface import cabecalhos
+    original = cabecalhos.FaixaQt.escondida
+    cabecalhos.FaixaQt.escondida = lambda self: 0.0
+    try:
+        lay = abrir(j, dados)
+        faixa = lay.faixa_da_folha("rodape", 0)
+        checa(abs(faixa.altura() - (alto_tabela + linha)) < 2,
+              f"contraprova: sem o vazio escondido a faixa tem uma linha a menos ({faixa.altura():.1f})")
+        checa(lay.hb - hb_com > 0.5,
+              f"contraprova: e o corpo fica mais alto ({lay.hb - hb_com:.1f} twips)")
+    finally:
+        cabecalhos.FaixaQt.escondida = original
+    lay.doc.setModified(False)
+
+
 def testar_imagem_na_linha(j) -> None:
     secao("imagem com entrelinha 1,5: o multiplo vale sobre a linha do texto, nao a da imagem")
     img = fx.imagem(fx.png(40, 40), largura_cm=3.0, altura_cm=3.0)
@@ -848,6 +1019,8 @@ def main() -> int:
         testar_tabela(j)
         testar_margem_da_celula(j)
         testar_altura_da_linha(j)
+        testar_recuo_negativo(j)
+        testar_rodape_com_tabela(j)
         testar_imagem_na_linha(j)
         testar_marca_de_paragrafo(j)
         testar_gravacao(j)

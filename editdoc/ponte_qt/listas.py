@@ -130,6 +130,12 @@ def marcar_lista(bf: QTextBlockFormat, num: int | None, nivel: int | None) -> No
             bf.setProperty(prop, int(valor))
 
 
+def _recuo_esquerdo_real(bf: QTextBlockFormat) -> float:
+    """O recuo esquerdo do usuario (0.1.27: sem o deslocamento do recuo negativo, desvio.py)."""
+    from editdoc.ponte_qt import estilos as pq_estilos  # import tardio: estilos importa este
+    return pq_estilos.recuo_esquerdo_real(bf)
+
+
 def recuo_real(bf: QTextBlockFormat) -> int | None:
     """O recuo da primeira linha de verdade (twips), ou None se o bloco nao tem."""
     if bf.hasProperty(PROP_RECUO_REAL):
@@ -403,7 +409,9 @@ def posicoes(bloco, rotulo: Rotulo, numerador: Numerador, cat: Numeracao) -> tup
     Word; senao a tabulacao do nivel ou a padrao do documento), espaco ou nada.
     """
     bf = bloco.blockFormat()
-    esquerdo = bf.leftMargin()
+    # 0.1.27: da margem do conteiner (sem o deslocamento do recuo negativo, desvio.py).
+    from editdoc.ponte_qt import estilos as pq_estilos
+    esquerdo = pq_estilos.recuo_esquerdo_real(bf)
     real = recuo_real(bf) or 0
     inicio = esquerdo + real
     largura = largura_do_rotulo(bloco, rotulo, numerador)
@@ -468,7 +476,7 @@ def ajustar_recuos(doc: QTextDocument, juntar: bool = False) -> bool:
         else:
             real = recuo_real(bf)
             a, texto = posicoes(bloco, rotulo, numerador, cat)
-            visual = texto - bf.leftMargin()
+            visual = texto - _recuo_esquerdo_real(bf)
             guardado = bf.property(PROP_RECUO_REAL) if tem_real else None
             alvo_real = real if real is not None else SEM_RECUO
             if not tem_real or abs(bf.textIndent() - visual) > 0.25 or guardado != alvo_real:

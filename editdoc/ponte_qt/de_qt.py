@@ -434,7 +434,8 @@ def extrair_blocos(documento_qt: QTextDocument, largura_corpo_tw: int = _CORPO_P
 
 
 def extrair(documento_qt: QTextDocument) -> Documento:
-    largura = documento_qt.pageSize().width()
+    # 0.1.27: sem o deslocamento do recuo negativo (o documento fica mais largo na tela).
+    largura = documento_qt.pageSize().width() - float(getattr(documento_qt, "_desvio_tw", 0.0))
     # No layout paginado a unidade e' o twip; fora dele (testes), usa o corpo A4.
     largura_corpo = round(largura) if 1000 < largura <= 100000 else _CORPO_PADRAO_TW
     estilos = pq_estilos.catalogo(documento_qt)

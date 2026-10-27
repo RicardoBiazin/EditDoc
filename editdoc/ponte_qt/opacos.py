@@ -239,7 +239,7 @@ def _fonte(doc: QTextDocument, fmt: QTextFormat) -> QFont:
 
 
 def _largura_disponivel(doc: QTextDocument) -> float:
-    largura = doc.pageSize().width()
+    largura = doc.pageSize().width() - float(getattr(doc, "_desvio_tw", 0.0))
     if largura <= 0:
         largura = doc.textWidth()
     return largura if largura > 0 else _CORPO_PADRAO_TW

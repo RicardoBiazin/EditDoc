@@ -1077,7 +1077,8 @@ def _props_que_ficam():
     from editdoc.ponte_qt.paginacao import PROP_QUEBRA_REGRA
     from editdoc.ponte_qt.para_qt import PROP_ESTRUTURAL
     return (pq.PROP_REV_MARCA, pq.PROP_REV_PPR, pq_notas.PROP_QUEBRA_NOTA,
-            pq_secoes.PROP_QUEBRA_SECAO, pq_estilos.PROP_RECUO_SECAO, PROP_ESTRUTURAL,
+            pq_secoes.PROP_QUEBRA_SECAO, pq_estilos.PROP_RECUO_SECAO,
+            pq_estilos.PROP_RECUO_DESLOCADO, PROP_ESTRUTURAL,
             PROP_QUEBRA_REGRA)
 
 

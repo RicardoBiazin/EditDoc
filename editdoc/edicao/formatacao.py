@@ -145,7 +145,10 @@ def alterar_recuo(editor: QTextEdit, delta_tw: float) -> None:
     cursor.beginEditBlock()
     for bloco in _blocos_da_selecao(editor):
         formato = bloco.blockFormat()
-        formato.setLeftMargin(max(0.0, formato.leftMargin() + delta_tw))
+        # 0.1.27: o recuo do usuario, sem o deslocamento do recuo negativo.
+        from editdoc.ponte_qt import estilos as pq_estilos
+        pq_estilos.definir_recuo_esquerdo(
+            formato, max(0.0, pq_estilos.recuo_esquerdo_real(formato) + delta_tw))
         QTextCursor(bloco).setBlockFormat(formato)
     cursor.endEditBlock()
 

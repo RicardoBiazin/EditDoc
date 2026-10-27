@@ -112,7 +112,7 @@ class _Edicao:
         nbf.clearProperty(pl.PROP_SAIU_DA_LISTA)
         if extra:
             if "esquerdo" in extra:
-                nbf.setLeftMargin(float(extra["esquerdo"]))
+                pq.definir_recuo_esquerdo(nbf, float(extra["esquerdo"]))
             if "primeira" in extra:
                 nbf.setTextIndent(float(extra["primeira"]))
             if extra.get("saiu"):
@@ -317,7 +317,7 @@ def backspace_no_inicio(editor) -> bool:
     estilos = pq.catalogo(doc)
     ef = efetiva(doc, bloco)
     if ef is not None:
-        texto_x = bf.leftMargin() + bf.textIndent()
+        texto_x = pq.recuo_esquerdo_real(bf) + bf.textIndent()
         with _Edicao(editor) as ed:
             ed.trocar(bloco, *_sem_lista(estilos, bloco),
                       {"esquerdo": max(0.0, texto_x), "primeira": 0.0, "saiu": True})
@@ -329,7 +329,7 @@ def backspace_no_inicio(editor) -> bool:
         base, _ = res.paragrafo(sid, em_tabela, pl.lista_do_bloco(bf))
         nbf = QTextBlockFormat(bf)
         nbf.clearProperty(pl.PROP_SAIU_DA_LISTA)
-        nbf.setLeftMargin(float(base.get("recuo_esquerdo_tw") or 0))
+        pq.definir_recuo_esquerdo(nbf, float(base.get("recuo_esquerdo_tw") or 0))
         if base.get("recuo_primeira_linha_tw") is not None:
             nbf.setTextIndent(float(base["recuo_primeira_linha_tw"]))
         else:

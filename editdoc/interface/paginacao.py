@@ -32,7 +32,8 @@ pediria descer UMA linha, o que o layout do Qt nao faz (fica como esta'; na 0.1.
 pelo espaco antes nao mudou nenhuma quebra do oraculo); o espaco antes do primeiro paragrafo de
 uma celula e o depois do ultimo (o Qt os ignora; medido na 0.1.26, somar piora o oraculo), a
 linha exata mais baixa que o conteudo (o Qt nao corta) e as linhas de tabela (cantSplit,
-cabecalho repetido) nao entram; cabecalho, rodape e notas nao sao compensados.
+cabecalho repetido) nao entram; cabecalho, rodape e notas nao sao compensados (so' a altura da
+faixa soma o vazio escondido logo depois da tabela, 0.1.27: `cabecalhos.FaixaQt.escondida`).
 """
 
 from __future__ import annotations
@@ -209,12 +210,7 @@ class ConjuntoDePaginacao:
     # -- compensacao --------------------------------------------------------------------------------
     def _altura_word(self, bloco, fmt) -> float:
         """Altura (twips) da linha do paragrafo vazio com a entrelinha do formato `fmt`."""
-        lay = bloco.layout()
-        if lay is not None and lay.lineCount() > 0:
-            return pq.avanco_e_corte(fmt, lay.lineAt(0))[0]
-        from PySide6.QtGui import QFontMetricsF
-        fonte = bloco.charFormat().font()
-        return float(QFontMetricsF(fonte).height()) * 15.0 * 72.0 / 96.0
+        return pq.altura_do_vazio(bloco, fmt)
 
     def _entre(self, a, fa, b, fb) -> float:
         """O espaco do Word entre os irmaos a e b (px96), pelos valores de verdade."""
@@ -282,7 +278,11 @@ class ConjuntoDePaginacao:
 
     def _margens_da_tabela(self, tabela) -> tuple[float, float]:
         """(margem de cima, de baixo) do quadro, px96: o espaco depois do paragrafo de cima e o
-        antes do de baixo (o Qt os ignora junto de uma tabela)."""
+        antes do de baixo (o Qt os ignora junto de uma tabela).
+
+        Limite medido na 0.1.27 (docs/SPIKES.md): a linha do vazio entre duas tabelas sai com a
+        entrelinha ainda sem a compensacao (no doc_12, 369 twips em vez de 379,9). Usar o formato
+        compensado nao mudou nenhuma quebra dos 14 arquivos medidos; nao entrou."""
         doc = self.layout.doc
         topo = 0.0
         if "tabela" not in self.partes:

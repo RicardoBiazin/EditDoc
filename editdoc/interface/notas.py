@@ -1095,6 +1095,7 @@ class ConjuntoDeNotas:
 
     def nota_em(self, n: int, x: float, y_doc: float):
         """(NotaQt, posicao) sob o ponto (x no corpo, y em coordenadas do corpo) da pagina n."""
+        x -= self._desvio(n)
         for f in self.paginas.get(n, []):
             if f.nota is None or not (f.y - FOLGA <= y_doc <= f.y + f.altura + FOLGA):
                 continue
@@ -1109,6 +1110,11 @@ class ConjuntoDeNotas:
             return False
         return min(f.y for f in fatias) - FOLGA <= y_doc <= max(f.y + f.altura for f in fatias)
 
+    def _desvio(self, n: int) -> float:
+        """O deslocamento do recuo negativo (0.1.27): as notas ficam na coluna do arquivo, o x 0
+        do corpo fica `desvio` antes dela."""
+        return float(self.layout.efetiva_da(n).desvio_tw)
+
     def caret(self, nota: NotaQt, pos: int):
         """(pagina, QRectF em coordenadas do corpo) do caret na nota, ou None."""
         from editdoc.interface.layout_paginado import retangulo_cursor_em
@@ -1116,7 +1122,8 @@ class ConjuntoDeNotas:
         achados = self.fatias_de(nota)
         for n, f in achados:
             if f.y0 - FOLGA <= r.top() < f.y1 - FOLGA or (f is achados[-1][1]):
-                return n, QRectF(r.x(), f.y + (r.top() - f.y0), r.width(), r.height())
+                return n, QRectF(r.x() + self._desvio(n), f.y + (r.top() - f.y0), r.width(),
+                                 r.height())
         return None
 
 
@@ -1207,10 +1214,12 @@ def desenhar_notas(painter, layout, n: int, transf, editada: NotaQt | None = Non
     if not fatias:
         return
     ef = layout.efetiva_da(n)
-    largura = float(ef.corpo_largura_tw())
+    # 0.1.27: a area de notas fica na coluna do arquivo (sem o deslocamento do recuo negativo).
+    largura = float(ef.corpo_largura_tw() - ef.desvio_tw)
+    margem = float(ef.margem_esq_tw + ef.desvio_tw)
     painter.save()
     painter.setWorldTransform(transf)
-    painter.translate(ef.margem_esq_tw, ef.margem_sup_tw - layout.mapa.topo(n))
+    painter.translate(margem, ef.margem_sup_tw - layout.mapa.topo(n))
     for f in fatias:
         if f.tipo in ("separador", "continuacao"):
             comprimento = largura if f.tipo == "continuacao" else min(LARGURA_SEPARADOR_TW,
@@ -1224,11 +1233,11 @@ def desenhar_notas(painter, layout, n: int, transf, editada: NotaQt | None = Non
         nota = f.nota
         painter.save()
         painter.translate(0, f.y - f.y0)
-        painter.setClipRect(QRectF(-ef.margem_esq_tw, f.y0, float(ef.largura_tw), f.y1 - f.y0))
+        painter.setClipRect(QRectF(-margem, f.y0, float(ef.largura_tw), f.y1 - f.y0))
         ctx = QAbstractTextDocumentLayout.PaintContext()
         ctx.palette = _paleta()
         ctx.cursorPosition = -1
-        ctx.clip = QRectF(-ef.margem_esq_tw, f.y0, float(ef.largura_tw), f.y1 - f.y0)
+        ctx.clip = QRectF(-margem, f.y0, float(ef.largura_tw), f.y1 - f.y0)
         if nota is editada and selecao is not None and selecao.hasSelection():
             sel = QAbstractTextDocumentLayout.Selection()
             sel.cursor = QTextCursor(selecao)

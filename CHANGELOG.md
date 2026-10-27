@@ -1,3 +1,29 @@
+## 0.1.27 - 2026-10-27
+
+Recuo esquerdo negativo e rodapé com tabela, como no Word. Até a 0.1.26 o parágrafo (ou a tabela)
+com recuo esquerdo negativo, que entra na margem, aparecia na margem e com a linha da largura do
+corpo: o texto justificado quebrava em mais linhas que no Word e cada página levava menos texto.
+Agora ele começa onde o Word o põe, com a largura de linha do Word, na tela, no PDF e na impressão;
+o clique, o cursor, a seleção, a régua, os objetos flutuantes, as notas e o cabeçalho e rodapé
+ficam no lugar. E o rodapé (ou cabeçalho) com uma tabela seguida de parágrafo vazio tinha uma linha
+a menos que no Word (o Qt esconde o vazio junto da tabela): o corpo da página ficava mais alto.
+
+As duas correções entram juntas: só a do rodapé piorava o documento medido (26 para 27 páginas),
+porque o recuo ignorado compensava o rodapé curto. O arquivo salvo não muda.
+
+Medido (docs/SPIKES.md, "0.1.27"; oráculo `lastRenderedPageBreak` dos 14 `.docx` de Downloads,
+Windows):
+- doc_12: 26 páginas, acerto das quebras de 1/1 para 2/2 (as duas primeiras quebras no parágrafo e
+  na linha do Word; Word: 24 páginas). Os outros 13 ficam iguais, quebra por quebra.
+- A margem da tabela depois do parágrafo vazio entre tabelas (entrelinha sem a compensação, 10,9
+  twips) foi corrigida e medida: não muda nenhuma quebra; não entrou.
+- Regressão abrir-salvar-reabrir-salvar: c14n igual à 0.1.26 nos 14; salvo1 == salvo2 em todos.
+- Desempenho (p95 da digitação, rodadas intercaladas): sem piora consistente (a direção inverte em
+  todos os documentos).
+- Suíte: 3459 verificações ok, 0 falhas; 27 novas em `teste_paginacao_word` (posição x e largura
+  da linha com recuo negativo, tabela, caret, clique, régua, gravação; altura do rodapé com tabela e
+  vazio), com contraprova (deslocamento desligado; sem o vazio escondido).
+
 ## 0.1.26 - 2026-10-27
 
 Altura da linha de tabela (`w:trHeight`) na tela, no PDF e na impressão. Até a 0.1.25 a altura que o

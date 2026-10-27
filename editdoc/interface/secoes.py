@@ -34,7 +34,7 @@ from PySide6.QtGui import QTextCursor, QTextFormat, QTextTable
 from editdoc import log_interno
 from editdoc.modelo import secoes as mod_secoes
 from editdoc.modelo.campos import tipo_da_pagina
-from editdoc.modelo.pagina import Pagina, pagina_efetiva
+from editdoc.modelo.pagina import Pagina, com_desvio, pagina_efetiva
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import secoes as pq
 from editdoc.ponte_qt.notas import PROP_QUEBRA_NOTA
@@ -208,7 +208,9 @@ class ConjuntoDeSecoes:
                     if tipo in ativos:
                         maiores[k] = max(maiores[k], h)
                 por_tipo[tipo] = alt
-            info.efetiva = pagina_efetiva(info.pagina, maiores[0], maiores[1])
+            # 0.1.27: o corpo comeca `desvio` antes da margem (recuo negativo, desvio.py).
+            info.efetiva = com_desvio(pagina_efetiva(info.pagina, maiores[0], maiores[1]),
+                                      round(getattr(self.layout, "desvio", 0.0)))
             hb = info.efetiva.corpo_altura_tw()
             for tipo, (hc, hr) in por_tipo.items():
                 ef = pagina_efetiva(info.pagina, hc, hr)
@@ -233,8 +235,13 @@ class ConjuntoDeSecoes:
         return mudou
 
     def dimensoes(self) -> tuple[float, float]:
-        """(W, H): a maior largura e a maior altura de corpo entre as secoes."""
-        return (max(info.largura for info in self.lista), max(info.hb for info in self.lista))
+        """(W, H): a maior largura e a maior altura de corpo entre as secoes. W tem o
+        deslocamento do recuo negativo (0.1.27)."""
+        return (max(info.largura for info in self.lista) + self._desvio(),
+                max(info.hb for info in self.lista))
+
+    def _desvio(self) -> float:
+        return float(round(getattr(self.layout, "desvio", 0.0)))
 
     # -- mapa de folhas -----------------------------------------------------------------------
     def _unidade_depois(self, pos: int):
@@ -443,7 +450,7 @@ class ConjuntoDeSecoes:
                 quer |= BIT_DEPOIS
             if inicio in branco:
                 quer |= BIT_ANTES
-            extra = max(0.0, W - info.largura) if multiplas else 0.0
+            extra = max(0.0, W - self._desvio() - info.largura) if multiplas else 0.0
             atual = pq_estilos.recuo_secao(fmt)
             if atual is None:
                 recuo_ok = extra < FOLGA

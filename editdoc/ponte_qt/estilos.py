@@ -201,14 +201,76 @@ def recuo_direito_real(bf) -> float:
     return atual
 
 
+#: Bloco ou tabela do primeiro nivel (0.1.27): o deslocamento que leva o recuo esquerdo negativo
+#: para dentro do documento. O Qt nao aceita recuo esquerdo negativo (a linha comeca no x 0 do
+#: quadro e fica com a largura do corpo); o documento fica `D` twips mais largo, com o corpo
+#: comecando `D` twips antes da margem (`LayoutPaginado.desvio`), e todo bloco e tabela do
+#: primeiro nivel ganha `D` no recuo esquerdo. Texto "extra;total;tinha": o extra (D), o recuo
+#: total aplicado (twips no bloco, px96 na tabela) e se o bloco tinha o recuo esquerdo antes
+#: (1/0). Como no PROP_RECUO_SECAO: o recuo do usuario e' o total menos o extra enquanto o
+#: formato tiver o total; se alguem trocou o recuo, o valor novo e' do usuario.
+PROP_RECUO_DESLOCADO = QTextFormat.Property.UserProperty.value + 51
+
+
+def recuo_deslocado(fmt) -> tuple[float, float, bool] | None:
+    """(extra, total aplicado, tinha o recuo) do deslocamento do recuo negativo, ou None."""
+    valor = fmt.property(PROP_RECUO_DESLOCADO)
+    if isinstance(valor, str) and valor.count(";") == 2:
+        try:
+            extra, total, tinha = valor.split(";")
+            return float(extra), float(total), tinha == "1"
+        except ValueError:
+            return None
+    return None
+
+
+def _deslocamento_valido(bf) -> tuple[float, float, bool] | None:
+    d = recuo_deslocado(bf)
+    if d is not None and bf.hasProperty(P.BlockLeftMargin) and abs(bf.leftMargin() - d[1]) < 0.5:
+        return d
+    return None
+
+
+def deslocamento_esquerdo(bf) -> float:
+    """O extra do recuo negativo no recuo esquerdo do bloco (0.1.27), ou 0."""
+    d = _deslocamento_valido(bf)
+    return d[0] if d is not None else 0.0
+
+
+def recuo_esquerdo_real(bf) -> float:
+    """O recuo esquerdo do usuario (twips): o do bloco sem o deslocamento do recuo negativo."""
+    return bf.leftMargin() - deslocamento_esquerdo(bf)
+
+
+def tem_recuo_esquerdo(bf) -> bool:
+    """O bloco tem recuo esquerdo do usuario (o deslocamento sozinho nao conta)."""
+    d = _deslocamento_valido(bf)
+    if d is not None:
+        return d[2] or abs(bf.leftMargin() - d[0]) >= 0.5
+    return bf.hasProperty(P.BlockLeftMargin)
+
+
+def definir_recuo_esquerdo(bf, real_tw: float) -> None:
+    """Grava o recuo esquerdo do usuario mantendo o deslocamento do recuo negativo, se houver."""
+    d = _deslocamento_valido(bf)
+    if d is None:
+        if bf.hasProperty(PROP_RECUO_DESLOCADO):
+            bf.clearProperty(PROP_RECUO_DESLOCADO)
+        bf.setLeftMargin(float(real_tw))
+        return
+    total = float(real_tw) + d[0]
+    bf.setLeftMargin(total)
+    bf.setProperty(PROP_RECUO_DESLOCADO, f"{d[0]};{total};1")
+
+
 def props_de_bloco(bf: QTextBlockFormat) -> dict:
     """Formatacao de paragrafo efetiva (campos de Paragrafo) e o "nivel"."""
     out: dict = {}
     alinhamento = _alinhamento(bf)
     if alinhamento is not None:
         out["alinhamento"] = alinhamento
-    if bf.hasProperty(P.BlockLeftMargin):
-        out["recuo_esquerdo_tw"] = round(bf.leftMargin())
+    if tem_recuo_esquerdo(bf):
+        out["recuo_esquerdo_tw"] = round(recuo_esquerdo_real(bf))
     if bf.hasProperty(P.BlockRightMargin):
         real = recuo_direito_real(bf)
         if real != 0 or recuo_secao(bf) is None:
@@ -286,7 +348,7 @@ def aplicar_bloco(bf: QTextBlockFormat, props: dict) -> None:
     if props.get("alinhamento") is not None:
         bf.setAlignment(_ALINHAMENTO[props["alinhamento"]])
     if props.get("recuo_esquerdo_tw") is not None:
-        bf.setLeftMargin(float(props["recuo_esquerdo_tw"]))
+        definir_recuo_esquerdo(bf, float(props["recuo_esquerdo_tw"]))
     if props.get("recuo_direito_tw") is not None:
         bf.setRightMargin(float(props["recuo_direito_tw"]))
     if props.get("recuo_primeira_linha_tw") is not None:
@@ -355,6 +417,8 @@ def recompor_bloco(bf: QTextBlockFormat, base_velha: dict, base_nova: dict,
     for prop in PROPS_QT_BLOCO:
         novo.clearProperty(prop)
     novo.clearProperty(PROP_NIVEL)
+    # 0.1.27: o deslocamento do recuo negativo volta na conferencia seguinte (desvio.py).
+    novo.clearProperty(PROP_RECUO_DESLOCADO)
     # 0.1.17: espaco e entrelinha vem do zero; a compensacao do layout e' refeita depois.
     from editdoc.ponte_qt import paginacao as pq_paginacao
     pq_paginacao.esquecer(novo, antes=True, depois=True, linha=True)

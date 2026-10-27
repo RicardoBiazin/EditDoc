@@ -54,7 +54,7 @@ from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument
 from editdoc.interface.cabecalhos import ConjuntoDeFaixas
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.folhas import MapaFolhas
-from editdoc.modelo.pagina import Pagina, pagina_efetiva
+from editdoc.modelo.pagina import Pagina, com_desvio, pagina_efetiva
 from editdoc.ponte_qt import campos
 from editdoc.ponte_qt import estilos as pq_estilos
 from editdoc.ponte_qt import flutuantes as pq_flutuantes
@@ -132,6 +132,11 @@ class LayoutPaginado:
         from editdoc.interface.paginacao import ConjuntoDePaginacao
         self.paginacao = ConjuntoDePaginacao(self)
         self._hb_qt = float(pagina.corpo_altura_tw())
+        # Recuo esquerdo negativo (0.1.27): o corpo comeca `desvio` twips antes da margem.
+        self.desvio = 0.0
+        self.doc._desvio_tw = 0.0
+        from editdoc.interface.desvio import ConjuntoDeDesvio
+        self.desvio_negativo = ConjuntoDeDesvio(self)
         # Folha x pagina do Qt (0.1.20): toda conversao de y, folha e faixa passa por aqui.
         self.mapa = MapaFolhas(lambda: self.hb)
         self._aplicar()
@@ -191,7 +196,8 @@ class LayoutPaginado:
         0.1.17: antes, a compensacao do layout (espaco somado, linha do Word, vazio junto da
         tabela); depois, as regras de quebra do Word (viuvas e orfas, manter com o proximo).
         """
-        compensou = self.paginacao.compensar()
+        deslocou = self.desvio_negativo.atualizar()
+        compensou = self.paginacao.compensar() or deslocou
         mudou = self.secoes.atualizar(forcar)
         ctx = self.flutuantes.contexto
         ctx.folhas = self._folha_para_flutuantes if self._multiplas() else None
@@ -245,7 +251,8 @@ class LayoutPaginado:
         """A variante pronta para a folha n: largura do corpo da secao (0.1.12) e campos com o
         numero da folha (com a numeracao da secao)."""
         if self._multiplas():
-            faixa.definir_largura(self.efetiva_da(n).corpo_largura_tw())
+            ef = self.efetiva_da(n)
+            faixa.definir_largura(ef.corpo_largura_tw() - ef.desvio_tw)
             faixa.contexto.secoes = self.campos_da_folha
         else:
             faixa.contexto.secoes = None
@@ -285,12 +292,24 @@ class LayoutPaginado:
         """Largura das notas de rodape: a do corpo (com secoes, a menor)."""
         if self._multiplas():
             return min(info.largura for info in self.secoes.lista)
-        return float(self.pagina.corpo_largura_tw())
+        return float(self.pagina.corpo_largura_tw() - self.pagina.desvio_tw)
+
+    def definir_desvio(self, desvio: float) -> None:
+        """Recuo esquerdo negativo (0.1.27, `interface/desvio.py`): o corpo do layout comeca
+        `desvio` twips antes da margem esquerda, e o documento fica mais largo na mesma medida."""
+        self.desvio = float(desvio)
+        self.doc._desvio_tw = self.desvio
+        self.pagina = self._efetiva()
+        self._topos = self._calcular_topos()
+        self._efetivas = {}
+        self.secoes.calcular(forcar=True)
+        self._aplicar()
 
     def definir_pagina(self, pagina: Pagina) -> None:
         """Troca papel ou margens (da ultima secao, a unica num documento de uma secao): o
         documento e' refeito para o novo corpo."""
         self.pagina_arquivo = pagina
+        self.desvio_negativo.conferir_tudo()  # a margem mudou: o teto do desvio tambem
         self.faixas.definir_largura(pagina.corpo_largura_tw())
         self.pagina = self._efetiva()
         self._topos = self._calcular_topos()
@@ -306,6 +325,7 @@ class LayoutPaginado:
             self.definir_pagina(pagina)
             return
         secoes[indice].pagina = replace(pagina, pares_impares=self.pagina_arquivo.pares_impares)
+        self.desvio_negativo.conferir_tudo()
         self.secoes.calcular(forcar=True)
         self.notas.definir_largura(self.largura_das_notas())
         self._efetivas = {}
@@ -313,7 +333,7 @@ class LayoutPaginado:
 
     def _efetiva(self) -> Pagina:
         cab, rod = self.faixas.alturas(self.pagina_arquivo)
-        return pagina_efetiva(self.pagina_arquivo, cab, rod)
+        return com_desvio(pagina_efetiva(self.pagina_arquivo, cab, rod), round(self.desvio))
 
     def _calcular_topos(self) -> dict[str, int]:
         """Topo do corpo de cada tipo de pagina, pela altura do cabecalho e do rodape DELA.

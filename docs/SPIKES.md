@@ -1675,9 +1675,10 @@ diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até 
   0.1.26 e não entraram: ver "0.1.26"); conferir no Word a soma dos espaços (o oráculo não a
   separou) e a linha da imagem com entrelinha múltipla (imagem + meia linha do texto, deduzido do
   arquivo 10).
-- 0.1.26: a primeira quebra do doc_12 (Word bloco 36, EditDoc 37) continua sem causa achada; e o
-  doc_14, mais alto que o do Word nas tabelas (quebras antes das do Word), com a fonte Aptos 9 nas
-  células (ver "0.1.26").
+- 0.1.26: a primeira quebra do doc_12 (Word bloco 36, EditDoc 37): resolvida na 0.1.27 (rodapé com
+  o parágrafo vazio depois da tabela e recuo esquerdo negativo, juntos; ver "0.1.27"). Fica o doc_12
+  da quebra 3 em diante (o EditDoc quebra mais cedo; da 8 em diante, uma página atrás) e o doc_14, mais alto que o do Word nas tabelas (quebras antes das do Word), com a
+  fonte Aptos 9 nas células (ver "0.1.26").
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,
@@ -1831,3 +1832,131 @@ regra da frente ("implementar se o oráculo pedir"), não entrou; o código foi 
 - Suíte completa: 3432 verificações ok, 0 falhas (3416 + 16 de `testar_altura_da_linha`). Contraprova: sem
   `_alturas_das_linhas` 7 falham; com o leitor lendo `auto` como `atLeast` (o da 0.1.25), 7 falham.
 - Build: BUILD OK, autoverificação "EditDoc 0.1.26", fumaça de janela e ZIP.
+
+## 0.1.27: a primeira quebra do doc_12 (rodapé com tabela e recuo esquerdo negativo)
+
+Oráculo `w:lastRenderedPageBreak` dos 14 `.docx` de Downloads (rótulos doc_NN, ordem de nome em
+string), plataforma `windows`, scripts no scratchpad (fora do repositório): `diag1.py` (geometria da
+página efetiva, das faixas e de cada bloco: topo, avanço e altura natural das linhas, margens,
+valores de verdade), `oraculo.py` (páginas, acerto e, por quebra, bloco e linha do Word e do
+EditDoc, com experimentos aplicados por cima), `largura.py` (posição e largura de cada linha),
+`exp_recuo.py`. A referência da 0.1.26 se repetiu (doc_12 26 | 1/1, os outros iguais).
+
+### O que foi medido na página 1 do doc_12
+
+Corpo do EditDoc: topo 1134, altura 14334 (pé 15468), rodapé de 661 twips a 709 do pé. Do bloco
+21 ao 36, todas as linhas são Arial 12 com entrelinha 1,5: avanço 413,8 (Word: 2355/2048 x 240 x
+1,5 = 414,0), altura natural 268. O bloco 36 começa em 13967,7; a linha natural termina em 14235,7
+(cabe por 98) e a linha inteira, em 14381,5.
+
+Candidatos medidos e descartados para a quebra 1:
+- `w:docGrid` e `w:snapToGrid`: não existem no arquivo (nem no `sectPr`, nem nos estilos).
+- Compatibilidade: só `compatibilityMode` 15 e cinco ajustes que não mexem na altura da linha.
+- Cabeçalho: tabela de uma linha (Arial 9) e um parágrafo vazio; no Word, 207 + 207 = 414 twips a
+  partir de 709 = 1123, abaixo da margem de 1134. Não empurra o corpo (nem no EditDoc, 201).
+- Tabela inicial: com o `trHeight` da 0.1.26, 3765 twips; as linhas batem com a conta do Word
+  (conteúdo, `trHeight` e meia borda). A célula "Página 1 de 21" quebra em 2 linhas nos dois
+  (1615 twips de texto em 1450 de célula).
+- Parágrafos vazios no corpo: o de entre as duas tabelas entra na margem da tabela de baixo com
+  529 twips; a conta do Word dá 539,5 (160 + 1,5 x 253). A margem foi calculada com a entrelinha
+  ainda sem a compensação (369 em vez de 379,9). Defeito real, mas de 10,9 twips (não explica 98).
+- Linha inteira no pé da página (o Word exigiria o avanço de 1,5 linha caber, e não só a linha
+  natural): experimento com a altura mínima do Qt (que testa a linha inteira) nos blocos de linhas
+  iguais. Acerta a quebra 1 do doc_12, mas piora o doc_10 (2/2 -> 1/1) e a quebra 3 do doc_12.
+  Descartado.
+
+### A causa: o rodapé do Word tem um parágrafo vazio que o Qt esconde
+
+O rodapé é uma tabela de uma linha (Calibri 8, 2 linhas: 392 no Qt, 390,6 no Word) seguida de
+DOIS parágrafos vazios (Calibri 11: 269 no Qt, 268,6 no Word). O `QTextDocumentLayout` esconde o
+vazio logo depois da tabela (como no corpo, CLAUDE.md "tabela e parágrafo vazio no Qt", 0.1.17), e a
+faixa não tem a compensação do corpo: a altura medida é 661, a do Word 927,7. O pé do corpo do
+Word fica em 16838 - 709 - 927,7 = 15201,3 (altura 14067,3, não 14334).
+
+Com 14067,3: o bloco 36 não cabe (a linha natural termina em 14235,7, a linha inteira em 14381,5)
+e o 35 cabe dos dois jeitos (13821,9 e 13967,7): a quebra 1 cai no 36, como no Word. A quebra 2 do
+Word ([52, 7], no meio do parágrafo) também passa a bater na linha.
+
+Experimento (a altura da faixa soma a do parágrafo vazio que o Qt esconde junto de tabela; o
+rodapé fica com 930, o corpo com 14065), oráculo nos 14:
+- doc_12: 26 | 1/1 -> 27 | 2/2 (quebras 1 e 2 no bloco e na linha do Word; da 3 em diante o EditDoc
+  quebra mais cedo que antes).
+- Os outros 13: iguais à 0.1.26, quebra por quebra.
+
+### Por que a correção do rodapé não entrou sozinha (primeira rodada)
+
+A regra desta versão era não piorar nenhum dos 14, e as páginas do doc_12 vão de 26 para 27 (Word:
+24). A piora não é da correção: um segundo erro, que puxava para o outro lado, fica à mostra.
+O doc_12 tem recuo esquerdo de -567 twips em quase todos os parágrafos (e `tblInd` de -572 nas
+tabelas). O Qt ignora o recuo esquerdo negativo: medido na plataforma `windows`, a linha do bloco
+52 fica em x = 0 com 9638 de largura (o corpo), não em -567 com 10205. O texto justificado quebra
+em mais linhas que no Word (a última linha do bloco 53 tem 5 caracteres), e cada página do
+EditDoc leva menos texto. Com o rodapé curto, o corpo 267 twips mais alto compensava em parte.
+
+Experimento do recuo (só diagnóstico: o documento 567 twips mais largo e 567 somados no recuo de
+cada bloco e tabela do primeiro nível):
+- só o recuo: 26 | 1/1, a quebra 1 continua no 37 (o recuo não é a causa da quebra 1);
+- rodapé + recuo: 26 | 2/2 (quebras 1 e 2 certas, páginas iguais à 0.1.26). Da quebra 8 em diante
+  o EditDoc fica uma página atrás (Word 169, EditDoc 153): outra causa, não investigada.
+
+Próximo passo: rodapé e cabeçalho com o parágrafo vazio junto de tabela (a altura da faixa e a
+posição do rodapé na folha) junto com o recuo esquerdo negativo no corpo (o Qt não o faz: precisa
+de outro mecanismo, por exemplo a largura do documento e o recuo de todos os blocos deslocados,
+com a pintura, o clique, a régua, os flutuantes e as tabelas no lugar certo). Medir de novo nos 14.
+
+### O que entrou (segunda rodada)
+
+1. Faixa com tabela (`cabecalhos.FaixaQt.altura`): a altura do Qt mais a dos parágrafos vazios do
+   primeiro nível logo depois de uma tabela (`escondida()`: espaço antes + linha + espaço depois,
+   em cache pela revisão e pela largura). O rodapé do doc_12 fica com 930 twips (Word 927,7).
+2. Recuo esquerdo negativo (`interface/desvio.py`). Mecanismo:
+   - `D` = o maior recuo negativo do primeiro nível do corpo (parágrafo: esquerdo + primeira linha
+     quando negativa; tabela: `w:tblInd` do JSON), limitado pela menor margem esquerda das seções;
+   - o QTextDocument fica `D` twips mais largo e a página efetiva tem `margem_esq_tw - D` e
+     `desvio_tw = D` (`modelo/pagina.com_desvio`, em `LayoutPaginado._efetiva` e na efetiva de cada
+     seção). Pintura (tiles e parte refeita), caret, seleção, clique, flutuantes, PDF e impressão já
+     põem o corpo na folha pela efetiva: nada mudou neles;
+   - cada bloco e tabela do primeiro nível ganha `D` no recuo esquerdo (`PROP_RECUO_DESLOCADO` =
+     UserProperty + 51, "extra;total;tinha"), num passo anotado do desfazer, como os recuos
+     escondidos das seções. Medido no doc_12 (Windows): a linha do bloco 52 vai de x = 1134 e 9638
+     de largura para x = 567 e 10205 (as do Word); a tabela de `tblInd` -572 desce 572 twips para a
+     esquerda; a tinta na tela começa em 553 twips da folha (antes 1123).
+   Armadilhas achadas no caminho:
+   - quem lê o recuo do usuário não pode ler `bf.leftMargin()` (tem o `D`): `de_qt`
+     (`props_de_bloco`), a régua, a faixa, o "Aumentar recuo", as listas (`posicoes` conta da margem)
+     e as tabulações (contam da margem) usam `estilos.recuo_esquerdo_real`; quem grava usa
+     `estilos.definir_recuo_esquerdo`;
+   - o bloco sem recuo próprio ganha `BlockLeftMargin`: sem o "tinha" da marca, o `de_qt` gravaria
+     `w:ind w:left="0"` em todo parágrafo (a regressão c14n acusaria);
+   - o bloco de recuo -D fica com total 0, igual ao de um formato sem a propriedade: a marca só vale
+     com `BlockLeftMargin` presente, e `recompor_bloco` (trocar o estilo) tira a marca;
+   - quem quer a coluna do arquivo soma `desvio_tw`: a área de notas (pintura, clique e caret), a
+     referência "coluna" dos flutuantes, a largura das faixas com seções, a largura das notas e a
+     largura útil do `de_qt` (colunas em porcentagem) e dos objetos na linha (`_desvio_tw` no
+     documento);
+   - a tabela no Qt só tem `max(0, recuo)` no quadro: o recuo de verdade vem do JSON (`recuo_tw`);
+   - copiar tira o deslocamento do HTML (bloco e quadro), como o recuo escondido da seção.
+   Limites: `D` só cresce numa edição (diminui ao reabrir); com seções de margens diferentes, `D` é
+   um só; o cabeçalho e o rodapé não têm o deslocamento (o recuo negativo neles continua ignorado).
+3. O defeito pequeno (margem da tabela depois do vazio entre tabelas com a entrelinha sem a
+   compensação, 10,9 twips no doc_12): corrigido e medido, não mudou nenhuma quebra dos 14 (o
+   detalhe por quebra ficou idêntico); pela regra ("se ajudar") não entrou.
+
+Oráculo (páginas | par/lin), 0.1.26 -> 0.1.27:
+- doc_01..09: 4, 4, 5, 5, 5, 6, 49, 49, 49 -> iguais (sem quebras do Word);
+- doc_10 3 | 2/2, doc_11 4 | 3/3, doc_13 2 | 1/0, doc_14 14 | 3/3 -> iguais, quebra por quebra;
+- doc_12 26 | 1/1 -> 26 | 2/2 (Word 24). As quebras 1 e 2 caem no bloco e na linha do Word ([36, 0]
+  e [52, 7]); a 3 em diante continua antes da do Word, e da 8 em diante uma página atrás (Word 169,
+  EditDoc 154): outra causa, não investigada.
+
+Regressão abrir-salvar-reabrir-salvar nos 14: c14n igual à 0.1.26, salvo1 == salvo2, páginas abertas
+e reabertas iguais (doc_12 26/26).
+
+Gate p95 (offscreen, rodadas intercaladas base 0.1.26 x 0.1.27, ms): manual 5,50/5,89, 7,34/11,50,
+7,41/6,52 (mais duas: 6,03/5,77, 5,59/5,75); simples 8,70/7,47, 8,32/8,78, 8,31/8,34; plano
+24,28/26,71, 29,74/26,12, 24,82/25,29. A direção inverte em todos: sem piora consistente (o +4,2 da
+rodada 2 do manual não se repetiu).
+
+Suíte: 3459 verificações ok, 0 falhas (3432 + 27 novas em `teste_paginacao_word`:
+`testar_recuo_negativo`, com a contraprova do deslocamento desligado, e `testar_rodape_com_tabela`,
+com a contraprova sem o vazio escondido).

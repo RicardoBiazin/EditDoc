@@ -420,6 +420,19 @@ def avanco_e_corte(fmt: QTextBlockFormat, linha) -> tuple[float, float]:
     return float(bruta), altura
 
 
+def altura_do_vazio(bloco, fmt) -> float:
+    """Altura (twips) da linha do paragrafo vazio `bloco` com a entrelinha do formato `fmt`.
+
+    O vazio que o Qt esconde junto de uma tabela pode nao ter linha no layout: a altura vem
+    entao da fonte do bloco."""
+    lay = bloco.layout()
+    if lay is not None and lay.lineCount() > 0:
+        return avanco_e_corte(fmt, lay.lineAt(0))[0]
+    from PySide6.QtGui import QFontMetricsF
+    fonte = bloco.charFormat().font()
+    return float(QFontMetricsF(fonte).height()) * 15.0 * 72.0 / 96.0
+
+
 def fonte_da_marca(extras_ppr: str | None, estilos) -> dict:
     """A formatacao de caractere da marca de paragrafo (o w:rPr dentro do w:pPr): fonte e
     tamanho que o Word usa na linha do paragrafo vazio."""

@@ -109,6 +109,12 @@ def extras_de_ppr(fmt: QTextFormat) -> str | None:
     return _texto(fmt.property(PROP_PPR_EXTRA))
 
 
+def _recuo_real(bf) -> float:
+    """O recuo esquerdo do usuario (0.1.27: sem o deslocamento do recuo negativo)."""
+    from editdoc.ponte_qt import estilos as pq_estilos  # import tardio: estilos importa este
+    return pq_estilos.recuo_esquerdo_real(bf)
+
+
 def tabulacoes(ap: AparenciaParagrafo, recuo_esquerdo_tw: float) -> list:
     """QTextOption.Tab das tabulacoes do paragrafo, contadas do recuo esquerdo (em px96)."""
     saida = []
@@ -137,7 +143,7 @@ def aplicar_ppr(bf: QTextBlockFormat, extras: str | None, linha_direta: bool = F
         return
     if ap.fundo:
         bf.setBackground(QBrush(QColor("#" + ap.fundo)))
-    tabs = tabulacoes(ap, bf.leftMargin())
+    tabs = tabulacoes(ap, _recuo_real(bf))
     if tabs:
         bf.setTabPositions(tabs)
     if ap.linha is not None and not linha_direta:
@@ -158,7 +164,7 @@ def reajustar_tabulacoes(bf: QTextBlockFormat) -> None:
     extras = extras_de_ppr(bf)
     if not extras:
         return
-    tabs = tabulacoes(aparencia_paragrafo(extras), bf.leftMargin())
+    tabs = tabulacoes(aparencia_paragrafo(extras), _recuo_real(bf))
     if tabs:
         bf.setTabPositions(tabs)
 
@@ -380,7 +386,11 @@ def _preenchimentos(painter, bloco, ap) -> None:
     if layout is None or "\t" not in texto:
         return
     origem = layout.position()
-    recuo = bloco.blockFormat().leftMargin()
+    # 0.1.27: a posicao do Word conta da margem; o x da linha tem o deslocamento do recuo
+    # negativo (desvio.py), que sai so' da comparacao (a pintura continua no x da linha).
+    from editdoc.ponte_qt import estilos as pq_estilos
+    deslocado = pq_estilos.deslocamento_esquerdo(bloco.blockFormat())
+    recuo = bloco.blockFormat().leftMargin() - deslocado
     for i, c in enumerate(texto):
         if c != "\t":
             continue
@@ -393,7 +403,8 @@ def _preenchimentos(painter, bloco, ap) -> None:
             continue
         # A tabulacao que este tab alcanca: a primeira depois do ponto de partida (a posicao
         # do Word conta da margem, como o x da linha).
-        alvo = next((t for t in ap.tabulacoes if t[0] > x0 + 1 and t[0] > recuo), None)
+        alvo = next((t for t in ap.tabulacoes if t[0] > x0 - deslocado + 1 and t[0] > recuo),
+                    None)
         if alvo is None or alvo[2] not in _PREENCHIMENTOS:
             continue
         simbolo = _PREENCHIMENTOS[alvo[2]]

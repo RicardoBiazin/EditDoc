@@ -408,7 +408,8 @@ class JanelaPrincipal(QMainWindow):
         # 0.1.12: sem o recuo escondido da secao estreita.
         # 0.1.17: o espaco de verdade, sem a compensacao do layout do Word.
         from editdoc.ponte_qt import paginacao as pq_paginacao
-        self.faixa.mostrar_paragrafo(round(bf.leftMargin()), round(pq_estilos.recuo_direito_real(bf)),
+        self.faixa.mostrar_paragrafo(round(pq_estilos.recuo_esquerdo_real(bf)),
+                                     round(pq_estilos.recuo_direito_real(bf)),
                                      round((pq_paginacao.antes_real(bf) or 0.0) * 15),
                                      round((pq_paginacao.depois_real(bf) or 0.0) * 15))
         c = self.comandos

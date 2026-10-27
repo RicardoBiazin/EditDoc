@@ -51,6 +51,8 @@ class FaixaQt:
         self.do_arquivo = do_arquivo
         self.ident = ident
         self._alturas: dict = {}
+        self._escondida_chave: tuple | None = None
+        self._escondida_valor = 0.0
         self.serie = next(_SERIE)
         self._dispositivo = criar_dispositivo_layout()
         self.doc = DocumentoQt()
@@ -108,7 +110,38 @@ class FaixaQt:
         ctx.origem = (x, y)
 
     def altura(self) -> float:
-        return float(self.doc.documentLayout().documentSize().height())
+        """Altura da faixa (twips): a do layout do Qt mais a dos paragrafos vazios que ele
+        esconde logo depois de uma tabela (0.1.27)."""
+        return float(self.doc.documentLayout().documentSize().height()) + self.escondida()
+
+    def escondida(self) -> float:
+        """Soma (twips) dos paragrafos vazios do primeiro nivel logo depois de uma tabela.
+
+        O `QTextDocumentLayout` nao lhes da' altura (CLAUDE.md, "tabela e paragrafo vazio no
+        Qt"); o corpo tem a compensacao da 0.1.17, a faixa nao. O Word os conta: no doc_12 o
+        rodape (tabela e dois vazios) mede 927,7 twips no Word e 661 no Qt. Sem isso o corpo
+        ficava 267 twips mais alto que o do Word. Cada vazio vale espaco antes + linha + espaco
+        depois, como na margem da tabela do corpo. Em cache pela revisao e pela largura."""
+        chave = (self.doc.revision(), round(self.doc.textWidth()))
+        if self._escondida_chave == chave:
+            return self._escondida_valor
+        from PySide6.QtGui import QTextTable
+        from editdoc.ponte_qt import paginacao as pq_paginacao
+        total = 0.0
+        doc = self.doc
+        for quadro in doc.rootFrame().childFrames():
+            if not isinstance(quadro, QTextTable):
+                continue
+            bloco = doc.findBlock(quadro.lastPosition() + 1)
+            if not bloco.isValid() or bloco.length() != 1:
+                continue
+            fmt = bloco.blockFormat()
+            if fmt.property(para_qt.PROP_ESTRUTURAL):
+                continue
+            total += (fmt.topMargin() + fmt.bottomMargin()) * 15.0 + \
+                pq_paginacao.altura_do_vazio(bloco, fmt)
+        self._escondida_chave, self._escondida_valor = chave, total
+        return total
 
     def altura_na_largura(self, largura_tw: float) -> float:
         """Altura com a largura do corpo de uma secao (0.1.12): a mesma variante pode valer em

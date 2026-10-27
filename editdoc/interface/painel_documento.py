@@ -834,12 +834,13 @@ class PainelDocumento(VistaPaginas):
         """
         bf = self._cursor.block().blockFormat()
         real = pq_listas.recuo_real(bf)
-        return round(bf.leftMargin()), real if real is not None else 0
+        # 0.1.27: sem o deslocamento do recuo negativo (interface/desvio.py).
+        return round(pq_estilos.recuo_esquerdo_real(bf)), real if real is not None else 0
 
     def definir_recuos_do_paragrafo(self, esquerdo_tw: int, primeira_tw: int) -> None:
         """Um passo de desfazer: recuos do paragrafo do caret."""
         bf = QTextBlockFormat(self._cursor.blockFormat())
-        bf.setLeftMargin(max(0.0, float(esquerdo_tw)))
+        pq_estilos.definir_recuo_esquerdo(bf, max(0.0, float(esquerdo_tw)))
         bf.setTextIndent(float(primeira_tw))
         bf.clearProperty(pq_listas.PROP_RECUO_REAL)  # o item de lista ajusta o visual depois
         self._cursor.beginEditBlock()
@@ -2254,6 +2255,12 @@ def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
             bf = pq_paginacao.sem_compensacao(bf)
             QTextCursor(bloco).setBlockFormat(bf)
             tem = True
+        if pq_estilos.recuo_deslocado(bf) is not None:
+            # 0.1.27: o deslocamento do recuo negativo nao e' do usuario.
+            from editdoc.interface.desvio import ConjuntoDeDesvio
+            ConjuntoDeDesvio.aplicar_no_bloco(bf, 0.0)
+            QTextCursor(bloco).setBlockFormat(bf)
+            tem = True
         if pq_notas.eh_espacador(bf) or pq_secoes.eh_derivada(bf) or \
                 pq_estilos.recuo_secao(bf) is not None:
             bf = pq_notas.sem_espacador(bf)
@@ -2267,6 +2274,12 @@ def _html_sem_espacador(frag: QTextDocumentFragment) -> str:
         quadro = pilha.pop()
         pilha.extend(quadro.childFrames())
         fmt = quadro.frameFormat()
+        d = pq_estilos.recuo_deslocado(fmt)
+        if d is not None:
+            fmt.setLeftMargin(max(0.0, d[1] - d[0] / 15.0))
+            fmt.clearProperty(pq_estilos.PROP_RECUO_DESLOCADO)
+            quadro.setFrameFormat(fmt)
+            tem = True
         if fmt.hasProperty(pq_paginacao.PROP_WORD_ANTES) or \
                 fmt.hasProperty(pq_paginacao.PROP_WORD_DEPOIS):
             quadro.setFrameFormat(pq_paginacao.sem_compensacao(fmt))
