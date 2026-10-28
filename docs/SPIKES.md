@@ -1676,9 +1676,11 @@ diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até 
   separou) e a linha da imagem com entrelinha múltipla (imagem + meia linha do texto, deduzido do
   arquivo 10).
 - 0.1.26: a primeira quebra do doc_12 (Word bloco 36, EditDoc 37): resolvida na 0.1.27 (rodapé com
-  o parágrafo vazio depois da tabela e recuo esquerdo negativo, juntos; ver "0.1.27"). Fica o doc_12
-  da quebra 3 em diante (o EditDoc quebra mais cedo; da 8 em diante, uma página atrás) e o doc_14, mais alto que o do Word nas tabelas (quebras antes das do Word), com a
-  fonte Aptos 9 nas células (ver "0.1.26").
+  o parágrafo vazio depois da tabela e recuo esquerdo negativo, juntos; ver "0.1.27"). O doc_12 da
+  quebra 3 em diante foi medido na 0.1.28 e não é defeito do EditDoc que o oráculo confirme: as
+  marcas do arquivo não são uma paginação consistente do conteúdo atual (ver "0.1.28"). Fica o
+  doc_14, mais alto que o do Word nas tabelas (quebras antes das do Word), com a fonte Aptos 9 nas
+  células (ver "0.1.26").
 
 - C5 (teclas mortas ABNT2, AltGr e Win+.) pelo roteiro em `spikes/pagina/RESULTADO.md`.
 - 0.1.10: abrir no Word, sem reparo, um arquivo com notas gravado pelo EditDoc (nota nova,
@@ -1960,3 +1962,68 @@ rodada 2 do manual não se repetiu).
 Suíte: 3459 verificações ok, 0 falhas (3432 + 27 novas em `teste_paginacao_word`:
 `testar_recuo_negativo`, com a contraprova do deslocamento desligado, e `testar_rodape_com_tabela`,
 com a contraprova sem o vazio escondido).
+
+## 0.1.28: o doc_12 da quebra 3 em diante (diagnóstico; nada mudou no código, sem versão nova)
+
+Oráculo `w:lastRenderedPageBreak` dos 14 `.docx` de Downloads (rótulos doc_NN, ordem de nome em
+string), plataforma `windows`, scripts no scratchpad (fora do repositório): `q12.py` (bloco, linha e
+célula de cada quebra, Word × EditDoc), `geo.py`/`blocos.py` (topo, altura, linhas, margens e valores
+de verdade de cada bloco), `linhas.py`/`largura.py` (largura de cada linha; quebra gulosa com as
+larguras de projeto da fonte, com e sem kerning), `continuo.py` (o conteúdo entre duas marcas do Word
+medido num clone do documento sem paginar), `inicios.py` (início de TODAS as páginas do EditDoc contra
+cada marca), `xmlidx.py`/`rpr.py`/`num.py` (o XML dos parágrafos, dos runs e das listas). A referência
+da 0.1.27 se repetiu nos 14 (doc_12 26 | 2/2).
+
+### Quebra 3: o EditDoc já começa a página onde o Word começa
+
+O EditDoc começa a página 4 no bloco 60, um parágrafo vazio SEM `w:r`; a marca do Word está no
+bloco 61. Um parágrafo sem run não tem onde guardar o `w:lastRenderedPageBreak`. E o bloco 60 não
+cabe na página 3 do Word: do bloco 52 (linha 7) ao 59 são 31 linhas Arial 12 com entrelinha 1,5
+(414 twips) e 1360 de espaços somados, 14 042 de altura natural; com o 60, 14 456, acima dos 14 065
+do corpo. A página 4 do Word começa no 60, como no EditDoc; o oráculo conta como erro porque compara
+o bloco da marca.
+
+Larguras conferidas na página 3 (blocos 52 a 61): a quebra gulosa com as larguras de projeto do Arial
+dá o mesmo número de linhas do Qt em todos os parágrafos, com ou sem kerning (o Qt aplica o kerning
+do Arial: "2011)" mede 596 twips, 614 sem). As listas (`ind left=-284 firstLine=0`, marcador e
+tabulação até 0) põem o texto no mesmo x do Word. Não há `vanish`, `w:w`, `w:spacing` de caractere,
+`w:kern` nem fonte trocada nos runs dessas páginas.
+
+### Da quebra 4 em diante: as marcas não são uma paginação do conteúdo atual
+
+Medido no layout contínuo (clone sem paginar; altura do conteúdo entre duas marcas do Word, menos o
+espaço antes da linha da marca):
+- páginas 1 e 2 do Word: 13 968 e 13 900 (cabem; a linha seguinte não cabe): calibram a linha de 414
+  twips (com 410 ou menos o Word teria posto mais uma linha na página 2);
+- página 4 (blocos 61 a 70): 14 484, 35 linhas uniformes de 414 sem espaço entre parágrafos. Cabem no
+  máximo 34 (33 x 414 + 268 = 13 930; 34 x 414 + 268 = 14 344 > 14 065). Conferido também à mão, pelo
+  XML: 6 + 6 + 1 + 6 + 1 + 4 + 1 + 5 + 1 + 4 linhas;
+- página 5 (71 a 86): 14 840, cerca de duas linhas a mais do que cabe; nenhuma linha de lista mudaria
+  de número com outra largura plausível (a segunda linha mais curta pediria o texto começando 58 twips
+  à esquerda do Word);
+- páginas 16 e 21: 14 416 e 14 718, também cheias demais; em todas as páginas cheias demais o EditDoc
+  quebra um bloco antes (é o "quebra antes do Word" da 0.1.27);
+- páginas 8 (blocos 135 a 168) e 22 (354 a 392): 27 363 e 27 635 twips, 1,95 corpo cada, sem marca no
+  meio (no paginado dá o mesmo: 27 726 entre as marcas 21 e 22). Na 22 é só texto: nenhum layout cabe
+  isso numa página. Faltam pelo menos duas marcas, e a contagem "24 páginas" (marcas + 1) está
+  subestimada.
+
+Com as duas páginas sem marca, o Word teria 26 páginas, como o EditDoc. As marcas que coincidem com o
+começo de ALGUMA página do EditDoc (qualquer número): 12 de 23 no bloco, 10 na linha. As marcas 9 a 15
+caem no mesmo bloco que as páginas 10 a 16 do EditDoc (deslocadas pela página sem marca), e a última
+marca (bloco 415) começa a página 26 do EditDoc.
+
+O arquivo foi salvo pelo "Microsoft Word for the web" (`docProps/app.xml`, sem `<Pages>`); os outros
+quatro com marcas vêm do Word para Windows ou Mac e trazem `<Pages>` = marcas + 1. No doc_14, o mesmo
+`continuo.py` não acha nenhum trecho de duas páginas sem marca. Tudo indica texto editado depois da
+última paginação que gravou as marcas (não medido diretamente: o arquivo não guarda essa paginação);
+as marcas do doc_12 servem de oráculo só até a quebra 2.
+
+### Decisão
+
+Nenhuma causa do lado do EditDoc confirmada pelo oráculo da quebra 3 em diante: nada mudou no código,
+sem versão nova e sem publicação. A única diferença de layout vista no caminho (o resto da entrelinha
+1,5 da última linha de uma página passa para o alto da página seguinte no Qt: o bloco 60 começa 124
+twips abaixo do topo da página 4) não muda nenhuma quebra conferível. Para reabrir o doc_12, primeiro
+uma referência nova: abrir no Word para Windows, salvar (o Word grava as marcas e o `<Pages>`) e medir
+de novo.
