@@ -192,7 +192,24 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             cauda.setPosition(t.cauda)
             cauda.setBlockFormat(bS.blockFormat())
             cauda.setBlockCharFormat(bS.charFormat())
+        # O que o fragmento nao leva: bloco escondido (revisoes "Sem marcacao") e os formatos
+        # adicionais do realce (QSyntaxHighlighter), que ficam no QTextLayout do bloco de D.
+        sujo = False
+        b = d.findBlock(t.ini)
+        while b.isValid() and b.position() <= fim_copia:
+            fmts = b.layout().formats()
+            vis = b.isVisible()
+            if fmts or not vis:
+                sujo = True
+                cb = c.findBlock(t.para_trecho(b.position()))
+                if fmts:
+                    cb.layout().setFormats(fmts)
+                if not vis:
+                    cb.setVisible(False)
+            b = b.next()
         cc.endEditBlock()
+        if sujo:
+            c.markContentsDirty(0, c.characterCount())
         t.doc = c
         self.refeitos += 1
 
@@ -358,6 +375,12 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
     def _copiar(self, db, cb, t: _Trecho, na_raiz: bool, forcar: bool) -> bool:
         """True se o bloco de D mudou (linhas ou posicao)."""
         ct, dt = cb.layout(), db.layout()
+        if cb.text() != db.text():
+            # O trecho saiu do passo com D (uma mudanca que a copia nao repetiu igual): linha de
+            # outro texto derruba o cursorToX. Bloco sem linha e remontagem de tudo.
+            dt.clearLayout()
+            self._divergiu = True
+            return True
         n = ct.lineCount()
         pos = ct.position()
         if na_raiz:
@@ -464,7 +487,10 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         r = t.doc.documentLayout().blockBoundingRect(cb)
         if r.isNull():
             return r
-        if bloco.layout().lineCount() != cb.layout().lineCount():
+        # Linhas que faltam (o Qt limpou o layout do bloco ao mudar o texto): so' se o trecho ja'
+        # tem o mesmo texto. Dentro de um bloco de edicao aberto o trecho ainda e' o de antes, e
+        # linhas de outro texto derrubam o processo no cursorToX (medido em teste_listas).
+        if bloco.layout().lineCount() != cb.layout().lineCount() and cb.text() == bloco.text():
             self._copiar(bloco, cb, t, t.doc.frameAt(cb.position()) is t.doc.rootFrame(), True)
         return r.translated(0, t.desloc)
 
@@ -586,7 +612,10 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
                 self._motivo('inteiro', de, removidos, inseridos)
             self._invalidar()
             return
-        if not self._mudanca(de, removidos, inseridos):
+        self._divergiu = False
+        if not self._mudanca(de, removidos, inseridos) or self._divergiu:
+            if self._divergiu:
+                self._motivo('divergiu', de, removidos, inseridos)
             self._invalidar()
             return
         self._medir()
@@ -597,8 +626,26 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         m.setdefault(nome, []).append(args)
 
     def _invalidar(self) -> None:
-        # As linhas dos blocos de D ficam velhas: a consulta seguinte remonta tudo.
+        # As linhas dos blocos de D ficam velhas: a consulta seguinte remonta tudo. Ate' la', bloco
+        # sem linha (como o Qt deixa o bloco que mudou): linha de outro texto derruba o cursorToX.
+        # O Qt ja' limpou as linhas dos blocos cujo texto mudou; os outros ficam com as linhas
+        # de antes ate' a remontagem (na consulta seguinte, ou no laco de eventos).
         self._pendente = True
+        # Como o QTextDocumentLayout, o layout fica pronto logo depois da mudanca: o EditDoc le'
+        # `block.layout()` sem pedir o retangulo antes (com o bloco sem linha, o
+        # `lineAt(lineCount() - 1)` de `retangulo_cursor_em` derruba o processo).
+        if self._trechos and not self._d.pageSize().isNull() and not self._montando:
+            self._montar()
+            return
+        if not getattr(self, "_agendado", False):
+            from PySide6.QtCore import QTimer
+            self._agendado = True
+            QTimer.singleShot(0, self._remontar_agendado)
+
+    def _remontar_agendado(self) -> None:
+        self._agendado = False
+        if self._pendente and not self._d.pageSize().isNull():
+            self._montar()
         self.update[QRectF].emit(QRectF(0, 0, 1e9, 1e9))
 
     def _mudanca(self, de: int, removidos: int, inseridos: int) -> bool:
@@ -623,7 +670,8 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             if ini[j] != esperado:
                 self._motivo('fronteira', de, removidos, inseridos)
                 return False
-        if not self._repetir(t, de, removidos, inseridos):
+        so_formato = removidos == inseridos and self._sincronizar_formatos(t, de, inseridos)
+        if not so_formato and not self._repetir(t, de, removidos, inseridos):
             self._motivo('celula', de, removidos, inseridos)
             return False
         # A copia de S_k (fim do trecho k-1) muda junto quando a mudanca e' no 1o bloco.
@@ -666,11 +714,98 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             j += 1
         return True
 
+    def _sincronizar_formatos(self, t: _Trecho, de: int, n: int) -> bool:
+        """Mudanca so' de formato (mesmo texto, mesmo tamanho): copia formatos de bloco, de
+        caractere, de tabela e de celula, sem trocar o texto (o formato de celula atravessa
+        celulas, e trocar o texto ali partiria a grade). False: o texto nao e' o mesmo."""
+        d, c = self._d, t.doc
+        p = t.para_trecho(de)
+        if p + n > c.characterCount() or de + n > d.characterCount():
+            return False
+        sd, sc = QTextCursor(d), QTextCursor(c)
+        sd.setPosition(de)
+        sd.setPosition(de + n, QTextCursor.MoveMode.KeepAnchor)
+        sc.setPosition(p)
+        sc.setPosition(p + n, QTextCursor.MoveMode.KeepAnchor)
+        if sd.selectedText() != sc.selectedText():
+            return False
+        cur = QTextCursor(c)
+        cur.beginEditBlock()
+        b = d.findBlock(de)
+        while b.isValid() and b.position() <= de + n:
+            cb = c.findBlock(t.para_trecho(b.position()))
+            bc = QTextCursor(cb)
+            if cb.blockFormat() != b.blockFormat():
+                bc.setBlockFormat(b.blockFormat())
+            if cb.charFormat() != b.charFormat():
+                bc.setBlockCharFormat(b.charFormat())
+            if cb.isVisible() != b.isVisible():
+                cb.setVisible(b.isVisible())
+            fmts = b.layout().formats()
+            if fmts != cb.layout().formats():
+                cb.layout().setFormats(fmts)
+            it = b.begin()
+            while not it.atEnd():
+                fr = it.fragment()
+                cf = fr.charFormat()
+                q = t.para_trecho(fr.position())
+                if cf.objectIndex() >= 0:
+                    # O indice do objeto e' de D: copia o formato do quadro, nao o indice.
+                    od = d.object(cf.objectIndex())
+                    fc = _formato_em(c, q)
+                    oc = c.object(fc.objectIndex()) if fc is not None and fc.objectIndex() >= 0 else None
+                    if od is not None and oc is not None and hasattr(od, "frameFormat") and \
+                            oc.frameFormat() != od.frameFormat():
+                        oc.setFrameFormat(od.frameFormat())
+                else:
+                    fc = _formato_em(c, q)
+                    if fc is None or fc != cf:
+                        s = QTextCursor(c)
+                        s.setPosition(q)
+                        s.setPosition(q + fr.length(), QTextCursor.MoveMode.KeepAnchor)
+                        s.setCharFormat(cf)
+                it += 1
+            b = b.next()
+        # Tabelas e celulas tocadas.
+        vistas = set()
+        b = d.findBlock(de)
+        while b.isValid() and b.position() <= de + n:
+            tab = QTextCursor(b).currentTable()
+            if tab is not None and tab.firstPosition() not in vistas:
+                vistas.add(tab.firstPosition())
+                ct = QTextCursor(c)
+                ct.setPosition(t.para_trecho(tab.firstPosition()))
+                tc = ct.currentTable()
+                if tc is not None and tc.rows() == tab.rows() and tc.columns() == tab.columns():
+                    if tc.format() != tab.format():
+                        tc.setFormat(tab.format())
+                    for r in range(tab.rows()):
+                        for col in range(tab.columns()):
+                            a, z = tab.cellAt(r, col), tc.cellAt(r, col)
+                            if a.isValid() and z.isValid() and a.format() != z.format():
+                                z.setFormat(a.format().toTableCellFormat())
+            b = b.next()
+        cur.endEditBlock()
+        c.markContentsDirty(p, max(1, n))
+        return True
+
     def _repetir(self, t: _Trecho, de: int, removidos: int, inseridos: int) -> bool:
         """Aplica no trecho t a troca de [de, de+removidos) pelo texto de D em [de, de+inseridos).
         So' dentro de uma celula, ou fora de tabela sem tabela no meio."""
         d = self._d
         c = t.doc
+        # Objeto com quadro (flutuante) entrando: o fragmento nao recria o quadro no trecho do
+        # mesmo jeito (medido: o desfazer do Delete trazia o objeto sem o texto contornar).
+        if inseridos:
+            b = d.findBlock(de)
+            while b.isValid() and b.position() <= de + inseridos:
+                it = b.begin()
+                while not it.atEnd():
+                    fr = it.fragment()
+                    if de <= fr.position() < de + inseridos and fr.charFormat().objectIndex() >= 0:
+                        return False
+                    it += 1
+                b = b.next()
         a_d = QTextCursor(d)
         a_d.setPosition(de)
         b_d = QTextCursor(d)
