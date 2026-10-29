@@ -108,6 +108,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         self._trechos: list[_Trecho] = []
         self._pendente = True
         self._montando = False
+        self._bbr: dict = {}
         self._tamanho = QSizeF()
         self._paginas = 0
         #: contadores para medir (quantos trechos refeitos e reespacados por mudanca)
@@ -302,6 +303,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
     def _montar(self) -> None:
         if self._montando:
             return
+        self._bbr.clear()
         self._montando = True
         try:
             d = self._d
@@ -356,6 +358,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
     def _copiar_blocos(self, t: _Trecho, faixa) -> None:
         """Preenche o QTextLayout de cada bloco de D do trecho com as linhas do trecho.
         `faixa` (de, ate) em D: esses blocos sao refeitos sempre; os outros so' se mudaram."""
+        self._bbr.clear()
         d = self._d
         raiz_t = t.doc.rootFrame()
         # Os blocos antes da mudanca nao mudam (o layout e' sequencial). Depois dela, o primeiro
@@ -480,6 +483,11 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         self._garantir()
         if not self._trechos:
             return QRectF()
+        # Cache ate' a mudanca seguinte: o EditDoc pede o retangulo de cada bloco muitas vezes
+        # por pintura, e aqui cada pedido e' uma chamada em Python.
+        guardado = self._bbr.get(bloco.position())
+        if guardado is not None and bloco.layout().lineCount():
+            return QRectF(guardado)
         t = self._trechos[self._dono(bloco.position())]
         if t.doc is None:
             return QRectF()  # chamada de dentro da montagem (cursor de D)
@@ -492,7 +500,10 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         # linhas de outro texto derrubam o processo no cursorToX (medido em teste_listas).
         if bloco.layout().lineCount() != cb.layout().lineCount() and cb.text() == bloco.text():
             self._copiar(bloco, cb, t, t.doc.frameAt(cb.position()) is t.doc.rootFrame(), True)
-        return r.translated(0, t.desloc)
+        r = r.translated(0, t.desloc)
+        if not self._montando:
+            self._bbr[bloco.position()] = QRectF(r)
+        return r
 
     def frameBoundingRect(self, quadro):  # noqa: N802
         self._garantir()
@@ -603,6 +614,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
 
     def documentChanged(self, de, removidos, inseridos):  # noqa: N802
         d = self._d
+        self._bbr.clear()
         if self._montando:
             return
         total = d.characterCount()
@@ -744,6 +756,23 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             fmts = b.layout().formats()
             if fmts != cb.layout().formats():
                 cb.layout().setFormats(fmts)
+            # Os fragmentos (posicao, tamanho, formato) iguais: nada a copiar no bloco.
+            fd, fc_ = [], []
+            it = b.begin()
+            while not it.atEnd():
+                fr = it.fragment()
+                fd.append((t.para_trecho(fr.position()), fr.length(), fr.charFormat()))
+                it += 1
+            it = cb.begin()
+            while not it.atEnd():
+                fr = it.fragment()
+                fc_.append((fr.position(), fr.length(), fr.charFormat()))
+                it += 1
+            if len(fd) == len(fc_) and all(
+                    a[0] == z[0] and a[1] == z[1] and (a[2] == z[2] or a[2].objectIndex() >= 0)
+                    for a, z in zip(fd, fc_)) and not any(a[2].objectIndex() >= 0 for a in fd):
+                b = b.next()
+                continue
             it = b.begin()
             while not it.atEnd():
                 fr = it.fragment()
