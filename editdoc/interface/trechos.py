@@ -49,11 +49,38 @@ def instalar(doc) -> "LayoutPorTrechos":
     return lay
 
 
+def _formato_em(doc, pos):
+    """Formato do caractere em `pos` (pelo fragmento: QTextCursor.charFormat da' o de antes)."""
+    b = doc.findBlock(pos)
+    it = b.begin()
+    while not it.atEnd():
+        fr = it.fragment()
+        if fr.position() <= pos < fr.position() + fr.length():
+            return fr.charFormat()
+        it += 1
+    return None
+
+
+def _delegado(original, d, trecho):
+    """Manipulador do trecho que pergunta ao de D, com D e a posicao em D: os manipuladores do
+    EditDoc guardam estado por documento (reserva dos flutuantes, valor do campo por pagina)."""
+    from PySide6.QtGui import QPyTextObject
+
+    class _Delegado(QPyTextObject):
+        def intrinsicSize(self, _doc, pos, fmt):  # noqa: N802
+            return original.intrinsicSize(d, trecho.para_d(pos), fmt)
+
+        def drawObject(self, painter, rect, _doc, pos, fmt):  # noqa: N802
+            original.drawObject(painter, rect, d, trecho.para_d(pos), fmt)
+
+    return _Delegado()
+
+
 _TIPOS = range(QTextFormat.ObjectTypes.UserObject.value, QTextFormat.ObjectTypes.UserObject.value + 16)
 
 
 class _Trecho:
-    __slots__ = ("ini", "fim", "doc", "off", "esp", "h", "desloc", "alvo", "topo", "cauda")
+    __slots__ = ("ini", "fim", "doc", "off", "esp", "h", "desloc", "alvo", "topo", "cauda", "delegados")
 
     def __init__(self) -> None:
         self.ini = 0       # posicao em D do primeiro caractere (S_k)
@@ -89,7 +116,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
 
     # -- montagem ---------------------------------------------------------------------------
 
-    def _novo_doc(self):
+    def _novo_doc(self, trecho):
         from editdoc.ponte_qt.imagens import DocumentoQt
         d = self._d
         c = DocumentoQt()
@@ -100,10 +127,13 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         c.setIndentWidth(d.indentWidth())
         lc = c.documentLayout()
         lc.setPaintDevice(self.paintDevice())
+        trecho.delegados = []
         for t in _TIPOS:
             h = self.handlerForObject(t)
-            if h is not None and lc.handlerForObject(t) is None:
-                lc.registerHandler(t, h)
+            if h is not None:
+                dg = _delegado(h, d, trecho)
+                trecho.delegados.append(dg)
+                lc.registerHandler(t, dg)
         # O formato do quadro raiz guarda catalogos (estilos, notas): o layout nao o usa alem das
         # margens, que sao as do documento.
         c.rootFrame().setFrameFormat(d.rootFrame().frameFormat())
@@ -119,7 +149,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
 
     def _montar_trecho(self, t: _Trecho) -> None:
         d = self._d
-        c = self._novo_doc()
+        c = self._novo_doc(t)
         fim_copia = min(t.fim, d.characterCount() - 1)
         t.cauda = -1
         if t.fim < d.characterCount() - 1:
@@ -311,15 +341,22 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         `faixa` (de, ate) em D: esses blocos sao refeitos sempre; os outros so' se mudaram."""
         d = self._d
         raiz_t = t.doc.rootFrame()
-        b = d.findBlock(t.ini)
+        # Os blocos antes da mudanca nao mudam (o layout e' sequencial). Depois dela, o primeiro
+        # bloco do primeiro nivel que ficou igual (mesmas linhas, mesma posicao) encerra: tudo o
+        # que vem depois so' depende do y em que ele comeca.
+        b = d.findBlock(max(t.ini, faixa[0] - 1) if faixa is not None else t.ini)
         while b.isValid() and b.position() < t.fim:
             cb = t.doc.findBlock(t.para_trecho(b.position()))
-            forcar = faixa is not None and b.position() <= faixa[1] and \
-                b.position() + b.length() >= faixa[0]
-            self._copiar(b, cb, t, t.doc.frameAt(cb.position()) is raiz_t, forcar)
+            depois = faixa is not None and b.position() > faixa[1]
+            forcar = faixa is not None and not depois and b.position() + b.length() >= faixa[0]
+            na_raiz = t.doc.frameAt(cb.position()) is raiz_t
+            mudou = self._copiar(b, cb, t, na_raiz, forcar)
+            if depois and na_raiz and not mudou:
+                break
             b = b.next()
 
-    def _copiar(self, db, cb, t: _Trecho, na_raiz: bool, forcar: bool) -> None:
+    def _copiar(self, db, cb, t: _Trecho, na_raiz: bool, forcar: bool) -> bool:
+        """True se o bloco de D mudou (linhas ou posicao)."""
         ct, dt = cb.layout(), db.layout()
         n = ct.lineCount()
         pos = ct.position()
@@ -336,7 +373,8 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             if igual:
                 if dt.position() != pos:
                     dt.setPosition(pos)
-                return
+                    return True
+                return False
         dt.setTextOption(ct.textOption())
         dt.beginLayout()
         for i in range(n):
@@ -356,6 +394,36 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             ln.setPosition(cl.position())
         dt.endLayout()
         dt.setPosition(pos)
+        return True
+
+    def resizeInlineObject(self, item, pos, formato):  # noqa: N802
+        """Como o `QTextDocumentLayout::resizeInlineObject`: objeto de quadro flutuante nao ocupa
+        lugar na linha (o QAbstractTextDocumentLayout poria a altura inteira dele na linha)."""
+        f = formato.toCharFormat()
+        h = self.handlerForObject(f.objectType())
+        if h is None and f.objectType() == QTextFormat.ObjectTypes.ImageObject.value:
+            # O manipulador de imagem do Qt mora no QTextDocumentLayout: usa o de um documento
+            # auxiliar (ele le' a imagem no documento passado, D).
+            if getattr(self, "_auxiliar", None) is None:
+                from PySide6.QtGui import QTextDocument
+                self._auxiliar = QTextDocument()
+            h = self._auxiliar.documentLayout().handlerForObject(f.objectType())
+        if h is None:
+            return
+        tam = h.intrinsicSize(self._d, pos, formato)
+        quadro = self._d.objectForFormat(f)
+        if quadro is not None and hasattr(quadro, "frameFormat") and \
+                quadro.frameFormat().position() != quadro.frameFormat().Position.InFlow:
+            tam = QSizeF(0, 0)
+        item.setWidth(tam.width())
+        if f.verticalAlignment() == f.VerticalAlignment.AlignMiddle:
+            from PySide6.QtGui import QFontMetrics
+            meio = QFontMetrics(f.font()).xHeight() / 2.0
+            item.setAscent((tam.height() + meio) / 2.0)
+            item.setDescent((tam.height() - meio) / 2.0)
+        else:
+            item.setDescent(0)
+            item.setAscent(tam.height())
 
     # -- consultas ---------------------------------------------------------------------------
 
@@ -406,6 +474,15 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             return QRectF(QPointF(0, 0), self._tamanho)
         if not self._trechos:
             return QRectF()
+        if not isinstance(quadro, QTextTable):
+            # Quadro de objeto (flutuante): nao tem texto; acha pelo caractere da ancora.
+            pos = self._ancoras().get(quadro.objectIndex())
+            if pos is not None:
+                t = self._trechos[self._dono(pos)]
+                fmt = _formato_em(t.doc, t.para_trecho(pos))
+                obj = t.doc.object(fmt.objectIndex()) if fmt is not None else None
+                if obj is not None:
+                    return t.doc.documentLayout().frameBoundingRect(obj).translated(0, t.desloc)
         t = self._trechos[self._dono(quadro.firstPosition())]
         p = t.para_trecho(quadro.firstPosition())
         f = t.doc.frameAt(p)
@@ -414,6 +491,25 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         if f is None:
             return QRectF()
         return t.doc.documentLayout().frameBoundingRect(f).translated(0, t.desloc)
+
+    def _ancoras(self) -> dict:
+        """objectIndex -> posicao em D do caractere de objeto (cache pela revisao)."""
+        rev = self._d.revision()
+        if getattr(self, "_rev_ancoras", None) != rev:
+            mapa = {}
+            b = self._d.begin()
+            while b.isValid():
+                it = b.begin()
+                while not it.atEnd():
+                    fr = it.fragment()
+                    idx = fr.charFormat().objectIndex()
+                    if idx >= 0 and "￼" in fr.text():
+                        mapa[idx] = fr.position()
+                    it += 1
+                b = b.next()
+            self._mapa_ancoras = mapa
+            self._rev_ancoras = rev
+        return self._mapa_ancoras
 
     def documentSize(self):  # noqa: N802
         self._garantir()
@@ -486,6 +582,8 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         total = d.characterCount()
         if self._pendente or not self._trechos or (de == 0 and inseridos >= total - 1) or \
                 d.pageSize().isNull():
+            if not self._pendente:
+                self._motivo('inteiro', de, removidos, inseridos)
             self._invalidar()
             return
         if not self._mudanca(de, removidos, inseridos):
@@ -493,6 +591,10 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             return
         self._medir()
         self.update[QRectF].emit(QRectF(0, 0, 1e9, 1e9))
+
+    def _motivo(self, nome, *args) -> None:
+        m = self.__dict__.setdefault('motivos', {})
+        m.setdefault(nome, []).append(args)
 
     def _invalidar(self) -> None:
         # As linhas dos blocos de D ficam velhas: a consulta seguinte remonta tudo.
@@ -506,19 +608,23 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         delta = inseridos - removidos
         tr = self._trechos
         if len(ini) != len(tr):
+            self._motivo('tabelas', de, removidos, inseridos)
             return False
         k = self._dono(de)
         t = tr[k]
         fim_antigo = de + removidos
         # A mudanca tem de caber num trecho (sem atravessar o comeco do seguinte)...
         if k + 1 < len(tr) and fim_antigo >= tr[k + 1].ini and not (de == tr[k + 1].ini):
+            self._motivo('atravessa', de, removidos, inseridos)
             return False
         # ... e nao mexer na fronteira das tabelas do primeiro nivel.
         for j in range(len(tr)):
             esperado = tr[j].ini + (delta if tr[j].ini > de else 0)
             if ini[j] != esperado:
+                self._motivo('fronteira', de, removidos, inseridos)
                 return False
         if not self._repetir(t, de, removidos, inseridos):
+            self._motivo('celula', de, removidos, inseridos)
             return False
         # A copia de S_k (fim do trecho k-1) muda junto quando a mudanca e' no 1o bloco.
         afetou_cauda_anterior = False
