@@ -22,6 +22,8 @@ que nao dependem do relogio vem primeiro (sao as que pegam a regressao em qualqu
   mesmo tamanho. Desde a 0.1.11: mediana de 3 rodadas intercaladas com o simples (a referencia
   da mesma hora), folga relativa com teto absoluto, e so' o ponto que passou do limite mede de
   novo (ate' 2 rodadas). O criterio tem contraprovas sem relogio (`testar_criterio_do_p95`).
+- o plano contra o Qt puro (0.1.30): a tecla e a pintura sobre o insertText de um clone do
+  documento, tecla a tecla intercaladas; a razao nao muda com a carga nem com o nucleo (P ou E).
 
 Cada verificacao estrutural tem a contraprova: com a correcao desligada, ela acusa.
 """
@@ -964,6 +966,130 @@ def testar_p95_do_plano() -> None:
                       f"{FATOR_DA_PINTURA_DO_PLANO}x o simples ({s:.1f} ms; limite {limite:.1f})")
 
 
+# -- o plano contra o Qt puro (0.1.30) -------------------------------------------------------
+
+#: Tecla do EditDoc no plano sobre o insertText do Qt num clone do mesmo documento, tecla a tecla
+#: intercaladas (mediana). Medido na 0.1.29/0.1.30, nos nucleos P e nos nucleos E de um i7 de 12a
+#: geracao (que dobram todos os tempos): 1,4 a 1,8 nos dois. A regressao que este ponto pega e' a
+#: do EditDoc fazendo trabalho a mais por tecla (o dobro do Qt da' 2,4 a 2,8).
+LIMITE_TECLA_SOBRE_QT = 2.2
+#: Pintura do EditDoc (o grab depois da tecla) sobre o mesmo insertText do Qt. Medido: 0,25 a
+#: 0,65 (a celula e o item pintam mais tiles); com o cache de tiles perdido a cada tecla, 1,6 a
+#: 1,7.
+LIMITE_PINTURA_SOBRE_QT = 1.1
+#: Pontos do plano medidos assim: uma rodada cada; mais duas so' se passar do limite.
+PONTOS_PLANO_QT = ("plano_terco", "plano_celula", "plano_item")
+
+
+def _sobre_o_qt(painel, pos: int, teclas: int = 40) -> tuple[float, float]:
+    """(tecla / Qt, pintura / Qt) nas medianas. O Qt de referencia e' um clone do QTextDocument
+    do painel, com a mesma pagina, recebendo o mesmo caractere na mesma posicao logo depois de
+    cada tecla: os dois lados rodam no mesmo nucleo e na mesma hora, entao a razao nao muda com a
+    maquina carregada nem com o Windows mandando o processo para um nucleo E (medido: os tempos
+    dobram, a razao fica)."""
+    from PySide6.QtGui import QTextCursor
+    doc = painel.documento_corpo()
+    ref = doc.clone()
+    ref.setPageSize(doc.pageSize())
+    ref.setDocumentMargin(doc.documentMargin())
+    ref.setDefaultFont(doc.defaultFont())
+    ref.setDefaultTextOption(doc.defaultTextOption())
+    cur = QTextCursor(ref)
+    cur.setPosition(pos)
+    _ir(painel, pos)
+    for _ in range(5):
+        _tecla(painel)
+        painel.viewport().grab()
+        cur.insertText("a")
+        ref.pageCount()
+    tecla, pintura, qt = [], [], []
+    for _ in range(teclas):
+        t0 = time.perf_counter()
+        _tecla(painel)
+        t1 = time.perf_counter()
+        painel.viewport().grab()
+        t2 = time.perf_counter()
+        cur.insertText("a")
+        ref.pageCount()  # o layout do clone, como o da tecla (a paginacao do Qt)
+        t3 = time.perf_counter()
+        tecla.append(t1 - t0)
+        pintura.append(t2 - t1)
+        qt.append(t3 - t2)
+    for _ in range(teclas + 5):
+        painel.undo()
+    painel.viewport().grab()
+    base = max(statistics.median(qt), 1e-6)
+    return statistics.median(tecla) / base, statistics.median(pintura) / base
+
+
+def _plano_sobre_o_qt(plano: bytes, nome: str) -> tuple[float, float]:
+    painel = _painel(plano)
+    try:
+        return _sobre_o_qt(painel, _ponto(painel, nome))
+    finally:
+        _fechar(painel)
+        painel.deleteLater()
+        drenar_eventos()
+
+
+def testar_plano_sobre_o_qt() -> None:
+    secao("0.1.30: o plano contra o Qt puro (tecla e pintura sobre o insertText de um clone, "
+          "intercalados): pega o EditDoc fazendo o dobro, em qualquer nucleo")
+    plano = documento_plano()
+    for nome in PONTOS_PLANO_QT:
+        razoes = []
+        for _rodada in range(1 + RODADAS_EXTRA):
+            razoes.append(_plano_sobre_o_qt(plano, nome))
+            t = statistics.median(r[0] for r in razoes)
+            p = statistics.median(r[1] for r in razoes)
+            if t <= LIMITE_TECLA_SOBRE_QT and p <= LIMITE_PINTURA_SOBRE_QT:
+                break
+        print(f"         {nome}: tecla/Qt {[round(r[0], 2) for r in razoes]}, pintura/Qt "
+              f"{[round(r[1], 2) for r in razoes]}")
+        checa(t <= LIMITE_TECLA_SOBRE_QT, f"{nome}: tecla {t:.2f}x o insertText do Qt (limite "
+                                          f"{LIMITE_TECLA_SOBRE_QT})")
+        checa(p <= LIMITE_PINTURA_SOBRE_QT, f"{nome}: pintura {p:.2f}x o insertText do Qt "
+                                            f"(limite {LIMITE_PINTURA_SOBRE_QT})")
+    # Contraprova da tecla: o EditDoc refazendo o trabalho do Qt mais uma vez a cada tecla (um
+    # caractere a mais e desfeito no mesmo bloco de desfazer), o dobro que a 0.1.29 parecia ter.
+    from PySide6.QtGui import QTextCursor
+    from editdoc.interface import painel_documento as pd
+    from editdoc.interface import vista_paginas as vp
+    original = pd.PainelDocumento.keyPressEvent
+
+    def em_dobro(self, ev):
+        original(self, ev)
+        c = QTextCursor(self.documento_corpo())
+        c.setPosition(self.textCursor().position())
+        c.joinPreviousEditBlock()
+        c.insertText("a")
+        c.deletePreviousChar()
+        c.endEditBlock()
+
+    pd.PainelDocumento.keyPressEvent = em_dobro
+    try:
+        t, _p = _plano_sobre_o_qt(plano, "plano_terco")
+    finally:
+        pd.PainelDocumento.keyPressEvent = original
+    checa(t > LIMITE_TECLA_SOBRE_QT, f"contraprova: com o trabalho do Qt em dobro, a tecla fica "
+                                     f"{t:.2f}x o Qt")
+    # Contraprova da pintura: o cache de tiles perdido a cada tecla (a tela visivel inteira
+    # pintada de novo), o que uma invalidacao larga demais faz.
+    original_p = vp.VistaPaginas.paintEvent
+
+    def sem_cache(self, ev):
+        self._limpar_cache()
+        original_p(self, ev)
+
+    vp.VistaPaginas.paintEvent = sem_cache
+    try:
+        _t, p = _plano_sobre_o_qt(plano, "plano_item")
+    finally:
+        vp.VistaPaginas.paintEvent = original_p
+    checa(p > LIMITE_PINTURA_SOBRE_QT, f"contraprova: sem o cache de tiles, a pintura fica "
+                                       f"{p:.2f}x o Qt")
+
+
 def testar_modos_com_2000_revisoes() -> None:
     secao("0.1.13: 2000 revisoes: trocar o modo de exibicao em menos de 1 s, e a lista")
     from editdoc.edicao import revisoes as ed
@@ -1005,6 +1131,7 @@ def main() -> int:
     testar_criterio_do_p95()
     testar_p95()
     testar_p95_do_plano()
+    testar_plano_sobre_o_qt()
     testar_modos_com_2000_revisoes()
     testar_conferencia()
     testar_tiles()

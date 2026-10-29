@@ -2216,6 +2216,47 @@ entre as rodadas e nenhuma passa de +1,5 ms de forma consistente (a maior a favo
 "antes das âncoras" da 1ª rodada, −0,3 na 2ª). O caminho sem colunas não executa código novo por
 tecla além de `mapa.tem_colunas()`.
 
+### 0.1.30: a "regressão" do plano era o núcleo E
+
+Uma medição posterior comparou a 0.1.28 (medida na véspera) com a 0.1.29 (medida no dia) no plano
+(`documento_plano`, pontos 1/3, célula e item) e viu o dobro: tecla do Qt 17 → 35 ms, pintura
+5 → 12 ms, com o documento simples e os pontos do manual iguais. Conferido em 29/10/2026:
+
+- Intercalado, sem fixar núcleo (mediana de 3, ms, total · tecla · pintura): 1/3 44,9 · 35,2 · 11,2
+  (0.1.28) x 47,2 · 35,9 · 10,4 (0.1.29); célula 34,7 · 25,3 · 10,5 x 35,9 · 25,5 · 10,6; item
+  39,3 · 29,4 · 10,3 x 39,8 · 29,5 · 10,4. As duas lentas, e iguais.
+- Mesmo ponto (1/3) com afinidade fixa (`start /affinity`, i7-12700KF: 8 núcleos P = máscara
+  `FFFF`, 4 núcleos E = `F0000`): nos P, tecla 17,4 a 21,9 nas duas; nos E, 35,5 a 36,3 nas duas.
+- Intercalado nos P (mediana de 3; 0.1.28 · 0.1.29 · main): tecla 1/3 16,7 · 16,6 · 16,6; célula
+  11,8 · 11,8 · 11,9; item 13,8 · 13,6 · 13,8; pintura 4,9 a 5,8 nas três; simples e corpo iguais.
+- cProfile de 80 teclas com pintura no 1/3 (núcleos P): 1,943 s (0.1.28) x 1,939 s (0.1.29); 68%
+  no `insertText` do Qt (1,32 s nas duas), 216 `draw` e 147 `_invalidar_faixa` nas duas. A 0.1.29
+  faz ~24 chamadas Python a mais por tecla (os `tem_colunas()`), sem custo mensurável.
+
+Causa: o Windows (Thread Director) põe o processo de medida, sem janela em primeiro plano e com jogos
+abertos, nos núcleos E, que levam o dobro em tudo o que é CPU. O simples e o manual também dobram
+lá, mas a 1-2 ms a diferença some no p95; no plano, que é 70% `insertText`, aparece inteira. As
+medidas da 0.1.28 de 28/10 já alternavam entre 16 e 37 ms de tecla no mesmo ponto.
+
+Novo ponto (`testar_plano_sobre_o_qt`): a referência é o próprio Qt, um `clone()` do documento do
+painel com a mesma página, recebendo o mesmo caractere na mesma posição logo depois de cada tecla.
+As duas medidas rodam no mesmo núcleo e na mesma hora; a razão (mediana) não muda:
+
+| Ponto | tecla/Qt P | tecla/Qt E | pintura/Qt P | pintura/Qt E |
+|---|---|---|---|---|
+| 1/3 | 1,37 · 1,38 | 1,43 | 0,34 · 0,36 | 0,38 · 0,39 |
+| célula | 1,55 · 1,58 | 1,56 · 1,58 | 0,58 | 0,60 · 0,61 |
+| item | 1,74 · 1,78 | 1,79 · 1,80 | 0,56 · 0,57 | 0,61 · 0,62 |
+
+A 0.1.28 dá o mesmo (1,43 · 1,57 · 1,77; pintura 0,36 · 0,60 · 0,60). Limites: tecla 2,2x, pintura
+1,1x. Contraprovas: o EditDoc refazendo o trabalho do Qt em dobro a cada tecla (um caractere a mais
+e desfeito no mesmo bloco de desfazer) dá 2,75 a 2,87x; o cache de tiles perdido a cada tecla dá a
+pintura 1,59 a 1,74x. Tirar o tile inteiro (sem a parte da 0.1.15) só leva a pintura do item de
+0,57 a 0,68x: esse caso continua com a verificação sem relógio de `testar_plano` (tiles por tecla).
+
+Para medir à mão no Windows: fixar o núcleo (`cmd /c start /affinity FFFF /wait /b python ...`) ou
+comparar sempre intercalado na mesma hora; nunca uma medida de ontem contra uma de hoje.
+
 ### Próximo
 
 Passo 4 (seção contínua com colunas no meio da folha: páginas do Qt de alturas diferentes e o

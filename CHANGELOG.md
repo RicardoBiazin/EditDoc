@@ -1,4 +1,18 @@
-## 0.1.29 - 2026-10-28
+## 0.1.30 - 2026-10-29
+
+Gate de desempenho do plano à prova de núcleo. Uma medição apontou que a 0.1.29 (colunas) dobrou
+a digitação no documento com muitas tabelas (tecla 17 → 35 ms, pintura 5 → 12 ms). Não dobrou: a
+0.1.28 e a 0.1.29 medidas intercaladas, no mesmo núcleo, dão o mesmo tempo (tecla 16,6 ms nas
+duas, pintura 5,0), e o perfil de 80 teclas é igual (1,94 s nas duas, as mesmas chamadas de
+pintura). O dobro vinha do Windows: o processador híbrido (núcleos P e E) mandou o processo de
+medida para um núcleo E, que leva o dobro em tudo; a medida da 0.1.28 tinha sido feita na véspera,
+num núcleo P. Fixando o núcleo, 0.1.28 e 0.1.29 dão 17 ms nos P e 35 ms nos E.
+
+Novo ponto em `tests/teste_desempenho.py` (`testar_plano_sobre_o_qt`): a tecla e a pintura do
+plano medidas contra o `insertText` do Qt num clone do mesmo documento, tecla a tecla intercaladas.
+A razão não muda com a carga nem com o núcleo (tecla 1,4 a 1,8x o Qt, pintura 0,4 a 0,6x, nos P e
+nos E), e reprova o EditDoc fazendo o trabalho do Qt em dobro (2,8x) ou perdendo o cache de tiles
+a cada tecla (1,6x a pintura). O programa não muda.
 
 Texto em colunas. A seção com colunas iguais (`w:cols` com `num`, `space` e `equalWidth`) que
 começa e termina em página nova aparece em colunas na tela, no PDF e na impressão: a página do Qt
