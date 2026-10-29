@@ -36,17 +36,83 @@ def ligado() -> bool:
     return os.environ.get("EDITDOC_TRECHOS") == "1"
 
 
+def tem_tabela(doc) -> bool:
+    return any(isinstance(f, QTextTable) for f in doc.rootFrame().childFrames())
+
+
+def em_trechos(doc) -> bool:
+    return isinstance(doc.documentLayout(), LayoutPorTrechos)
+
+
+def trocar(doc, ligar: bool) -> None:
+    """Troca o layout de `doc` entre o do Qt e o por trechos. O Qt apaga o layout antigo: os
+    manipuladores de objeto, o dispositivo de pintura e a ligacao do numerador das listas (sinal
+    `update` do layout) passam para o novo. As posicoes sao as mesmas nos dois."""
+    if em_trechos(doc) == ligar:
+        return
+    velho = doc.documentLayout()
+    dispositivo = velho.paintDevice()
+    manipuladores = {t: velho.handlerForObject(t) for t in _TIPOS}
+    if ligar:
+        lay = LayoutPorTrechos(doc)
+        lay.setPaintDevice(dispositivo)
+        for t, h in manipuladores.items():
+            if h is not None:
+                lay.registerHandler(t, h)
+        doc.setDocumentLayout(lay)
+    else:
+        doc.setDocumentLayout(None)  # o QTextDocument cria um QTextDocumentLayout novo
+    novo = doc.documentLayout()
+    novo.setPaintDevice(dispositivo)
+    for t, h in manipuladores.items():
+        if h is not None:
+            novo.registerHandler(t, h)
+    numerador = getattr(doc, "_numerador_listas", None)
+    if numerador is not None:
+        novo.update.connect(numerador._layout_mudou)
+        numerador._layout_mudou()
+    # Durante o setDocumentLayout o EditDoc (sinal contentsChange) ja' pode ter moldado blocos
+    # sem o dispositivo: o QTextEngine guarda a fonte na escala errada (linha de 19 twips em vez
+    # de 269, medido). markContentsDirty invalida os blocos (fonte de novo) e refaz o layout; o
+    # "alterado" fica como estava.
+    modificado = doc.isModified()
+    doc.markContentsDirty(0, doc.characterCount())
+    if ligar and novo._pendente:
+        novo._montar()
+    doc.setModified(modificado)
+    novo.documentSize()
+
+
+def conferir(doc) -> None:
+    """Layout por trechos so' com tabela no primeiro nivel (sem tabela nao ha' cascata, e o
+    layout do Qt e' mais barato que o trecho unico em Python)."""
+    import shiboken6
+    doc._trechos_agendado = False
+    if not shiboken6.isValid(doc) or doc.pageSize().isNull():
+        return
+    trocar(doc, tem_tabela(doc))
+
+
+def _talvez(doc) -> None:
+    if getattr(doc, "_trechos_agendado", False):
+        return
+    if tem_tabela(doc) != em_trechos(doc):
+        # No laco de eventos, nunca no meio de uma edicao (o Qt apaga o layout antigo).
+        from PySide6.QtCore import QTimer
+        doc._trechos_agendado = True
+        QTimer.singleShot(0, lambda: conferir(doc))
+
+
+def vigiar(doc) -> None:
+    """Liga o layout por trechos quando o documento passa a ter tabela, e desliga quando deixa."""
+    doc.contentsChange.connect(lambda *_a: _talvez(doc))
+    _talvez(doc)
+
+
 def instalar(doc) -> "LayoutPorTrechos":
-    """Troca o layout de `doc` (um DocumentoQt recem-criado) e registra de novo os manipuladores
-    que o DocumentoQt registrou no layout antigo (o Qt apaga o antigo)."""
-    lay = LayoutPorTrechos(doc)
-    doc.setDocumentLayout(lay)
-    from editdoc.ponte_qt import marcas, notas, opacos, secoes
-    doc._manipulador_opacos = opacos.registrar_manipulador(doc)
-    doc._manipulador_marcas = marcas.registrar_manipulador(doc)
-    doc._manipulador_notas = notas.registrar_manipulador(doc)
-    doc._manipulador_quebras = secoes.registrar_manipulador(doc)
-    return lay
+    """Troca o layout de `doc` agora (testes)."""
+    trocar(doc, True)
+    return doc.documentLayout()
 
 
 def _formato_em(doc, pos):
@@ -109,6 +175,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         self._pendente = True
         self._montando = False
         self._bbr: dict = {}
+        self._tam_sinc = -1  # tamanho de D na ultima sincronizacao com os trechos
         self._tamanho = QSizeF()
         self._paginas = 0
         #: contadores para medir (quantos trechos refeitos e reespacados por mudanca)
@@ -322,6 +389,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
                 self._topo(k)
                 self._copiar_blocos(t, None)
             self._pendente = False
+            self._tam_sinc = d.characterCount()
             self._medir()
         finally:
             self._montando = False
@@ -485,6 +553,8 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             return QRectF()
         # Cache ate' a mudanca seguinte: o EditDoc pede o retangulo de cada bloco muitas vezes
         # por pintura, e aqui cada pedido e' uma chamada em Python.
+        if self._d.characterCount() != self._tam_sinc and not self._montando:
+            return self._retangulo_velho(bloco)
         guardado = self._bbr.get(bloco.position())
         if guardado is not None and bloco.layout().lineCount():
             return QRectF(guardado)
@@ -504,6 +574,43 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         if not self._montando:
             self._bbr[bloco.position()] = QRectF(r)
         return r
+
+    def _retangulo_velho(self, bloco):
+        """O retangulo de antes da mudanca, como o Qt daria dentro de um bloco de edicao aberto
+        (o layout ainda nao foi refeito). As posicoes de D ja' andaram e as do trecho nao: mapear
+        pela posicao acharia outro bloco. No primeiro nivel, o QTextLayout do proprio bloco tem a
+        posicao (copiada do trecho); na celula, vai pela tabela (pela ordem) e pela celula."""
+        d = self._d
+        lay = bloco.layout()
+        tab = QTextCursor(bloco).currentTable()
+        if tab is None:
+            r = lay.boundingRect()
+            r.moveTopLeft(lay.position())
+            return r
+        externa = tab
+        while externa.parentFrame() is not d.rootFrame() and isinstance(externa.parentFrame(), QTextTable):
+            externa = externa.parentFrame()
+        tabelas = [f for f in d.rootFrame().childFrames() if isinstance(f, QTextTable)]
+        try:
+            i = tabelas.index(externa)
+        except ValueError:
+            return QRectF()
+        if i >= len(self._trechos) or externa is not tab:
+            return QRectF()
+        t = self._trechos[i]
+        tc = [f for f in t.doc.rootFrame().childFrames() if isinstance(f, QTextTable) and f is not t.esp]
+        if not tc:
+            return QRectF()
+        cel = tab.cellAt(bloco.position())
+        if not cel.isValid() or cel.row() >= tc[-1].rows() or cel.column() >= tc[-1].columns():
+            return QRectF()
+        cc = tc[-1].cellAt(cel.row(), cel.column())
+        b0, c0 = cel.firstCursorPosition().block(), cc.firstCursorPosition().block()
+        while b0.isValid() and b0 != bloco and c0.isValid():
+            b0, c0 = b0.next(), c0.next()
+        if not c0.isValid():
+            return QRectF()
+        return t.doc.documentLayout().blockBoundingRect(c0).translated(0, t.desloc)
 
     def frameBoundingRect(self, quadro):  # noqa: N802
         self._garantir()
@@ -630,6 +737,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
                 self._motivo('divergiu', de, removidos, inseridos)
             self._invalidar()
             return
+        self._tam_sinc = d.characterCount()
         self._medir()
         self.update[QRectF].emit(QRectF(0, 0, 1e9, 1e9))
 

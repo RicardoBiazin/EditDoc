@@ -104,8 +104,9 @@ class LayoutPaginado:
         self.doc: QTextDocument = DocumentoQt()
         from editdoc.interface import trechos
         if trechos.ligado():
-            # Experimento (ramo experimento/tabelas): layout do corpo por trechos entre tabelas.
-            trechos.instalar(self.doc)
+            # Experimento (ramo experimento/tabelas): layout do corpo por trechos entre tabelas,
+            # so' enquanto o documento tiver tabela no primeiro nivel.
+            trechos.vigiar(self.doc)
         self.doc.setDocumentMargin(0)
         padrao = QFont(fonte)
         padrao.setPointSizeF(float(tamanho_pt))
