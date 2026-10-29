@@ -170,8 +170,10 @@ class LayoutPaginado:
         self.contexto_campos.hb = self.hb
         self.contexto_campos.pagina = self.pagina_arquivo
         self.contexto_campos.secoes = self.campos_da_folha if self._multiplas() else None
+        self.contexto_campos.mapa = self.mapa  # colunas (passo 2): a folha de uma coluna
         self._chave_campos = None
         ctx = self.flutuantes.contexto
+        ctx.mapa = self.mapa
         ctx.pagina, ctx.efetiva, ctx.hb = self.pagina_arquivo, self.pagina, self.hb
         ctx.topos = self.topos()
         ctx.folhas = self._folha_para_flutuantes if self._multiplas() else None
@@ -181,6 +183,12 @@ class LayoutPaginado:
         """A geometria das secoes mudou (0.1.12): largura e altura do QTextDocument de novo."""
         self._efetivas = {}
         self._aplicar()
+        # Colunas (passo 2): as notas ficam na largura da coluna (e voltam quando ela sai).
+        if self.secoes.colunas() or self._notas_em_coluna:
+            self.notas.definir_largura(self.largura_das_notas())
+            self._notas_em_coluna = self.secoes.colunas()
+
+    _notas_em_coluna = False
 
     def geracao_das_secoes(self) -> int:
         secoes = getattr(self, "secoes", None)
@@ -289,9 +297,10 @@ class LayoutPaginado:
         return self._multiplas() and self.secoes.baixa()
 
     def largura_das_notas(self) -> float:
-        """Largura das notas de rodape: a do corpo (com secoes, a menor)."""
+        """Largura das notas de rodape: a do corpo (com secoes, a menor; com colunas, a da
+        coluna: o Word poe a nota no pe' da coluna da referencia)."""
         if self._multiplas():
-            return min(info.largura for info in self.secoes.lista)
+            return min(info.largura_fluxo for info in self.secoes.lista)
         return float(self.pagina.corpo_largura_tw() - self.pagina.desvio_tw)
 
     def definir_desvio(self, desvio: float) -> None:
@@ -410,7 +419,7 @@ class LayoutPaginado:
         total = self.numero_paginas()
         pagina = self.pagina_arquivo
         chave = (total, self.hb, pagina.formato_numero, pagina.numero_inicial,
-                 self.geracao_das_secoes(),
+                 self.geracao_das_secoes(), self.mapa.grupos,
                  tuple((i.inicio, i.paginas, i.numero_inicial) for i in self.secoes.lista)
                  if self._multiplas() else ())
         if chave == self._chave_campos:
@@ -445,12 +454,28 @@ class LayoutPaginado:
         return float(self.pagina.corpo_altura_tw())
 
     def numero_paginas(self) -> int:
-        # Paginas a mais (0.1.10): notas de fim e continuacao de notas de rodape depois do texto.
-        return max(1, self.doc.pageCount()) + getattr(getattr(self, "notas", None), "extras", 0)
+        """Folhas do documento. Paginas a mais (0.1.10): notas de fim e continuacao de notas de
+        rodape depois do texto. Colunas (passo 2): N paginas do Qt formam uma folha."""
+        qt = max(1, self.doc.pageCount())
+        mapa = getattr(self, "mapa", None)
+        if mapa is not None and mapa.tem_colunas():
+            qt = mapa.folhas_de_paginas(qt)
+        return qt + getattr(getattr(self, "notas", None), "extras", 0)
 
     def pagina_de_y(self, y: float) -> int:
         """Folha do ponto y do documento (0.1.20: pela camada `mapa`)."""
         return self.mapa.folha_de_y(y, self.numero_paginas())
+
+    def pagina_qt_de_y(self, y: float) -> int:
+        """Pagina do Qt do ponto y (colunas, passo 2: a coluna), limitada ao documento (com as
+        paginas a mais das notas). Sem colunas, a mesma de `pagina_de_y`."""
+        if not self.mapa.tem_colunas():
+            return self.pagina_de_y(y)
+        total = max(1, self.doc.pageCount()) + getattr(getattr(self, "notas", None), "extras", 0)
+        return min(max(self.mapa.pagina_de_y(y), 0), total - 1)
+
+    def pagina_qt_do_cursor(self, pos: int) -> int:
+        return self.pagina_qt_de_y(self.retangulo_cursor(pos).center().y())
 
     def origem_bloco(self, bloco) -> QPointF:
         """Origem absoluta do bloco em coordenadas do documento.
@@ -513,7 +538,8 @@ class LayoutPaginado:
         return self.pagina_de_y(self.retangulo_cursor(pos).center().y())
 
     def ajustar_para_pagina(self, pos: int, n: int) -> int:
-        """Leva uma posicao vizinha ao texto mais proximo da pagina n.
+        """Leva uma posicao vizinha ao texto mais proximo da pagina do Qt n (sem colunas, a
+        folha n; com colunas, a coluna: `pagina_qt_de_y`).
 
         O hit-test do Qt (FuzzyHit) manda um clique no espaco em branco do fim da
         pagina n para a primeira linha da pagina n+1 (medido, C11). Aqui andamos
@@ -522,7 +548,7 @@ class LayoutPaginado:
         cur = QTextCursor(self.doc)
         cur.setPosition(pos)
         for _ in range(400):
-            pg = self.pagina_do_cursor(cur.position())
+            pg = self.pagina_qt_do_cursor(cur.position())
             if pg == n:
                 return cur.position()
             if pg > n:

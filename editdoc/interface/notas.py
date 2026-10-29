@@ -250,7 +250,8 @@ class ConjuntoDeNotas:
 
     def _pe(self, k: int) -> float:
         """Onde o corpo da pagina k termina (0.1.12: a secao da pagina pode ser mais baixa)."""
-        return self._topo(k) + self.layout.altura_do_corpo(k)
+        # Colunas (passo 2): k e' a coluna; a altura e' a da folha dela.
+        return self._topo(k) + self.layout.altura_do_corpo(self.layout.mapa.folha_da_pagina(k))
 
     def _curta(self, k: int) -> bool:
         return self._pe(k) < self._fim(k) - FOLGA
@@ -1113,17 +1114,18 @@ class ConjuntoDeNotas:
     def _desvio(self, n: int) -> float:
         """O deslocamento do recuo negativo (0.1.27): as notas ficam na coluna do arquivo, o x 0
         do corpo fica `desvio` antes dela."""
-        return float(self.layout.efetiva_da(n).desvio_tw)
+        return float(self.layout.efetiva_da(self.layout.mapa.folha_da_pagina(n)).desvio_tw)
 
     def caret(self, nota: NotaQt, pos: int):
-        """(pagina, QRectF em coordenadas do corpo) do caret na nota, ou None."""
+        """(folha, QRectF em coordenadas do documento) do caret na nota, ou None. Com colunas
+        (passo 2), o y fica na faixa da coluna (`doc_para_tela` acha a coluna)."""
         from editdoc.interface.layout_paginado import retangulo_cursor_em
         r = retangulo_cursor_em(nota.doc, pos)
         achados = self.fatias_de(nota)
         for n, f in achados:
             if f.y0 - FOLGA <= r.top() < f.y1 - FOLGA or (f is achados[-1][1]):
-                return n, QRectF(r.x() + self._desvio(n), f.y + (r.top() - f.y0), r.width(),
-                                 r.height())
+                return self.layout.mapa.folha_da_pagina(n), QRectF(
+                    r.x() + self._desvio(n), f.y + (r.top() - f.y0), r.width(), r.height())
         return None
 
 
@@ -1209,17 +1211,31 @@ def fechar_linhas_empurradas(painter, doc, recorte) -> None:
 def desenhar_notas(painter, layout, n: int, transf, editada: NotaQt | None = None,
                    selecao: QTextCursor | None = None, tela: bool = False) -> None:
     """Pinta a area de notas da folha n (separadores e trechos). Mesma funcao para a tela, o
-    PDF e a impressao. `editada`/`selecao`: a nota em edicao recebe a selecao (so' na tela)."""
-    fatias = layout.notas.paginas.get(n)
+    PDF e a impressao. `editada`/`selecao`: a nota em edicao recebe a selecao (so' na tela).
+
+    Colunas (passo 2): o plano das notas e' por pagina do Qt (a coluna, como o Word poe a nota
+    no pe' da coluna da referencia); a folha pinta a area de cada coluna no lugar dela."""
+    if layout.mapa.tem_colunas():
+        for p, dx, largura_col in layout.mapa.colunas_da_folha(n):
+            _desenhar_notas_da_pagina(painter, layout, n, p, dx, largura_col, transf, editada,
+                                      selecao)
+        return
+    _desenhar_notas_da_pagina(painter, layout, n, n, 0.0, None, transf, editada, selecao)
+
+
+def _desenhar_notas_da_pagina(painter, layout, n: int, p: int, dx: float, largura_col,
+                              transf, editada, selecao) -> None:
+    fatias = layout.notas.paginas.get(p)
     if not fatias:
         return
     ef = layout.efetiva_da(n)
     # 0.1.27: a area de notas fica na coluna do arquivo (sem o deslocamento do recuo negativo).
-    largura = float(ef.corpo_largura_tw() - ef.desvio_tw)
-    margem = float(ef.margem_esq_tw + ef.desvio_tw)
+    largura = float(ef.corpo_largura_tw() - ef.desvio_tw) if largura_col is None \
+        else float(largura_col)
+    margem = float(ef.margem_esq_tw + ef.desvio_tw) + dx
     painter.save()
     painter.setWorldTransform(transf)
-    painter.translate(margem, ef.margem_sup_tw - layout.mapa.topo(n))
+    painter.translate(margem, ef.margem_sup_tw - layout.mapa.topo(p))
     for f in fatias:
         if f.tipo in ("separador", "continuacao"):
             comprimento = largura if f.tipo == "continuacao" else min(LARGURA_SEPARADOR_TW,

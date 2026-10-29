@@ -148,6 +148,8 @@ class Contexto:
         #: e a geracao da geometria das secoes (entra na chave)
         self.folhas = None
         self.geracao = 0
+        #: colunas (passo 2): a camada folha x pagina do Qt do layout (None: identidade)
+        self.mapa = None
 
     def chave(self) -> tuple:
         p, e = self.pagina, self.efetiva
@@ -170,6 +172,18 @@ class Contexto:
             return mapa.topo(n) + float(self.efetiva_da(n).corpo_altura_tw())
         return mapa.fim(n)
 
+    def _colunas(self):
+        mapa = self.mapa
+        return mapa if mapa is not None and mapa.tem_colunas() and self.hb else None
+
+    def pe_do_y(self, y_doc: float) -> float:
+        """Onde o corpo da pagina do Qt do ponto y termina (com colunas, a da coluna)."""
+        mapa = self._colunas()
+        if mapa is None:
+            return self.pe_da(max(0, MapaFolhas.de_altura(self.hb).pagina_de_y(y_doc)))
+        p = max(0, mapa.pagina_de_y(y_doc))
+        return mapa.topo(p) + float(self.efetiva_da(mapa.folha_da_pagina(p)).corpo_altura_tw())
+
     def topo_da_pagina(self, n: int) -> float:
         """Topo do corpo na folha n (0.1.8): o do tipo da pagina (primeira, par, padrao)."""
         if self.folhas is not None and self.historia == "corpo":
@@ -188,6 +202,13 @@ class Contexto:
 
     def folha_de(self, y_doc: float) -> tuple[int, float, float]:
         """(pagina, dx, dy): somar (dx, dy) leva um ponto do documento para a folha."""
+        mapa = self._colunas()
+        if mapa is not None:
+            # Colunas (passo 2): a folha da pagina do Qt, deslocada para a coluna dela.
+            p = max(0, mapa.pagina_de_y(y_doc))
+            n = mapa.folha_da_pagina(p)
+            return (n, float(self.efetiva_da(n).margem_esq_tw) + mapa.deslocamento(p),
+                    self.topo_da_pagina(n) - mapa.topo(p))
         if self.hb:
             mapa = MapaFolhas.de_altura(self.hb)
             n = max(0, mapa.pagina_de_y(y_doc))
@@ -475,7 +496,7 @@ class Gerente:
             x0, y0, x1, y1 = mf.area_de_quebra(anc, mf.retangulo(anc, ref))
             x0, x1, y0, y1 = x0 - dx, x1 - dx, y0 - dy, y1 - dy
             if ctx.hb:
-                limite = ctx.pe_da(n) - 1
+                limite = ctx.pe_do_y(topo) - 1
                 if y0 >= limite:
                     continue
                 y1 = min(y1, limite)

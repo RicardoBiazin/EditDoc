@@ -271,6 +271,12 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     # que o corpo (e o recuo negativo) entra na margem, como no Word. Na vertical continua
     # o corpo, que e' o que separa uma pagina da outra.
     permitido = QRectF(-cfg.margem_esq_tw, 0, float(cfg.largura_tw), corpo_h)
+    if layout.mapa.tem_colunas():
+        _desenhar_colunas(painter, layout, n, transf, cfg, permitido, corpo_recorte, selecao,
+                          marcas, comentarios)
+        if postos:
+            _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False, tela=tela)
+        return
     if corpo_recorte is None:
         recorte = permitido
     else:
@@ -322,6 +328,84 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     if postos:
         _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False,
                              tela=tela)
+
+
+#: Linha entre as colunas (w:sep), em twips: 0,75 pt como o Word.
+ESPESSURA_SEPARADOR_COLUNAS_TW = 15.0
+
+
+def _desenhar_colunas(painter, layout: LayoutPaginado, n: int, transf: QTransform, cfg,
+                      permitido: QRectF, corpo_recorte, selecao, marcas: bool,
+                      comentarios: bool) -> None:
+    """Corpo da folha n com colunas (passo 2): cada pagina do Qt da folha e' uma coluna, pintada
+    deslocada para o lugar dela. Na horizontal cada coluna recorta ate' o meio do vao (a primeira
+    e a ultima ate' a borda da folha, como o corpo de uma coluna so'); na vertical, o corpo."""
+    colunas = layout.mapa.colunas_da_folha(n)
+    selecoes = pq_comentarios.selecoes_de_realce(layout.doc) if comentarios else []
+    if selecao is not None and selecao.hasSelection():
+        sel = QAbstractTextDocumentLayout.Selection()
+        sel.cursor = QTextCursor(selecao)
+        fmt = QTextCharFormat()
+        fmt.setBackground(COR_SELECAO)
+        sel.format = fmt
+        selecoes.append(sel)
+    ultima = len(colunas) - 1
+    for i, (p, dx, largura) in enumerate(colunas):
+        if largura is None:
+            esq, dir_ = permitido.left(), permitido.right()
+        else:
+            vao = colunas[1][1] - largura if len(colunas) > 1 else 0.0
+            esq = permitido.left() if i == 0 else dx - vao / 2.0
+            dir_ = permitido.right() if i == ultima else dx + largura + vao / 2.0
+        faixa = QRectF(esq, 0.0, dir_ - esq, permitido.height())
+        recorte = faixa if corpo_recorte is None else QRectF(*corpo_recorte).intersected(faixa)
+        if recorte.isEmpty():
+            continue
+        # Do corpo da folha para o da coluna (x da pagina do Qt).
+        local = recorte.translated(-dx, 0.0)
+        painter.save()
+        painter.setWorldTransform(transf)
+        painter.translate(cfg.margem_esq_tw + dx, cfg.margem_sup_tw)
+        painter.setClipRect(local)
+        topo = layout.mapa.topo(p)
+        painter.translate(0, -topo)
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        # O bloco que comeca exatamente no pe' (o alto da coluna seguinte) fica de fora: o Qt
+        # o pintaria recortado, e o PDF levaria o texto dele escondido na coluna de cima.
+        ctx.clip = QRectF(local.x(), topo + local.y(), local.width(),
+                          max(0.0, local.height() - 0.01))
+        ctx.palette = PALETA_TEXTO
+        ctx.cursorPosition = -1
+        if selecoes:
+            ctx.selections = selecoes
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        layout.doc.documentLayout().draw(painter, ctx)
+        pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
+        pq_props.desenhar(painter, layout.doc, ctx.clip)
+        pq_revisoes.desenhar(painter, layout.doc, ctx.clip)
+        if layout.secoes_baixas():
+            from editdoc.interface.notas import fechar_linhas_empurradas
+            fechar_linhas_empurradas(painter, layout.doc, ctx.clip)
+        if marcas:
+            desenhar_marcas(painter, layout.doc, ctx.clip)
+        painter.restore()
+    # Linha entre as colunas (w:sep): no meio do vao, da altura do corpo, entre colunas que tem
+    # texto na folha.
+    g = layout.mapa.grupo_da_pagina(colunas[0][0])
+    alvo = QRectF(*corpo_recorte).intersected(permitido) if corpo_recorte is not None \
+        else permitido
+    if g is not None and g.separador and len(colunas) > 1 and not alvo.isEmpty():
+        painter.save()
+        painter.setWorldTransform(transf)
+        painter.translate(cfg.margem_esq_tw, cfg.margem_sup_tw)
+        painter.setClipRect(alvo)
+        caneta = QPen(QColor(0, 0, 0))
+        caneta.setWidthF(ESPESSURA_SEPARADOR_COLUNAS_TW)
+        painter.setPen(caneta)
+        for (_p, dx, largura), (_q, dx2, _w) in zip(colunas, colunas[1:]):
+            x = (dx + largura + dx2) / 2.0
+            painter.drawLine(QPointF(x, 0.0), QPointF(x, permitido.height()))
+        painter.restore()
 
 
 def _desenhar_flutuantes(painter, doc, n: int, transf: QTransform, folha: QRectF,
@@ -588,7 +672,8 @@ class VistaPaginas(QAbstractScrollArea):
                  origem_y=float(self.verticalScrollBar().value()),
                  colunas=self._colunas, topo_da_pagina=lay.topo_da_pagina,
                  folhas=lay.efetiva_da if multiplas else None,
-                 hb_documento=lay.hb if multiplas else None)
+                 hb_documento=lay.hb if multiplas else None,
+                 camada=lay.mapa if lay.mapa.tem_colunas() else None)
         return m.preparar(self._paginas()) if multiplas else m
 
     def _atualizar_geometria(self) -> None:
@@ -628,10 +713,12 @@ class VistaPaginas(QAbstractScrollArea):
         linha digitada cruzava 2 a 4 tiles inteiros (cada um com tabela e numeros de lista: 2 a
         3 ms). As outras invalidacoes (altura mudou, flutuantes, numeros de lista) continuam
         tirando o tile inteiro."""
+        # Colunas (passo 2): o tile sai inteiro (a parte refeita supoe folha = pagina do Qt).
+        inteiro = not self._so_a_parte or self.layout_pag.mapa.tem_colunas()
         for chave in [k for k, v in self._cache.items()
                       if v[2] > y0 and v[1] < y1 and v[5] > x0 and v[4] < x1]:
             _pm, dy0, dy1, _nb, dx0, dx1 = self._cache[chave]
-            if not self._so_a_parte:
+            if inteiro:
                 self._sujos.pop(chave, None)
                 self._bytes_no_cache -= self._cache.pop(chave)[3]
                 continue
@@ -984,13 +1071,27 @@ class VistaPaginas(QAbstractScrollArea):
         # uma pagina nunca e' pintado fora do corpo dela, entao o tile da margem de baixo nao
         # sai do cache por uma mudanca no alto da pagina seguinte.
         mapa = self.layout_pag.mapa
-        dy0 = mapa.topo(n) + (j * tw - cfg.margem_sup_tw)
-        dy1 = min(dy0 + tw, mapa.fim(n))
-        dy0 = max(dy0, mapa.topo(n))
         nbytes = lado * lado * 4
-        # Faixa horizontal do documento que o tile mostra (0.1.14), contada da margem esquerda.
-        dx0 = i * tw - cfg.margem_esq_tw
-        self._cache[chave] = (pm, dy0, dy1, nbytes, dx0, dx0 + tw)
+        if mapa.tem_colunas():
+            # Colunas (passo 2): o tile mostra a mesma fileira de todas as colunas da folha. A
+            # faixa guardada vai da primeira a' ultima (de mais, nunca de menos), na largura
+            # toda; e o tile sai inteiro do cache (sem a parte, `_invalidar_faixa`).
+            g = mapa.grupo_da_pagina(mapa.primeira_pagina(n))
+            p0 = mapa.primeira_pagina(n)
+            p1 = p0 + (g.colunas - 1 if g is not None else 0)
+            dy0 = mapa.topo(p0) + (j * tw - cfg.margem_sup_tw)
+            dy1 = min(mapa.topo(p1) + (j * tw - cfg.margem_sup_tw) + tw, mapa.fim(p1))
+            dy0 = max(dy0, mapa.topo(p0))
+            dx0, dx1 = (-math.inf, math.inf) if g is not None else \
+                (i * tw - cfg.margem_esq_tw, i * tw - cfg.margem_esq_tw + tw)
+            self._cache[chave] = (pm, dy0, dy1, nbytes, dx0, dx1)
+        else:
+            dy0 = mapa.topo(n) + (j * tw - cfg.margem_sup_tw)
+            dy1 = min(dy0 + tw, mapa.fim(n))
+            dy0 = max(dy0, mapa.topo(n))
+            # Faixa horizontal do documento que o tile mostra (0.1.14), da margem esquerda.
+            dx0 = i * tw - cfg.margem_esq_tw
+            self._cache[chave] = (pm, dy0, dy1, nbytes, dx0, dx0 + tw)
         self._bytes_no_cache += nbytes
         while self._bytes_no_cache > LIMITE_DO_CACHE_BYTES and self._cache:
             velha, valor = self._cache.popitem(last=False)
@@ -1147,7 +1248,12 @@ class VistaPaginas(QAbstractScrollArea):
         m = self.mapa()
         n = self._paginas()
         tl = m.doc_para_tela(r.left(), r.top(), n)
-        br = m.doc_para_tela(r.right(), r.bottom(), n)
+        if self.layout_pag.mapa.tem_colunas():
+            # Colunas (passo 2): o pe' do retangulo pode cair na coluna seguinte (outro x, o
+            # alto da folha); o tamanho vem do canto de cima.
+            br = (tl[0] + r.width() * m.escala, tl[1] + r.height() * m.escala)
+        else:
+            br = m.doc_para_tela(r.right(), r.bottom(), n)
         vp = self.viewport()
         vb = self.verticalScrollBar()
         hb = self.horizontalScrollBar()
@@ -1289,7 +1395,8 @@ class VistaPaginas(QAbstractScrollArea):
 
     def _pintar_notas(self, p: QPainter, m: Mapa, n: int, x0: float, y0: float) -> None:
         """Area de notas da folha n (0.1.10), por cima dos tiles (o corpo nunca entra nela)."""
-        if not self.layout_pag.notas.paginas.get(n):
+        notas = self.layout_pag.notas.paginas
+        if not notas or not any(notas.get(p) for p in self.layout_pag.mapa.paginas_da_folha(n)):
             return
         from editdoc.interface.notas import desenhar_notas
         editada = self._nota_editada()
@@ -1533,9 +1640,11 @@ class VistaPaginas(QAbstractScrollArea):
         quebras = self._blocos_com_quebra()
         if not quebras:
             return
-        topo = self.layout_pag.mapa.topo(i0)
+        mapa = self.layout_pag.mapa
+        # Colunas (passo 2): a primeira pagina do Qt da folha de cima e a ultima da de baixo.
+        topo = mapa.topo(mapa.primeira_pagina(i0))
         inicio = doc.findBlock(dl.hitTest(QPointF(0, topo), Qt.FuzzyHit)).blockNumber()
-        limite = self.layout_pag.mapa.fim(i1)
+        limite = mapa.fim(mapa.paginas_da_folha(i1)[-1] if mapa.tem_colunas() else i1)
         fonte = p.font()
         fonte.setPointSizeF(8.0)
         p.save()
@@ -1551,6 +1660,9 @@ class VistaPaginas(QAbstractScrollArea):
                 y = dl.blockBoundingRect(anterior).bottom()
                 corpo_w = float(self.layout_pag.efetiva_da(
                     self.layout_pag.pagina_de_y(max(0.0, y - 1.0))).corpo_largura_tw())
+                g = mapa.grupo_da_pagina(mapa.pagina_de_y(max(0.0, y - 1.0)))
+                if g is not None:
+                    corpo_w = g.largura
                 xa, ya = m.doc_para_tela(0.0, y, n_total)
                 xb, _ = m.doc_para_tela(corpo_w, y, n_total)
                 p.setPen(QPen(COR_QUEBRA, 1, Qt.PenStyle.DashLine))

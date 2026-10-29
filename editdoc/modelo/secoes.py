@@ -71,6 +71,40 @@ def comeca_em_pagina_nova(tipo: str | None, anterior: Pagina | None, atual: Pagi
     return (anterior.largura_tw, anterior.altura_tw) != (atual.largura_tw, atual.altura_tw)
 
 
+#: Colunas (passo 2): coluna mais estreita que isto fica em uma coluna so' na tela (aviso).
+COLUNA_MINIMA_TW = 360
+
+
+def largura_da_coluna(corpo_tw: float, colunas: int, espaco_tw: float) -> float:
+    """Largura de cada coluna igual (w:cols com num e space), em twips."""
+    n = max(1, int(colunas))
+    return (float(corpo_tw) - (n - 1) * float(espaco_tw)) / n
+
+
+def _comeca_em_folha_nova(tipo: str | None, anterior: Pagina | None, atual: Pagina) -> bool:
+    return tipo != "nextColumn" and comeca_em_pagina_nova(tipo, anterior, atual)
+
+
+def colunas_na_tela(secoes) -> list[bool]:
+    """Quais secoes mostram as colunas na tela (passo 2 das colunas, docs/SPIKES.md).
+
+    `secoes`: [(tipo, Pagina, (numero, espaco) das colunas iguais, ou None se desiguais)] na
+    ordem do texto. Mostra a secao com 2 ou mais colunas iguais que comeca em folha nova (ou e' a
+    primeira) e cuja seguinte tambem comeca em folha nova (ou e' a ultima): a secao continua
+    com colunas no meio da folha (passo 4) continua em uma coluna so', com o aviso COLUNAS."""
+    saida = []
+    for i, (tipo, pagina, cols) in enumerate(secoes):
+        if cols is None or cols[0] < 2:
+            saida.append(False)
+            continue
+        largura = largura_da_coluna(pagina.corpo_largura_tw(), cols[0], cols[1])
+        inicio = i == 0 or _comeca_em_folha_nova(tipo, secoes[i - 1][1], pagina)
+        fim = i + 1 >= len(secoes) or _comeca_em_folha_nova(secoes[i + 1][0], pagina,
+                                                              secoes[i + 1][1])
+        saida.append(largura >= COLUNA_MINIMA_TW and inicio and fim)
+    return saida
+
+
 def paridade_pedida(tipo: str | None) -> int | None:
     """1 para oddPage (comeca em pagina impar), 0 para evenPage, None para os outros."""
     if tipo == "oddPage":

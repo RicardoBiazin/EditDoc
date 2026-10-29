@@ -1261,6 +1261,16 @@ class PainelDocumento(VistaPaginas):
             self._depois_de_mover()
             return
         r = self.layout_pag.retangulo_cursor(self._cursor.position())
+        if self.layout_pag.mapa.tem_colunas():
+            # Colunas (passo 2): uma altura de tela na TELA (o y do documento passa de uma
+            # coluna para a seguinte na mesma folha), na mesma coluna da folha de destino.
+            m = self._mapa()
+            x, y = m.doc_para_tela(r.x(), r.y() + r.height() / 2.0, self._paginas())
+            alto = self.viewport().height()
+            pos = self.posicao_em(QPointF(x, y + (-alto if anterior else alto)))
+            self._cursor.setPosition(pos, modo)
+            self._depois_de_mover()
+            return
         altura = self.viewport().height() / escala_do_zoom(self._zoom)
         alvo = QPointF(r.x(), r.y() + (-altura if anterior else altura))
         pos = self.layout_pag.doc.documentLayout().hitTest(alvo, Qt.FuzzyHit)
@@ -1388,9 +1398,10 @@ class PainelDocumento(VistaPaginas):
     def posicao_em(self, p: QPointF) -> int:
         """Posicao do texto sob um ponto do viewport. Fica na pagina clicada."""
         xd, yd = self._mapa().tela_para_doc(p.x(), p.y(), self._paginas())
-        n = self.layout_pag.pagina_de_y(yd)
+        # Colunas (passo 2): fica na pagina do Qt (a coluna) clicada; sem colunas, a folha.
+        n = self.layout_pag.pagina_qt_de_y(yd)
         pos = self.layout_pag.doc.documentLayout().hitTest(QPointF(xd, yd), Qt.FuzzyHit)
-        if self.layout_pag.pagina_do_cursor(pos) != n:
+        if self.layout_pag.pagina_qt_do_cursor(pos) != n:
             pos = self.layout_pag.ajustar_para_pagina(pos, n)
         if self._depois_da_quebra(pos):
             pos -= 1  # o caret fica antes da quebra de secao (0.1.12)
@@ -1421,7 +1432,7 @@ class PainelDocumento(VistaPaginas):
             if posto is not None:
                 cfg = self.layout_pag.efetiva_da(n)
                 ponto = QPointF(sx - cfg.margem_esq_tw,
-                                sy - cfg.margem_sup_tw + self.layout_pag.mapa.topo(n))
+                                sy - cfg.margem_sup_tw + self.layout_pag.mapa.topo_da_folha(n))
                 no_corpo = 0 <= ponto.x() <= cfg.corpo_largura_tw() and                     0 <= sy - cfg.margem_sup_tw <= cfg.corpo_altura_tw()
                 exato = self.layout_pag.doc.documentLayout().hitTest(
                     ponto, Qt.HitTestAccuracy.ExactHit) if no_corpo else -1
@@ -1674,6 +1685,12 @@ class PainelDocumento(VistaPaginas):
         lay = self.layout_pag
         n = lay.pagina_de_y(r.top())
         ef = lay.efetiva_da(n)
+        if lay.mapa.tem_colunas():
+            # Colunas (passo 2): a coluna da imagem desloca o x e da' a faixa do y.
+            p = lay.pagina_qt_de_y(r.top())
+            return n, (r.left() + ef.margem_esq_tw + lay.mapa.deslocamento(p),
+                       r.top() - lay.mapa.topo(p) + lay.topo_da_pagina(n),
+                       r.width(), r.height())
         return n, (r.left() + ef.margem_esq_tw,
                    r.top() - lay.mapa.topo(n) + lay.topo_da_pagina(n),
                    r.width(), r.height())
@@ -1882,6 +1899,9 @@ class PainelDocumento(VistaPaginas):
         x, y = m.tela_para_doc(p.x(), p.y(), n_total)
         if not (0 <= x <= self.layout_pag.efetiva_da(n).corpo_largura_tw()):
             return None
+        if self.layout_pag.mapa.tem_colunas():
+            # Colunas (passo 2): o plano das notas e' por pagina do Qt (a coluna sob o ponto).
+            return g.nota_em(self.layout_pag.pagina_qt_de_y(y), x, y)
         return g.nota_em(n, x, y)
 
     def _clique_na_nota(self, ev, achado) -> None:

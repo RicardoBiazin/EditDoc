@@ -204,9 +204,11 @@ def desenhar_comentarios(painter: QPainter, layout: LayoutPaginado, n: int,
         if pos is None:
             continue
         r = layout.retangulo_cursor(pos)
-        if not (mapa.topo(n) <= r.top() < mapa.fim(n)):
-            continue
-        itens.append((r.top() - mapa.topo(n) + cfg.margem_sup_tw, c))
+        # Colunas (passo 2): a folha mostra varias paginas do Qt (uma por coluna).
+        for p in mapa.paginas_da_folha(n):
+            if mapa.topo(p) <= r.top() < mapa.fim(p):
+                itens.append((r.top() - mapa.topo(p) + cfg.margem_sup_tw, c))
+                break
     if not itens:
         return
     fonte = QFont(doc.defaultFont())

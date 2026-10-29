@@ -1696,7 +1696,9 @@ diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até 
 - 0.1.14: abrir no Word, sem reparo, um arquivo com linha e coluna excluídas com o controle ligado,
   um movimento (recortar e colar) e as rejeições de tabela, célula e seção.
 - 0.1.14: colunas de texto na tela e no PDF (spike feito, adiado: ver "0.1.14"; reavaliado na
-  0.1.19, adiado de novo: ver "0.1.19", começando pela separação folha × página do Qt).
+  0.1.19, adiado de novo: ver "0.1.19", começando pela separação folha × página do Qt). Passos 2 e 3
+  feitos na branch `colunas` (ver "Colunas iguais: passos 2 e 3"); falta o passo 4 (seção contínua)
+  e abrir no Word um arquivo de colunas salvo pelo EditDoc para comparar as quebras de coluna.
 - 0.1.13: abrir no Word, sem reparo, um arquivo com alterações controladas gravado pelo EditDoc
   (digitar, apagar, formatar e Enter com o controle ligado, dois autores; aceitar e rejeitar
   parte delas) e conferir que o Word mostra as mesmas revisões, autores e datas.
@@ -2119,3 +2121,103 @@ linha do Word (4 e 6).
   6,89/7,25, 6,31/6,40; simples 8,79/8,72, 9,74/8,36, 11,19/8,00; plano 27,23/26,44, 27,64/27,05,
   26,75/26,72. O manual fica +0,1 a +0,4 nas três (abaixo de 1,5 ms; a mudança roda uma vez por
   família, no cache do fator, não por tecla); o plano continua acima de 16 ms como desde a 0.1.15.
+
+## Colunas iguais: passos 2 e 3 (branch `colunas`, sobre a 0.1.28, sem versão nova)
+
+Passo 2 do caminho de "0.1.19": colunas iguais (`w:cols` com `num`, `space`, `equalWidth`) numa seção
+que começa e termina em folha nova. Passo 3 em parte: `w:sep` e a quebra de coluna no começo ou no
+fim do parágrafo. O passo 4 (seção contínua com colunas no meio da folha) continua de fora, com o
+aviso COLUNAS. Sessão com tela do Windows (capturas na plataforma `windows`).
+
+### Mecanismo
+
+- A página do Qt é a coluna; a folha junta N páginas do Qt lado a lado. A seção de colunas tem a
+  largura de fluxo da coluna (`InfoSecao.largura_fluxo`), e o recuo escondido da 0.1.12 (documento na
+  largura da seção mais larga) faz o resto: o `QTextDocument` continua um só, com uma altura de página.
+- `modelo/folhas.MapaFolhas` ganhou os grupos (`GrupoDeColunas`: primeira página do Qt, quantas,
+  colunas, passo, largura, `w:sep`). `topo(p)`/`fim(p)` continuam sendo a faixa da PÁGINA DO QT p;
+  o que é da folha passa por `folha_da_pagina`, `paginas_da_folha`, `colunas_da_folha`,
+  `deslocamento(p)` e `coluna_no_x`. Sem grupos, todas as contas são a identidade de antes (o caminho
+  sem colunas não passa pelo código novo: `tem_colunas()` decide antes).
+- Quem decide que seção mostra colunas: `modelo/secoes.colunas_na_tela` (sem Qt), usado pelo leitor
+  (aviso COLUNAS só para a que fica em uma coluna: contínua, `nextColumn`, seguinte contínua,
+  larguras diferentes, coluna com menos de 360 twips) e pela tela (`ConjuntoDeSecoes.calcular`). O
+  `w:cols` é lido do XML da seção (`formato_docx/secoes.colunas_iguais`); nada muda na gravação.
+- `ConjuntoDeSecoes._mapear_com_colunas`: primeiro a página do Qt em que cada seção começa, depois os
+  grupos na camada (`layout.mapa`), e só então a primeira folha de cada seção. A página em branco de
+  evenPage/oddPage depois de uma seção de colunas fica numa folha só dela. Uma seção de uma coluna só
+  (sem `w:cols`) no mesmo documento continua no caminho de seções da 0.1.12 (`multiplas()` passa a
+  valer também com uma seção de colunas).
+- `LayoutPaginado.numero_paginas()` conta folhas; `pagina_qt_de_y`/`pagina_qt_do_cursor` dão a página
+  do Qt (a coluna); `ajustar_para_pagina` trabalha na página do Qt.
+
+### O que funciona (com teste em `tests/teste_colunas.py`, 73 verificações, cada uma com contraprova)
+
+| Área | Como |
+|---|---|
+| Tela (tiles) | `desenhar_folha` → `_desenhar_colunas`: cada página do Qt pintada no x da coluna, recorte até o meio do vão; tinta nas duas colunas e vão em branco (pixels) |
+| Cache de tiles | a faixa do tile cobre todas as colunas da fileira (de mais, nunca de menos); com colunas o tile sai inteiro (sem a parte refeita da 0.1.15, que supõe folha = página do Qt) |
+| Caret e ida/volta | `Mapa.doc_para_tela`/`tela_para_doc` com a camada: caret na coluna 2 no x dela; tela → doc → tela exato |
+| Clique | `posicao_em` fica na página do Qt clicada (coluna 2 → página do Qt 1); contraprova na coluna 1 |
+| Seleção | o realce sai nas duas colunas (pixels azuis nas duas; sem seleção, nenhum) |
+| Setas | ↓ na última linha da coluna 1 vai ao alto da coluna 2 (o Qt anda na ordem do texto); ↑ volta |
+| PageUp/PageDown | com colunas, uma altura de TELA (`posicao_em` no ponto de baixo): fica na coluna 1 mais abaixo, depois vai à folha 2 na coluna 1. Sem colunas, o código de antes |
+| PAGE/NUMPAGES | o campo do corpo dá o número da folha da coluna (`campos._indice` pela camada); NUMPAGES e a barra de status contam folhas |
+| Notas de rodapé | o plano das notas continua por página do Qt, que agora é a coluna: a nota fica no pé da coluna da referência, como o Word (nota na largura da coluna); `desenhar_notas` pinta a área de cada coluna no lugar dela |
+| PDF e impressão | a mesma `desenhar_folha`: uma página por folha, o texto da coluna 2 na página dela e o da página do Qt seguinte só na próxima; impressão em `PdfFormat` igual |
+| `w:sep` | linha de 0,75 pt no meio do vão, na altura do corpo, entre colunas com texto na folha |
+| Quebra de coluna | no começo do parágrafo: o parágrafo vai à coluna seguinte; no fim: o seguinte vai. É quebra derivada (`PROP_QUEBRA_SECAO`, os bits da 0.1.12): não vira quebra de página no arquivo (a gravação volta com as duas `w:br type="column"` e sem `type="page"`) |
+| Duas seções | uma coluna e depois duas: folhas, mapa, largura de cada uma |
+
+Capturas na plataforma `windows` (fontes do Windows, fora do repositório): colunas com a linha do
+`w:sep`, o caret visível depois de "Parag" na coluna 2 (15 de 15 pixels pretos na posição calculada),
+o clique em (626, 320) na coluna 2 pondo o cursor no parágrafo 14 (página do Qt 1, folha 1) e a nota
+de rodapé no pé da coluna da referência.
+
+### O que não funciona (limites registrados)
+
+- Seção contínua com colunas no meio da folha (passo 4): uma coluna, aviso COLUNAS, como antes.
+- Colunas de larguras diferentes (`equalWidth="0"` com `w:col` diferentes): uma coluna, aviso.
+- Quebra de coluna no MEIO do parágrafo: o Qt não quebra página dentro do bloco; o texto segue na mesma
+  coluna (o arquivo volta igual).
+- Balanceamento da última folha (o Word equilibra só antes de uma quebra contínua, que é o passo 4).
+- A linha do `w:sep` vai até o pé do corpo; o Word a para no fim da coluna mais longa.
+- Objetos flutuantes numa seção de colunas: desenhados na coluna da âncora (`Contexto.folha_de` pela
+  camada), mas "relativo à coluna" usa a margem da folha, e o arraste ancora na primeira coluna.
+- Régua: mostra o corpo da folha, não a coluna. Notas: num documento com seção de colunas e seção de
+  uma coluna, todas as notas ficam na largura da coluna (a largura das notas é uma só).
+- O espaço antes do primeiro parágrafo da coluna 2 entra no alto da coluna (é o `newPage` do Qt, o
+  mesmo do alto de uma página sem colunas).
+
+### Sem colunas, nada muda (medido na mesma hora, base `b712a09` = 0.1.28 x branch)
+
+- Suíte (sem `QT_QPA_PLATFORM`): base 3464 verificações, branch 3537 (as 73 de `teste_colunas`), 0
+  falhas nas duas.
+- Oráculo de páginas (14 `.docx` reais, plataforma `windows`): JSON idêntico nas duas árvores; doc_01 a
+  09 = 4, 4, 5, 5, 5, 6, 49, 49, 49; doc_10 3|2/2; doc_11 4|3/3; doc_12 26|2/2; doc_13 2|1/1; doc_14
+  14|4/4. Nenhum dos 14 tem seção com `w:cols` de mais de uma coluna.
+- Regressão c14n (abrir, salvar, reabrir, salvar): todas as partes iguais nos 14, salvo 1 = salvo 2,
+  páginas abertas e reabertas iguais.
+- Gate de desempenho (`teste_desempenho`, mediana do p95 de cada ponto, ms; 3 rodadas intercaladas
+  branch, base). Uma primeira série foi descartada: a máquina ficou carregada (um jogo aberto) a partir
+  da 2ª rodada e tudo dobrou nas duas árvores (capa 20 a 21 ms em ambas), sem diferença de sinal fixo.
+
+| Ponto | branch (r1, r2, r3) | base (r1, r2, r3) |
+|---|---|---|
+| capa | 8,5 · 8,4 · 8,4 | 9,5 · 8,5 · 8,6 |
+| sumário | 8,9 · 9,8 · 9,3 | 10,2 · 9,6 · 24,4* |
+| corpo | 6,9 · 7,2 · 7,1 | 7,4 · 7,3 · 16,7* |
+| antes das âncoras da capa | 13,5 · 12,9 · 12,6 | 12,8 · 13,2 · 13,3 |
+| 2000 revisões | 6,2 · 6,3 · 6,4 | 6,4 · 7,0 · 6,2 |
+
+\* pico de carga na 3ª rodada da base (ela reprovou o próprio ponto nessa rodada; as outras passaram).
+A branch passou nas três, todos os pontos abaixo de 16 ms; a diferença branch − base troca de sinal
+entre as rodadas e nenhuma passa de +1,5 ms de forma consistente (a maior a favor da base: +0,7 no
+"antes das âncoras" da 1ª rodada, −0,3 na 2ª). O caminho sem colunas não executa código novo por
+tecla além de `mapa.tem_colunas()`.
+
+### Próximo
+
+Passo 4 (seção contínua com colunas no meio da folha: páginas do Qt de alturas diferentes e o
+equilíbrio da última folha) e a quebra de coluna no meio do parágrafo (partir o parágrafo, como a
+quebra de página). Antes de publicar: abrir no Word um arquivo de colunas salvo pelo EditDoc.

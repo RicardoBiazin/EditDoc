@@ -31,7 +31,7 @@ from __future__ import annotations
 import bisect
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from editdoc.modelo.pagina import Pagina
 
@@ -90,20 +90,47 @@ def escala_do_zoom(zoom: float) -> float:
     return zoom / 15.0
 
 
+@dataclass(frozen=True)
+class GrupoDeColunas:
+    """Uma secao de colunas iguais (colunas, passo 2): `paginas` paginas do Qt a partir de
+    `pagina`, `colunas` por folha, lado a lado. A pagina do Qt tem a largura da coluna
+    (`largura`, twips); a coluna c fica `c * passo` twips a direita da margem esquerda."""
+
+    pagina: int
+    paginas: int
+    colunas: int
+    passo: float
+    largura: float
+    separador: bool = False
+    #: primeira folha do grupo (preenchida por `MapaFolhas.definir_grupos`)
+    folha: int = 0
+
+    @property
+    def folhas(self) -> int:
+        return -(-self.paginas // self.colunas)
+
+
 class MapaFolhas:
     """Folha x pagina do QTextDocument (0.1.20, passo 1 das colunas: docs/SPIKES.md, 0.1.19).
 
     Folha: a pagina impressa ou visivel, com o cabecalho, o rodape e as margens da secao dela.
     Pagina do Qt: a unidade de paginacao do QTextDocument, a faixa [n*h, (n+1)*h) do documento,
-    com h a altura de uma pagina (`altura`). Hoje as duas coincidem: a folha n e' a pagina n do
-    Qt. Quem converte y em folha ou folha em faixa passa por esta classe, nunca por `n * hb` nem
-    por `floor(y / hb)`.
+    com h a altura de uma pagina (`altura`). Sem colunas as duas coincidem: a folha n e' a
+    pagina n do Qt. Quem converte y em folha ou folha em faixa passa por esta classe, nunca por
+    `n * hb` nem por `floor(y / hb)`.
+
+    Colunas (passo 2): numa secao de N colunas iguais (`GrupoDeColunas`), a pagina do Qt e' uma
+    coluna e a folha junta N paginas do Qt lado a lado. `topo(p)` e `fim(p)` continuam sendo a
+    faixa da PAGINA DO QT p; a folha n mostra as paginas `paginas_da_folha(n)`, a coluna de cada
+    uma deslocada `deslocamento(p)` twips. Sem grupos, tudo e' a identidade de antes.
 
     Sem Qt. `altura` e' chamada a cada conta, porque a altura muda com as secoes.
     """
 
     def __init__(self, altura: Callable[[], float]) -> None:
         self._altura = altura
+        self._grupos: tuple[GrupoDeColunas, ...] = ()
+        self._paginas_dos_grupos: list[int] = []
 
     @classmethod
     def de_altura(cls, altura: float) -> MapaFolhas:
@@ -114,12 +141,112 @@ class MapaFolhas:
     def hb(self) -> float:
         return float(self._altura())
 
+    # -- colunas (passo 2) ---------------------------------------------------------------------
+    @property
+    def grupos(self) -> tuple[GrupoDeColunas, ...]:
+        return self._grupos
+
+    def tem_colunas(self) -> bool:
+        return bool(self._grupos)
+
+    def definir_grupos(self, grupos) -> bool:
+        """Troca os grupos de colunas (em ordem de pagina, sem sobreposicao). True se mudou."""
+        novos: list[GrupoDeColunas] = []
+        extra = 0  # folhas a menos que paginas, dos grupos anteriores
+        for g in sorted(grupos, key=lambda g: g.pagina):
+            if g.paginas <= 0 or g.colunas <= 1:
+                continue
+            if novos and g.pagina < novos[-1].pagina + novos[-1].paginas:
+                continue
+            g = replace(g, folha=g.pagina - extra)
+            extra += g.paginas - g.folhas
+            novos.append(g)
+        novos_t = tuple(novos)
+        if novos_t == self._grupos:
+            return False
+        self._grupos = novos_t
+        self._paginas_dos_grupos = [g.pagina for g in novos_t]
+        return True
+
+    def _grupo_da_pagina(self, p: int):
+        """(grupo, dentro): o ultimo grupo que comeca ate' a pagina p, e se p esta' nele."""
+        i = bisect.bisect_right(self._paginas_dos_grupos, p) - 1
+        if i < 0:
+            return None, False
+        g = self._grupos[i]
+        return g, p < g.pagina + g.paginas
+
+    def grupo_da_pagina(self, p: int) -> GrupoDeColunas | None:
+        if not self._grupos:
+            return None
+        g, dentro = self._grupo_da_pagina(int(p))
+        return g if dentro else None
+
+    def coluna_da_pagina(self, p: int) -> int:
+        """Indice da coluna (0 = a da esquerda) da pagina do Qt p na folha dela."""
+        g = self.grupo_da_pagina(p)
+        return (int(p) - g.pagina) % g.colunas if g is not None else 0
+
+    def deslocamento(self, p: int) -> float:
+        """Quanto a pagina do Qt p fica a direita da margem esquerda da folha (twips)."""
+        g = self.grupo_da_pagina(p)
+        return ((int(p) - g.pagina) % g.colunas) * g.passo if g is not None else 0.0
+
+    def paginas_da_folha(self, n: int) -> range:
+        """As paginas do Qt da folha n, da coluna da esquerda para a direita (as que existem ou
+        existiriam: a ultima folha do grupo pode ter menos)."""
+        n = int(n)
+        if not self._grupos:
+            return range(n, n + 1)
+        antes = 0  # folhas a menos que paginas ate' aqui
+        for g in self._grupos:
+            if n < g.folha:
+                break
+            if n < g.folha + g.folhas:
+                p0 = g.pagina + (n - g.folha) * g.colunas
+                return range(p0, min(p0 + g.colunas, g.pagina + g.paginas))
+            antes += g.paginas - g.folhas
+        return range(n + antes, n + antes + 1)
+
+    def primeira_pagina(self, n: int) -> int:
+        return self.paginas_da_folha(n).start
+
+    def topo_da_folha(self, n: int) -> float:
+        """Y do topo da faixa da primeira pagina do Qt da folha n."""
+        return self.topo(self.primeira_pagina(n))
+
+    def colunas_da_folha(self, n: int) -> list[tuple[int, float, float | None]]:
+        """[(pagina do Qt, deslocamento, largura da coluna ou None)] da folha n. Sem colunas,
+        [(n, 0, None)]."""
+        if not self._grupos:
+            return [(int(n), 0.0, None)]
+        paginas = self.paginas_da_folha(n)
+        g = self.grupo_da_pagina(paginas.start)
+        if g is None:
+            return [(paginas.start, 0.0, None)]
+        return [(p, (p - g.pagina) % g.colunas * g.passo, g.largura) for p in paginas]
+
+    def coluna_no_x(self, n: int, x: float) -> int:
+        """Pagina do Qt da folha n cuja coluna contem o x (twips do corpo, a partir da margem
+        esquerda); fora das colunas, a mais perto."""
+        cols = self.colunas_da_folha(n)
+        if len(cols) == 1 or cols[0][2] is None:
+            return cols[0][0]
+        largura = cols[0][2]
+        escolhida = cols[0][0]
+        for p, dx, _w in cols:
+            vao = (cols[1][1] - largura) if len(cols) > 1 else 0.0
+            if x >= dx - vao / 2.0:
+                escolhida = p
+        return escolhida
+
+    # -- faixas ---------------------------------------------------------------------------------
     def topo(self, n: int) -> float:
-        """Y do topo da faixa da folha n (e da pagina do Qt n), no documento."""
+        """Y do topo da faixa da pagina do Qt n, no documento (sem colunas, a da folha n)."""
         return n * self.hb
 
     def fim(self, n: int) -> float:
-        """Y do fim da faixa da folha n."""
+        """Y do fim da faixa da pagina do Qt n."""
         return (n + 1) * self.hb
 
     def pagina_de_y(self, y: float, folga: float = 0.0) -> int:
@@ -129,12 +256,26 @@ class MapaFolhas:
 
     def folha_de_y(self, y: float, folhas: int) -> int:
         """Folha do ponto y, limitada a [0, folhas - 1]."""
+        if self._grupos:
+            return min(max(self.folha_da_pagina(self.pagina_de_y(y)), 0), max(folhas - 1, 0))
         return min(max(self.pagina_de_y(y), 0), max(folhas - 1, 0))
 
-    @staticmethod
-    def folha_da_pagina(pagina: int) -> int:
-        """Folha formada pela pagina do Qt (hoje, a mesma)."""
-        return pagina
+    def folha_da_pagina(self, pagina: int) -> int:
+        """Folha formada pela pagina do Qt (sem colunas, a mesma)."""
+        if not self._grupos:
+            return pagina
+        g, dentro = self._grupo_da_pagina(int(pagina))
+        if g is None:
+            return pagina
+        if dentro:
+            return g.folha + (int(pagina) - g.pagina) // g.colunas
+        return g.folha + g.folhas + (int(pagina) - g.pagina - g.paginas)
+
+    def folhas_de_paginas(self, paginas: int) -> int:
+        """Quantas folhas `paginas` paginas do Qt formam."""
+        if not self._grupos or paginas <= 0:
+            return paginas
+        return self.folha_da_pagina(paginas - 1) + 1
 
 
 @dataclass
@@ -155,6 +296,8 @@ class Mapa:
     folhas: Callable[[int], Pagina] | None = None
     #: Altura de uma pagina do documento (a maior entre as secoes); None = a do corpo de `pagina`.
     hb_documento: float | None = None
+    #: Colunas (passo 2): a camada do layout, com os grupos de colunas. None = identidade.
+    camada: MapaFolhas | None = None
 
     def topo(self, n: int) -> float:
         if self.topo_da_pagina is not None:
@@ -178,7 +321,12 @@ class Mapa:
     @property
     def mapa_folhas(self) -> MapaFolhas:
         """A camada folha x pagina do Qt (0.1.20) sobre a altura desta geometria."""
+        if self.camada is not None and self.camada.tem_colunas():
+            return self.camada
         return MapaFolhas(lambda: self.hb)
+
+    def _com_colunas(self) -> bool:
+        return self.camada is not None and self.camada.tem_colunas()
 
     # -- folhas de tamanhos diferentes (0.1.12) -------------------------------------------------
     def _disposicao(self, paginas: int):
@@ -293,6 +441,8 @@ class Mapa:
 
     def pagina_de_y(self, y_doc: float, paginas: int) -> int:
         """Pagina do ponto de documento, limitada a [0, paginas - 1]."""
+        if self._com_colunas():
+            return self.camada.folha_de_y(y_doc, paginas)
         n = self.mapa_folhas.pagina_de_y(y_doc)
         return min(max(n, 0), max(paginas - 1, 0))
 
@@ -311,6 +461,8 @@ class Mapa:
                 self.largura_folha, self.altura_folha)
 
     def doc_para_tela(self, x_doc: float, y_doc: float, paginas: int) -> tuple[float, float]:
+        if self._com_colunas():
+            return self._doc_para_tela_colunas(x_doc, y_doc, paginas)
         n = self.pagina_de_y(y_doc, paginas)
         cfg = self.pagina_da(n)
         tx = x_doc + cfg.margem_esq_tw
@@ -325,7 +477,27 @@ class Mapa:
         x0, y0, _l, _a = self.folha_na_tela(n)
         tx = (x_tela - x0) / self.escala
         ty = (y_tela - y0) / self.escala
+        if self._com_colunas():
+            # Colunas (passo 2): a coluna sob o x escolhe a pagina do Qt da folha.
+            camada = self.camada
+            x_corpo = tx - cfg.margem_esq_tw
+            p = camada.coluna_no_x(n, x_corpo)
+            return x_corpo - camada.deslocamento(p), ty - self.topo(n) + camada.topo(p)
         return tx - cfg.margem_esq_tw, ty - self.topo(n) + self.mapa_folhas.topo(n)
+
+    def _doc_para_tela_colunas(self, x_doc: float, y_doc: float,
+                               paginas: int) -> tuple[float, float]:
+        """Colunas (passo 2): a pagina do Qt do y da' a folha e a coluna (o deslocamento em x)."""
+        camada = self.camada
+        p = camada.pagina_de_y(y_doc)
+        n = min(max(camada.folha_da_pagina(p), 0), max(paginas - 1, 0))
+        if camada.folha_da_pagina(p) != n:
+            p = camada.primeira_pagina(n)  # fora do documento: a primeira coluna da folha
+        cfg = self.pagina_da(n)
+        tx = x_doc + cfg.margem_esq_tw + camada.deslocamento(p)
+        ty = y_doc - camada.topo(p) + self.topo(n)
+        x0, y0, _l, _a = self.folha_na_tela(n)
+        return x0 + tx * self.escala, y0 + ty * self.escala
 
     def altura_total(self, paginas: int) -> float:
         if self.folhas is not None:

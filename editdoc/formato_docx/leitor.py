@@ -2378,6 +2378,7 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             final, refs_finais = fx_secoes.ler(sect_final, coletor, final=True)
         else:
             final, refs_finais = Secao(), {}
+        fx_secoes.avisar_colunas([s for s, _r in ctx.secoes_pendentes] + [final], coletor)
         pagina = final.pagina
         notas = _propriedades_das_notas(notas, sect_final, notas_config, coletor)
         pagina = replace(pagina, pares_impares=pares_impares)

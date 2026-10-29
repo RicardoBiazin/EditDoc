@@ -32,7 +32,9 @@ from dataclasses import dataclass, field, replace
 from PySide6.QtGui import QTextCursor, QTextFormat, QTextTable
 
 from editdoc import log_interno
+from editdoc.formato_docx import secoes as fx_secoes
 from editdoc.modelo import secoes as mod_secoes
+from editdoc.modelo.folhas import GrupoDeColunas
 from editdoc.modelo.campos import tipo_da_pagina
 from editdoc.modelo.pagina import Pagina, com_desvio, pagina_efetiva
 from editdoc.ponte_qt import estilos as pq_estilos
@@ -65,6 +67,11 @@ class InfoSecao:
     inicio: int = 0
     paginas: int = 1
     numero_inicial: int = 1
+    #: colunas mostradas na tela (passo 2 das colunas): numero, espaco (twips) e a linha entre
+    #: elas (w:sep). 1 = uma coluna so' (sem w:cols, ou a secao continua do passo 4).
+    colunas: int = 1
+    espaco: float = 0.0
+    separador: bool = False
 
     @property
     def hb(self) -> float:
@@ -73,6 +80,18 @@ class InfoSecao:
     @property
     def largura(self) -> float:
         return float(self.pagina.corpo_largura_tw())
+
+    @property
+    def largura_fluxo(self) -> float:
+        """Largura em que o texto reflui: a do corpo, ou a de uma coluna."""
+        if self.colunas > 1:
+            return mod_secoes.largura_da_coluna(self.largura, self.colunas, self.espaco)
+        return self.largura
+
+    @property
+    def passo(self) -> float:
+        """Distancia (twips) entre a esquerda de uma coluna e a da seguinte."""
+        return self.largura_fluxo + self.espaco
 
     def pagina_numerada(self) -> Pagina:
         """A pagina da secao com o numero da primeira folha dela (para PAGE e o tipo da folha)."""
@@ -124,7 +143,15 @@ class ConjuntoDeSecoes:
             self._sujo = [min(self._sujo[0], pos), max(self._sujo[1], fim)]
 
     def multiplas(self) -> bool:
-        return len(self.lista) > 1
+        """Mais de uma secao, ou (passo 2 das colunas) uma secao com colunas na tela: o caminho
+        das secoes (geometria por folha, recuo escondido, mapa de folhas) vale."""
+        return len(self.lista) > 1 or self._com_colunas
+
+    _com_colunas = False
+
+    def colunas(self) -> bool:
+        """Alguma secao mostra colunas (passo 2)."""
+        return self._com_colunas
 
     # -- estrutura ---------------------------------------------------------------------------
     def _secoes_do_documento(self) -> list[tuple[str | None, int | None, mod_secoes.Secao]]:
@@ -194,6 +221,16 @@ class ConjuntoDeSecoes:
                 else self.layout.pagina_arquivo
             lista.append(InfoSecao(ident, pos, secao, pagina, pagina))
         secoes = [info.secao for info in lista]
+        # Colunas (passo 2): so' as iguais, em secao que comeca e termina em folha nova.
+        cols = [fx_secoes.colunas_iguais(info.secao.original or info.secao.extras)
+                for info in lista]
+        na_tela = mod_secoes.colunas_na_tela(
+            [(info.secao.tipo, info.pagina, c[:2] if c is not None else None)
+             for info, c in zip(lista, cols)])
+        for info, c, mostra in zip(lista, cols, na_tela):
+            if mostra:
+                info.colunas, info.espaco, info.separador = int(c[0]), float(c[1]), bool(c[2])
+        self._com_colunas = any(info.colunas > 1 for info in lista)
         for i, info in enumerate(lista):
             largura = info.pagina.corpo_largura_tw()
             ativos = self.tipos_ativos(info.pagina)
@@ -224,7 +261,8 @@ class ConjuntoDeSecoes:
                 info.inicio, info.paginas, info.numero_inicial = antigos[info.ident]
         self.lista = lista
         assinatura = tuple((info.ident, info.pagina, info.efetiva,
-                            tuple(sorted(info.topos.items()))) for info in lista)
+                            tuple(sorted(info.topos.items())),
+                            (info.colunas, info.espaco, info.separador)) for info in lista)
         mudou = assinatura != self._assinatura
         self._assinatura = assinatura
         self._efetivas = {}
@@ -237,7 +275,7 @@ class ConjuntoDeSecoes:
     def dimensoes(self) -> tuple[float, float]:
         """(W, H): a maior largura e a maior altura de corpo entre as secoes. W tem o
         deslocamento do recuo negativo (0.1.27)."""
-        return (max(info.largura for info in self.lista) + self._desvio(),
+        return (max(info.largura_fluxo for info in self.lista) + self._desvio(),
                 max(info.hb for info in self.lista))
 
     def _desvio(self) -> float:
@@ -261,6 +299,9 @@ class ConjuntoDeSecoes:
     def mapear(self) -> None:
         """Primeira folha, numero de folhas e numero inicial de cada secao."""
         lay = self.layout
+        if self._com_colunas or lay.mapa.tem_colunas():
+            self._mapear_com_colunas()
+            return
         dl = lay.doc.documentLayout()
         total = lay.numero_paginas()
         inicios = [0]
@@ -284,6 +325,9 @@ class ConjuntoDeSecoes:
             info.inicio = inicios[i]
             fim = inicios[i + 1] if i + 1 < len(inicios) else max(total, inicios[i] + (i == 0))
             info.paginas = max(0, fim - inicios[i])
+        self._fechar_mapa(inicios)
+
+    def _fechar_mapa(self, inicios: list[int]) -> None:
         numeros = mod_secoes.numeros_iniciais([info.paginas for info in self.lista],
                                               [info.pagina for info in self.lista])
         for info, numero in zip(self.lista, numeros):
@@ -295,6 +339,59 @@ class ConjuntoDeSecoes:
             self._por_folha = {}
         self._numeros = [i.numero_inicial for i in self.lista]
         self._inicios = inicios
+
+    def _mapear_com_colunas(self) -> None:
+        """`mapear` com colunas (passo 2): primeiro a pagina do Qt em que cada secao comeca,
+        depois os grupos de colunas na camada (`layout.mapa`), e so' entao a primeira folha de
+        cada secao. A secao de colunas comeca e termina em folha nova (`colunas_na_tela`), e a
+        pagina em branco de evenPage/oddPage depois dela fica numa folha so' dela."""
+        lay = self.layout
+        dl = lay.doc.documentLayout()
+        qt_total = max(1, lay.doc.pageCount())
+        comecos = [0]
+        no_fim = []
+        for i in range(1, len(self.lista)):
+            anterior = self.lista[i - 1]
+            _p, bloco, tabela = self._unidade_depois(anterior.pos) if anterior.pos is not None \
+                else (None, None, None)
+            if bloco is None and tabela is None:
+                comeco = qt_total
+                no_fim.append(i)
+            else:
+                topo = dl.frameBoundingRect(tabela).top() if tabela is not None \
+                    else dl.blockBoundingRect(bloco).top()
+                comeco = lay.mapa.pagina_de_y(topo, 1e-6)
+                base = dl.blockBoundingRect(lay.doc.findBlock(anterior.pos)).bottom()
+                if lay.mapa.pagina_de_y(max(0.0, base - 1.0), 1e-6) >= comeco:
+                    comeco += 1  # secao continua no meio da pagina: a pagina e' da anterior
+            comecos.append(min(max(comeco, comecos[-1]), max(qt_total, comecos[-1])))
+        grupos = []
+        for i, info in enumerate(self.lista):
+            if info.colunas <= 1:
+                continue
+            fim = comecos[i + 1] if i + 1 < len(comecos) else qt_total
+            n = fim - comecos[i]
+            if i + 1 in self._branco and n > 1:
+                n -= 1  # a pagina em branco (evenPage/oddPage) e' uma folha, nao uma coluna
+            if n > 0:
+                grupos.append(GrupoDeColunas(comecos[i], n, info.colunas, info.passo,
+                                             info.largura_fluxo, info.separador))
+        if lay.mapa.definir_grupos(grupos):
+            self.geracao += 1
+            self._efetivas = {}
+            self._por_folha = {}
+        total = lay.numero_paginas()
+        inicios = []
+        for i, comeco in enumerate(comecos):
+            inicio = total if i in no_fim else lay.mapa.folha_da_pagina(comeco)
+            inicio = inicio if not inicios else min(max(inicio, inicios[-1]),
+                                                    max(total, inicios[-1]))
+            inicios.append(inicio)
+        for i, info in enumerate(self.lista):
+            info.inicio = inicios[i]
+            fim = inicios[i + 1] if i + 1 < len(inicios) else max(total, inicios[i] + (i == 0))
+            info.paginas = max(0, fim - inicios[i])
+        self._fechar_mapa(inicios)
 
     def secao_da_folha(self, n: int) -> int:
         if len(self.lista) <= 1:
@@ -450,7 +547,9 @@ class ConjuntoDeSecoes:
                 quer |= BIT_DEPOIS
             if inicio in branco:
                 quer |= BIT_ANTES
-            extra = max(0.0, W - self._desvio() - info.largura) if multiplas else 0.0
+            if bloco is not None and info.colunas > 1:
+                quer |= self._quebra_de_coluna(bloco)
+            extra = max(0.0, W - self._desvio() - info.largura_fluxo) if multiplas else 0.0
             atual = pq_estilos.recuo_secao(fmt)
             if atual is None:
                 recuo_ok = extra < FOLGA
@@ -487,6 +586,30 @@ class ConjuntoDeSecoes:
         self._sujo = None
         self.ajustes += 1
         return True
+
+    @staticmethod
+    def _quebra_de_coluna(bloco) -> int:
+        """Quebra de coluna (w:br type="column", passo 3 das colunas) numa secao de colunas: a
+        quebra no comeco do paragrafo leva o paragrafo para a coluna seguinte (a quebra de
+        pagina do Qt ANTES dele); no fim, o que vem depois (DEPOIS). No meio do paragrafo nao
+        vale (o Qt nao quebra pagina no meio do bloco): o texto segue na mesma coluna."""
+        texto = bloco.text()
+        if not texto or "￼" not in (texto[0], texto[-1]):
+            return 0
+        it = bloco.begin()
+        primeiro = ultimo = None
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid():
+                if primeiro is None:
+                    primeiro = frag
+                ultimo = frag
+            it += 1
+        if primeiro is not None and texto[0] == "￼" and pq.eh_coluna(primeiro.charFormat()):
+            return BIT_ANTES
+        if ultimo is not None and texto[-1] == "￼" and pq.eh_coluna(ultimo.charFormat()):
+            return BIT_DEPOIS
+        return 0
 
     @staticmethod
     def _aplicar_quebra(fmt, quer: int, tabela: bool) -> None:

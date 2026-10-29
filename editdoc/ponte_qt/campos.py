@@ -66,6 +66,8 @@ class ContextoDeCampos:
         #: secoes (0.1.12): folha -> (indice na secao, pagina numerada da secao, paginas da
         #: secao); None com uma secao so'
         self.secoes = None
+        #: colunas (passo 2): a camada folha x pagina do Qt do layout (None: identidade)
+        self.mapa = None
 
     def valor(self, instrucao: str, indice: int) -> str:
         if self.secoes is not None:
@@ -140,7 +142,11 @@ class ManipuladorDeCampo(QPyTextObject):
         if ctx.indice_fixo is not None:
             return ctx.indice_fixo
         if ctx.hb and ctx.hb > 0:
-            return max(0, MapaFolhas.de_altura(ctx.hb).pagina_de_y(y))
+            p = max(0, MapaFolhas.de_altura(ctx.hb).pagina_de_y(y))
+            mapa = getattr(ctx, "mapa", None)
+            if mapa is not None and mapa.tem_colunas():
+                return max(0, mapa.folha_da_pagina(p))  # colunas (passo 2): PAGE e' da folha
+            return p
         return 0
 
     def intrinsicSize(self, doc, pos, fmt) -> QSizeF:  # noqa: N802 - nome do Qt

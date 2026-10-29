@@ -217,6 +217,42 @@ def colunas_de(sect) -> tuple[int, int]:
     return n, max(0, _inteiro(cols.get(q("space"))) or 0)
 
 
+def colunas_iguais_de(sect) -> tuple[int, int, bool] | None:
+    """(numero, espaco em twips, linha entre as colunas) das colunas IGUAIS do w:cols (passo 2
+    das colunas, a tela); (1, 0, False) sem colunas; None se as larguras sao diferentes."""
+    cols = sect.find(q("cols")) if sect is not None else None
+    if cols is None:
+        return 1, 0, False
+    n, espaco = colunas_de(sect)
+    sep = cols.get(q("sep"))
+    linha = sep is not None and sep.lower() not in ("0", "false", "off")
+    larguras = cols.findall(q("col"))
+    if larguras and cols.get(q("equalWidth")) in ("0", "false", "off"):
+        ws = {_inteiro(c.get(q("w"))) for c in larguras}
+        vaos = {_inteiro(c.get(q("space"))) or 0 for c in larguras[:-1]}
+        if len(ws) > 1 or len(vaos) > 1:
+            return None
+        espaco = vaos.pop() if vaos else 0
+    return n, espaco, linha
+
+
+_CACHE_COLUNAS: dict = {}
+
+
+def colunas_iguais(texto: str | None) -> tuple[int, int, bool] | None:
+    """`colunas_iguais_de` do w:sectPr em texto (extras ou original da `Secao`), em cache."""
+    if not texto or "cols" not in texto:
+        return 1, 0, False
+    if texto not in _CACHE_COLUNAS:
+        if len(_CACHE_COLUNAS) > 256:
+            _CACHE_COLUNAS.clear()
+        try:
+            _CACHE_COLUNAS[texto] = colunas_iguais_de(elemento(texto))
+        except etree.XMLSyntaxError:
+            _CACHE_COLUNAS[texto] = 1, 0, False
+    return _CACHE_COLUNAS[texto]
+
+
 def extras_de(original) -> str | None:
     """O w:sectPr sem o que o modelo representa (ver o topo). None se nada sobra."""
     sect = copy.deepcopy(original)
@@ -287,9 +323,23 @@ def ler(sect, coletor, final: bool = False) -> tuple[Secao, dict]:
             limpo.remove(el_tipo)
     secao = Secao(pagina=pagina, tipo=tipo, extras=extras_de(limpo),
                   original=canonico(limpo), colunas=colunas_de(limpo))
-    if secao.colunas[0] > 1:
-        coletor.somar("COLUNAS")
+    # O aviso COLUNAS sai depois de todas as secoes lidas (`avisar_colunas`): a tela mostra as
+    # colunas iguais da secao que comeca e termina em folha nova (passo 2 das colunas).
     return secao, refs
+
+
+def avisar_colunas(secoes, coletor) -> None:
+    """Aviso COLUNAS para cada secao com colunas que a tela mostra em uma coluna so' (secao
+    continua, colunas desiguais ou estreitas demais). `secoes`: as `Secao` na ordem do texto."""
+    from editdoc.modelo.secoes import colunas_na_tela
+    dados = []
+    for s in secoes:
+        cols = colunas_iguais(s.original or s.extras)
+        dados.append((s.tipo, s.pagina, cols[:2] if cols is not None else None))
+    na_tela = colunas_na_tela(dados)
+    for s, mostra in zip(secoes, na_tela):
+        if s.colunas[0] > 1 and not mostra:
+            coletor.somar("COLUNAS")
 
 
 # -- escrita ---------------------------------------------------------------------------------
