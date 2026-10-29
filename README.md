@@ -245,7 +245,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.28-win64.zip` da página
+1. Baixe `EditDoc-0.1.29-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -354,9 +354,12 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   do Word); a posição "fim da seção" é o fim do documento; o aviso de
   continuação ("continua na próxima página") do Word não aparece. Copiar e colar entre dois
   processos do EditDoc, ou de/para outro programa, leva o texto sem a nota.
-- Seções (0.1.12): o texto em **colunas** é preservado no arquivo, mas aparece em uma
-  coluna só (aviso sem confirmação); a quebra de coluna fica no texto (aparece com as marcas de
-  formatação). Numa seção mais baixa que a mais alta do documento (a página paisagem num
+- Colunas (0.1.29): a seção com **colunas iguais** que começa e termina em página nova aparece
+  em colunas na tela, no PDF e na impressão, com a linha entre colunas e a quebra de coluna no
+  começo ou no fim do parágrafo. A seção contínua com colunas, as colunas de larguras diferentes e
+  a quebra de coluna no meio do parágrafo ainda aparecem em uma coluna só (aviso sem confirmação;
+  o arquivo volta como veio). A última folha não é equilibrada como no Word e a régua mostra a
+  largura da folha, não a da coluna. Numa seção mais baixa que a mais alta do documento (a página paisagem num
   documento em retrato), o parágrafo que não cabe no pé da página desce inteiro para a página
   seguinte (o Word parte o parágrafo), e a tabela desce a partir da linha que não cabe. A seção
   contínua com papel diferente começa numa página nova (como o Word). A página em branco de
@@ -428,7 +431,7 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   caixa de texto perdem a referência ao salvar (com aviso), porque o EditDoc não os lê dali. A lista numerada dentro da caixa volta (desde a 0.1.4).
 - Fora desta versão: revisão com controle de alterações,
   gerar ou atualizar sumário e índices, mala direta, editar equações e formas (elas são
-  preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), texto em colunas na tela (preservado no arquivo), ortografia, `.doc`, RTF,
+  preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), seção contínua com colunas na tela (preservada no arquivo), ortografia, `.doc`, RTF,
   ODT e macros (nunca).
 - Numeração de listas: o EditDoc não edita a definição de uma lista do arquivo (fonte,
   recuo ou texto do número de um nível); a galeria cria definições novas. A tabulação depois do número
@@ -478,7 +481,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.28-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.29-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

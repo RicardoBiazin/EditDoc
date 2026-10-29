@@ -1,3 +1,20 @@
+## 0.1.29 - 2026-10-28
+
+Texto em colunas. A seção com colunas iguais (`w:cols` com `num`, `space` e `equalWidth`) que
+começa e termina em página nova aparece em colunas na tela, no PDF e na impressão: a página do Qt
+passa a ter a largura da coluna e a folha junta as colunas lado a lado (`GrupoDeColunas` em
+`modelo/folhas.MapaFolhas`). Cursor, clique, seleção, setas, PageUp/PageDown, campos PAGE e
+NUMPAGES (contam folhas), barra de status e notas (no pé da coluna da referência) seguem as
+colunas. A linha entre colunas (`w:sep`) e a quebra de coluna no começo ou no fim do parágrafo
+entram; o arquivo salvo volta com as mesmas `w:br type="column"`.
+
+Fora desta versão (aviso, arquivo intacto): seção contínua com colunas, colunas desiguais, quebra
+de coluna no meio do parágrafo, equilíbrio da última folha. A régua mostra a folha, não a coluna.
+
+Medido (docs/SPIKES.md, "Colunas iguais: passos 2 e 3"): `tests/teste_colunas.py` com 73
+verificações (3537 no total, 0 falhas); oráculo dos 14 `.docx` de referência e regressão c14n
+iguais à 0.1.28 (nenhum deles tem colunas); gate de desempenho sem piora.
+
 ## 0.1.28 - 2026-10-28
 
 Altura da linha nas fontes com métricas tipográficas (Aptos). A fonte que marca `USE_TYPO_METRICS`
