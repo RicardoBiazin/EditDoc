@@ -191,7 +191,12 @@ def unidades_da_linha_word(head: bytes, hhea: bytes, os2: bytes) -> tuple[int, i
     """(unidades por eme, altura do Qt no Windows, altura do Word), em unidades da fonte.
 
     Qt no Windows: winAscent + winDescent (o OS/2). Word: o mesmo mais o espaco externo, o lineGap
-    do hhea que passa dessa altura: max(0, ascendente - descendente + lineGap do hhea - win)."""
+    do hhea que passa dessa altura: max(0, ascendente - descendente + lineGap do hhea - win).
+
+    Fonte com USE_TYPO_METRICS (bit 7 do fsSelection, OS/2 versao 4 ou mais; Aptos, 0.1.28): o
+    Qt e o Word usam as metricas tipograficas, typoAscender - typoDescender + typoLineGap, nos
+    dois lados (medido: o oraculo do Word so' bate com a linha do Aptos assim, 1,2207 eme e nao
+    o win de 1,2847)."""
     try:
         upm = struct.unpack(">H", head[18:20])[0]
         asc, desc, gap = struct.unpack(">hhh", hhea[4:10])
@@ -200,6 +205,16 @@ def unidades_da_linha_word(head: bytes, hhea: bytes, os2: bytes) -> tuple[int, i
         return None
     if upm <= 0 or win_asc + win_desc <= 0:
         return None
+    try:
+        versao = struct.unpack(">H", os2[0:2])[0]
+        selecao = struct.unpack(">H", os2[62:64])[0]
+        t_asc, t_desc, t_gap = struct.unpack(">hhh", os2[68:74])
+    except struct.error:
+        versao = selecao = 0
+        t_asc = t_desc = t_gap = 0
+    tipografica = t_asc - t_desc + t_gap
+    if versao >= 4 and selecao & 0x80 and tipografica > 0:
+        return upm, tipografica, tipografica
     win = win_asc + win_desc
     externo = max(0, (asc - desc + gap) - win)
     return upm, win, win + externo

@@ -177,6 +177,33 @@ def testar_regras_puras() -> None:
     hhea0 = hhea[:8] + (0).to_bytes(2, "big") + hhea[10:]
     checa_igual(mod.unidades_da_linha_word(head, hhea0, os2)[2], 2288,
                 "contraprova: sem lineGap, o Word usa so' o win")
+    testar_metricas_tipograficas(head)
+
+
+def _os2(versao: int, selecao: int, typo: tuple[int, int, int], win: tuple[int, int]) -> bytes:
+    """Tabela OS/2 minima gerada aqui: versao, fsSelection, typo (asc, desc, gap) e win."""
+    return (versao.to_bytes(2, "big") + b"\0" * 60 + selecao.to_bytes(2, "big") + b"\0" * 4 +
+            b"".join(v.to_bytes(2, "big", signed=True) for v in typo) +
+            b"".join(v.to_bytes(2, "big") for v in win) + b"\0" * 18)
+
+
+def testar_metricas_tipograficas(head: bytes) -> None:
+    """0.1.28: fonte com USE_TYPO_METRICS (como a Aptos) usa typoAscender - typoDescender +
+    typoLineGap nos dois lados, nao o win."""
+    hhea = b"\0" * 4 + (1923).to_bytes(2, "big") + (-577).to_bytes(2, "big", signed=True) + \
+        (0).to_bytes(2, "big") + b"\0" * 30
+    com = _os2(4, 0x80 | 0x40, (1923, -577, 0), (2068, 563))
+    checa_igual(mod.unidades_da_linha_word(head, hhea, com), (2048, 2500, 2500),
+                "USE_TYPO_METRICS (OS/2 v4): a linha e' a tipografica, 2500 (nao o win 2631)")
+    checa_igual(mod.unidades_da_linha_word(head, hhea, _os2(4, 0x40, (1923, -577, 0), (2068, 563))),
+                (2048, 2631, 2631), "contraprova: sem o bit, o win (2631)")
+    checa_igual(mod.unidades_da_linha_word(head, hhea, _os2(3, 0x80, (1923, -577, 0), (2068, 563))),
+                (2048, 2631, 2631), "contraprova: OS/2 versao 3 nao tem o bit (vale o win)")
+    checa_igual(mod.unidades_da_linha_word(head, hhea, _os2(4, 0x80, (1600, -400, 200),
+                                                             (2068, 563)))[2], 2200,
+                "o typoLineGap entra na linha tipografica")
+    checa_igual(mod.unidades_da_linha_word(head, hhea, _os2(4, 0x80, (0, 0, 0), (2068, 563))),
+                (2048, 2631, 2631), "typo zerado: fica o win (metrica quebrada)")
 
 
 def testar_flags_dos_estilos() -> None:
@@ -209,6 +236,10 @@ def testar_linha_da_fonte(j) -> None:
           f"contraprova: sem a compensacao o Qt avanca {passo(lay, 'A1', 'A2'):.1f} (268)")
     checa(abs(calibri - passo(lay, "C1", "C2")) < 1.0,
           "Calibri nao tem espaco externo: a linha nao muda")
+    if "Aptos" in QFontDatabase.families():
+        # 0.1.28: a Aptos tem USE_TYPO_METRICS; o Qt ja' usa a tipografica, o Word tambem.
+        fator = pq.fator_da_familia("Aptos", lay.doc.documentLayout().paintDevice())
+        checa(abs(fator - 1.0) < 0.005, f"Aptos: a linha do Word e' a do Qt (fator {fator:.4f})")
 
 
 def testar_espaco_somado(j) -> None:

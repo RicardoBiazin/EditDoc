@@ -245,7 +245,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.27-win64.zip` da página
+1. Baixe `EditDoc-0.1.28-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -384,7 +384,8 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
 - Paginação (0.1.17): mais perto da do Word, mas não idêntica. Desde a 0.1.17 a tela soma o
   espaço depois de um parágrafo e o espaço antes do seguinte, respeita "não adicionar espaço
   entre parágrafos do mesmo estilo", usa a altura de linha do Word (com o espaço externo da
-  fonte: Arial e Times ficam 3 % a 4 % mais altos), mostra o parágrafo vazio junto de uma tabela
+  fonte: Arial e Times ficam 3 % a 4 % mais altos; a Aptos usa as métricas tipográficas, como
+  no Word, desde a 0.1.28), mostra o parágrafo vazio junto de uma tabela
   e aplica o controle de linhas viúvas e órfãs, "manter com o próximo", "manter linhas juntas" e
   "quebra de página antes" do estilo. Ficam diferentes: a viúva de um parágrafo com três linhas ou
   mais na página de cima (o Word desce uma linha; o EditDoc deixa como está), o espaço no começo e
@@ -477,7 +478,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.27-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.28-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

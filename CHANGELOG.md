@@ -1,3 +1,22 @@
+## 0.1.28 - 2026-10-28
+
+Altura da linha nas fontes com métricas tipográficas (Aptos). A fonte que marca `USE_TYPO_METRICS`
+na tabela OS/2 (a Aptos, padrão do Office atual) tem a linha pelas métricas tipográficas no Word e
+no Qt; até a 0.1.27 o EditDoc calculava a linha do Word pelas métricas do Windows (`win`), 5,3%
+mais alta, e esticava cada linha de Aptos (com espaçamento simples ou múltiplo) fora das tabelas.
+As páginas com Aptos levavam menos texto que no Word. A correção só vale com a fonte instalada; o
+arquivo salvo não muda.
+
+Medido (docs/SPIKES.md, "0.1.28: a linha da Aptos"; oráculo `lastRenderedPageBreak` dos 14 `.docx`
+de Downloads, Windows, com a Aptos instalada):
+- doc_14: 14 páginas, acerto das quebras de 2/2 para 4/4 (Word: 14 páginas, 13 marcas).
+- doc_13: 2 páginas, de 1/0 para 1/1 (a quebra cai na linha do Word).
+- Os outros 12 ficam iguais à 0.1.27, quebra por quebra (Aptos também aparece no doc_03 a 05, sem
+  marcas do Word: páginas iguais).
+- Regressão abrir-salvar-reabrir-salvar: c14n igual à 0.1.27 nos 14; salvo1 == salvo2 em todos.
+- Suíte: verificações novas em `teste_paginacao_word` (tabela OS/2 gerada no teste: com o bit, sem o
+  bit, OS/2 versão 3, `typoLineGap`, métrica zerada), com contraprova (código da 0.1.27: 2 falhas).
+
 ## 0.1.27 - 2026-10-27
 
 Recuo esquerdo negativo e rodapé com tabela, como no Word. Até a 0.1.26 o parágrafo (ou a tabela)

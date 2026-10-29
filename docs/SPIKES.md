@@ -2027,3 +2027,95 @@ sem versão nova e sem publicação. A única diferença de layout vista no cami
 twips abaixo do topo da página 4) não muda nenhuma quebra conferível. Para reabrir o doc_12, primeiro
 uma referência nova: abrir no Word para Windows, salvar (o Word grava as marcas e o `<Pages>`) e medir
 de novo.
+
+## 0.1.28: a linha da Aptos (USE_TYPO_METRICS) e o doc_14
+
+A Aptos foi instalada na máquina de medição (só no usuário). Até aqui o doc_14 (Aptos 9 nas células,
+Aptos no corpo, `docDefaults` com Aptos 10,5) era medido com uma fonte substituta. Com a Aptos, a
+referência da 0.1.27 se repetiu nos 14 menos o doc_14: 14 | 3/3 -> 14 | 2/2 (Word: 14 páginas, 13
+marcas). Oráculo `w:lastRenderedPageBreak`, plataforma `windows`, scripts no scratchpad (fora do
+repositório): `q12.py` (bloco, linha e célula de cada quebra), `blocos.py`/`geo.py` (topo, altura,
+linhas e entrelinha de cada bloco), `tabs.py` (quadro das tabelas), `trpr.py` (`w:trPr`, `docDefaults`,
+compatibilidade), `metr.py` (tabelas `head`, `hhea` e `OS/2` lidas do arquivo da fonte), `exp.py`
+(os 14 com o detalhe por quebra, com experimentos aplicados por cima).
+
+### Métricas da Aptos
+
+| fonte | upm | hhea asc/desc/gap | typo asc/desc/gap | win asc/desc | USE_TYPO_METRICS |
+|---|---|---|---|---|---|
+| Aptos (e Bold) | 2048 | 1923 / -577 / 0 | 1923 / -577 / 0 | 2068 / 563 | ligado (OS/2 v4) |
+| Arial | 2048 | 1854 / -434 / 67 | 1491 / -431 / 307 | 1854 / 434 | desligado (v3) |
+| Calibri | 2048 | 1536 / -512 / 452 | 1536 / -512 / 452 | 1950 / 550 | desligado |
+
+O Qt na plataforma `windows` respeita o bit: a Aptos de 100 pt tem ascendente 125 e descendente 37
+(px), a tipográfica (1,2207 eme); Aptos 9 dá 220 twips por linha, a mesma altura da Calibri 9.
+`unidades_da_linha_word` calculava o Word pelo `win` (2631 unidades, 1,2847 eme) e
+`fator_da_familia` dava 1,0526: toda linha de Aptos fora das tabelas ganhava 5,3% (entrelinha
+proporcional 105,3% no lugar da simples; 121% no lugar de 115%). As células não levam a compensação
+(espaçamento simples, sem `PROP_WORD_LINHA`), então as linhas das tabelas já tinham a altura certa; o
+corpo entre as tabelas é que ficava alto.
+
+### Quebra por quebra (Word × EditDoc: bloco, linha, célula)
+
+| quebra | Word | 0.1.27 com Aptos | com a linha tipográfica |
+|---|---|---|---|
+| 1 | 11, 0 | 10, 0 | 10, 0 |
+| 2 | 49, 0 | 49, 0 (certa) | 49, 0 (certa) |
+| 3 | 109, 0, linha 4 da tabela | 107, 0, linha 3 | 108, 1, linha 3 (2.ª linha da célula) |
+| 4 | 136, 0 | 134, 0 | 136, 0 (certa) |
+| 5 | 190, 0, linha 10 | 178, 0, linha 7 | 193, 1, linha 10 (2.ª linha) |
+| 6 | 244, 0, linha 3 | 234, 0, linha 2 | 244, 0, linha 3 (certa) |
+| 7 | 276, 0 | 272, 0 | 275, 0 |
+| 8 | 328, 0 | 323, 0, célula | 325, 0 |
+| 9 | 411, 0 | 398, 0, célula | 409, 0 |
+| 10 | 432, 0 | 425, 0 | 429, 0 |
+| 11 | 460, 0 | 448, 0 | 457, 0 |
+| 12 | 522, 0 | 500, 0 | 517, 0 |
+| 13 | 549, 0 | 549, 0 (certa) | 549, 0 (certa) |
+
+Com a linha do `win`, o EditDoc começava cada página antes do Word (até 22 blocos na quebra 12);
+com a tipográfica, a distância cai para 1 a 5 blocos, e duas quebras passam a cair no bloco e na
+linha do Word (4 e 6).
+
+### Candidatos medidos
+
+- Linha tipográfica para a fonte com `USE_TYPO_METRICS` (OS/2 versão 4 ou mais): entrou.
+  `modelo/paginacao.unidades_da_linha_word` devolve typoAscender - typoDescender + typoLineGap nos
+  dois lados (Word e Qt) quando o bit está ligado; o `fator_da_familia` da Aptos vai a 1,0002.
+  Nos 14, a Aptos é a única fonte com o bit (Arial, Times New Roman, Calibri, Calibri Light e Verdana
+  não o têm): mudam só o doc_13 (1/0 -> 1/1, a quebra cai na linha 8 do bloco 14, como no Word) e o
+  doc_14 (2/2 -> 4/4); os outros 12 ficam iguais quebra por quebra (doc_03 a 05 também usam Aptos e
+  não têm marcas: páginas iguais).
+- Espaço depois do último parágrafo da célula (20 twips nas 362 células do doc_14), por cima da
+  linha tipográfica: 4/4 -> 3/3 (quebras 4 e 6 se perdem; o EditDoc volta a quebrar antes). Como na
+  0.1.26, não entrou.
+- `w:tcMar`: já entra desde a 0.1.25 (50 twips em cima e embaixo; a linha de uma linha de texto tem
+  220 + 50 + 50 + 10 de borda = 330).
+- `w:trHeight`: não há no doc_14.
+
+### O que sobra no doc_14 (não corrigido)
+
+- Quebra 1: o bloco 10 é o parágrafo da quebra de seção, sem `w:r` (não tem onde guardar a marca);
+  o parágrafo 9 tem a quebra de página. A página 2 do Word começa nele também, como no doc_12
+  (quebra 3): artefato do oráculo, não diferença de layout.
+- Quebra 5: das 113 linhas de tabela do doc_14, 97 têm `w:cantSplit` (e 13 `w:tblHeader`, que o
+  EditDoc já repete). O Word leva a linha 10 inteira para a página seguinte; o Qt não conhece
+  "não partir a linha" e parte a linha entre as duas linhas de texto. É do lado das tabelas.
+- Quebra 3: o Qt parte a linha 3 da tabela com 163 twips sobrando na página (a segunda linha de
+  texto terminaria em 14 123 de 14 286); com `cantSplit` o Word a mantém inteira. A causa da folga
+  no Qt não foi isolada.
+- Quebras 7 a 12: o EditDoc começa 1 a 5 blocos antes do Word, depois das tabelas com `cantSplit`
+  (cada linha partida no EditDoc empurra o resto). Medir de novo quando `cantSplit` existir.
+
+### Regressão, suíte e desempenho
+
+- Abrir-salvar-reabrir-salvar nos 14 (com a Aptos): c14n igual à 0.1.27; salvo1 == salvo2; páginas
+  abertas e reabertas iguais.
+- Suíte completa: 3464 verificações ok, 0 falhas (3459 + 5 novas em `teste_paginacao_word`,
+  `testar_metricas_tipograficas`, com a tabela OS/2 gerada no teste; mais uma conferência do fator
+  da Aptos que só roda com a fonte visível ao Qt). Contraprova com o `modelo/paginacao.py` da 0.1.27:
+  2 falhas.
+- Gate p95 (offscreen, 3 rodadas intercaladas base 0.1.27 x 0.1.28, ms): manual 8,60/8,99,
+  6,89/7,25, 6,31/6,40; simples 8,79/8,72, 9,74/8,36, 11,19/8,00; plano 27,23/26,44, 27,64/27,05,
+  26,75/26,72. O manual fica +0,1 a +0,4 nas três (abaixo de 1,5 ms; a mudança roda uma vez por
+  família, no cache do fator, não por tecla); o plano continua acima de 16 ms como desde a 0.1.15.
