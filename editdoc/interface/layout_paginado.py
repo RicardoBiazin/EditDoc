@@ -102,6 +102,10 @@ class LayoutPaginado:
         self._dispositivo: QImage | None = criar_dispositivo_layout()
         # DocumentoQt acha no registro a imagem colada de outra janela (ponte_qt/imagens.py).
         self.doc: QTextDocument = DocumentoQt()
+        from editdoc.interface import trechos
+        if trechos.ligado():
+            # Experimento (ramo experimento/tabelas): layout do corpo por trechos entre tabelas.
+            trechos.instalar(self.doc)
         self.doc.setDocumentMargin(0)
         padrao = QFont(fonte)
         padrao.setPointSizeF(float(tamanho_pt))
