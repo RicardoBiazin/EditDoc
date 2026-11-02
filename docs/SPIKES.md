@@ -2395,3 +2395,81 @@ novo é da 0.1.29 e está nos dois lados; investigar no main.
    layout por trechos não atrapalha nem ajuda.
 6. Decidir se o gate passa a ser medido com o layout por trechos ligado só em documento com tabela
    (o custo de Python fica para quem ganha com ele).
+
+### Segunda rodada (sobre a 0.1.30, medida só nos núcleos P)
+
+A "regressão 0.1.28 → 0.1.29" da primeira rodada não existe: era o Windows pondo o processo nos
+núcleos E. Daqui em diante, cada medida num processo com afinidade fixa nos núcleos P
+(`start /affinity FFFF`), base e ramo intercalados, mediana de 3 rodadas (`rodadas_p.ps1`).
+
+O que entrou, na ordem pedida:
+
+1. **Por tecla, o custo do main.** O caso que pesava era Controlar alterações numa célula: o Qt
+   avisa a mudança como "a célula inteira, até a marca de parágrafo" (31 → 32 caracteres), e o
+   fragmento do Qt de uma célula inteira vira seleção de célula; o trecho ganhava um bloco, saía
+   do passo com D e era remontado a cada tecla. Agora a marca de parágrafo no fim da faixa fica
+   de fora (o formato dela é copiado), o texto dentro de um bloco é repetido com o formato de cada
+   fragmento, e a célula é comparada por linha e coluna. Juntar as mudanças de uma tecla não foi
+   preciso: o plano com Controlar alterações ligado passou de 22,8 ms (main) para 10,2 ms.
+   Trocar o modo das revisões num documento de 2000 revisões COM 8 tabelas: 1,24 a 1,27 s no
+   main, 0,60 a 0,88 s no ramo (o documento inteiro "sujo" sem mudar o texto copia os formatos em
+   cada trecho, sem remontar).
+2. **Remontar só os trechos tocados.** Tabela do primeiro nível que entra ou sai, mudança que
+   atravessa trechos e trecho que sai do passo: os trechos antes ficam, os depois só andam `delta`,
+   os do meio são montados de novo e a cascata segue até o começo de um trecho não mudar (no
+   teste, a tabela nova monta 3 trechos e desfeita monta 2, de 17). Abrir o plano: 2,16 s no main,
+   2,33 s no ramo (era 7 s): o documento abre no layout do Qt e troca uma vez, no fim.
+3. **As duas contraprovas dos flutuantes.** Passam: documento sem tabela fica no layout do Qt
+   (item 6), e o manual sintético não tem tabela. A contraprova nova da 0.1.30 (o trabalho do Qt
+   em dobro a cada tecla) custa pouco no layout por trechos (só o trecho); no ramo ela também
+   remonta os trechos a cada tecla, a regressão equivalente desse layout.
+4. **Pintura conferida por código** (`teste_trechos.testar_pintura`): cada folha pintada como no
+   papel (`impressao.pintar_pagina`, a mesma do PDF e da impressão) e o corpo com uma seleção que
+   atravessa três trechos, no layout por trechos e no do Qt, comparados pixel a pixel; também duas
+   colunas (0.1.29) com tabelas e uma seção paisagem entre seções retrato. Diferença: no máximo
+   0,8% dos pixels (o trecho começa até 0,6 twip, 0,03 pt, fora do lugar, porque a altura da
+   tabela do espaçador anda em passos de 1 twip, e a letra ou a borda da seleção cai no pixel
+   vizinho); colunas e seções 0%. Contraprova: um trecho 600 twips fora dá 3 a 10%. A divisa de
+   pintura entre trechos fica 60 twips abaixo do fim da tabela: a borda de baixo dela passa do fim
+   do quadro.
+6. **Só com tabela.** `trechos.vigiar` troca o layout no laço de eventos quando o documento passa
+   a ter (ou deixa de ter) tabela no primeiro nível, e a janela troca logo depois de preencher o
+   documento ao abrir. Na troca, os manipuladores, o dispositivo e a ligação do numerador das
+   listas passam para o layout novo, e `markContentsDirty` do documento inteiro: o EditDoc já tinha
+   moldado blocos sem o dispositivo durante a troca (linha de 19 twips em vez de 269, medido).
+
+Oráculo (os `.docx` de teste agora são 16: dois arquivos novos entraram na pasta, e os rótulos
+andaram), com e sem `EDITDOC_TRECHOS`, idêntico: doc_01..09 = 4,4,5,5,5,6,49,49,49; doc_10 3 | 0/0;
+doc_11 3 | 2/2; doc_12 4 | 3/3; doc_13 26 | 0/0; doc_14 26 | 2/2; doc_15 2 | 1/1; doc_16 14 | 4/4
+(doc_11, 12, 14, 15 e 16 são os antigos doc_10 a doc_14, com os mesmos números). Ida e volta (16
+arquivos): c14n igual com e sem a variável, mesmas páginas, salvo 1 = salvo 2. Suíte: 3591
+verificações, 0 falhas, com e sem `EDITDOC_TRECHOS=1`.
+
+#### Gate nos núcleos P (p95 em ms, total; entre parênteses, a tecla)
+
+| Ponto | 0.1.30 | ramo |
+|---|---|---|
+| documento simples | 6,0 (1,8) | 6,1 (1,9) |
+| plano, 1/3 | 21,8 (16,4) | **10,1** (4,6) |
+| plano, célula a 1/2 | 18,1 (11,8) | **8,4** (3,0) |
+| plano, item a 1/4 | 18,7 (13,6) | **7,9** (2,5) |
+| plano com Controlar alterações, 1/3 | 22,8 (16,8) | **10,2** (4,5) |
+| manual, capa | 8,9 | 8,6 |
+| manual, sumário | 9,8 | 9,6 |
+| manual, corpo | 7,8 | 7,4 |
+| capa cheia, antes das âncoras (7 rodadas) | 14,4 | 14,3 |
+| 2000 revisões, controle ligado | 6,8 | 6,6 |
+
+Janela de 1400 × 950 com o "plano" real (doc_16), total / tecla: 1/3 19,1 / 13,7 → 11,0 / 4,4;
+célula 18,4 / 10,4 → 11,9 / 3,5; item 26,9 / 18,4 → 14,5 / 4,4.
+
+Nenhum ponto pior que o main; o plano inteiro (sintético e real, na janela) abaixo de 16 ms.
+
+#### O que ainda falta para virar versão
+
+- Ligar sem a variável (decidir o padrão) e escrever o CHANGELOG e o README.
+- Conferir no Word, sem reparo, um arquivo com tabelas editado com o layout por trechos (a
+  gravação não muda: o c14n é o mesmo, mas a conferência manual é a regra do projeto).
+- O resto de até 0,6 twip do espaçador (pixel vizinho no antisserrilhado): sumiria com um
+  espaçador que ande em frações de twip; o acolchoamento da célula também é arredondado (tentado).
+- `w:cantSplit` continua fora (a tabela usa a paginação do próprio Qt).
