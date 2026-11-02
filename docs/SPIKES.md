@@ -1678,7 +1678,9 @@ diferença positiva é +0,42 ms, abaixo de 1,5 ms, e o mesmo código varia até 
 - 0.1.26: a primeira quebra do doc_12 (Word bloco 36, EditDoc 37): resolvida na 0.1.27 (rodapé com
   o parágrafo vazio depois da tabela e recuo esquerdo negativo, juntos; ver "0.1.27"). O doc_12 da
   quebra 3 em diante foi medido na 0.1.28 e não é defeito do EditDoc que o oráculo confirme: as
-  marcas do arquivo não são uma paginação consistente do conteúdo atual (ver "0.1.28"). Fica o
+  marcas do arquivo não são uma paginação consistente do conteúdo atual (ver "0.1.28").
+  Confirmado em 02/11/2026: aberto no Word para Windows, o doc_12 tem 26 páginas, o mesmo número do
+  EditDoc (o "24" vinha das marcas gravadas pelo Word for the web). Fica o
   doc_14, mais alto que o do Word nas tabelas (quebras antes das do Word), com a fonte Aptos 9 nas
   células (ver "0.1.26").
 
