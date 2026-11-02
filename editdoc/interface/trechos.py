@@ -451,6 +451,8 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             # outro texto derruba o cursorToX. Bloco sem linha e remontagem de tudo.
             dt.clearLayout()
             self._divergiu = True
+            if os.environ.get("TRECHOS_DEPURA"):
+                print("divergiu bloco", db.blockNumber(), repr(db.text()[:50]), repr(cb.text()[:50]))
             return True
         n = ct.lineCount()
         pos = ct.position()
@@ -568,8 +570,15 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         # Linhas que faltam (o Qt limpou o layout do bloco ao mudar o texto): so' se o trecho ja'
         # tem o mesmo texto. Dentro de um bloco de edicao aberto o trecho ainda e' o de antes, e
         # linhas de outro texto derrubam o processo no cursorToX (medido em teste_listas).
-        if bloco.layout().lineCount() != cb.layout().lineCount() and cb.text() == bloco.text():
-            self._copiar(bloco, cb, t, t.doc.frameAt(cb.position()) is t.doc.rootFrame(), True)
+        if bloco.layout().lineCount() != cb.layout().lineCount() and cb.text() == bloco.text() \
+                and not getattr(self, "_copiando", False):
+            # Sem reentrar: moldar a linha pede o tamanho do objeto, e o manipulador do objeto
+            # (marca, campo) pode pedir este mesmo retangulo.
+            self._copiando = True
+            try:
+                self._copiar(bloco, cb, t, t.doc.frameAt(cb.position()) is t.doc.rootFrame(), True)
+            finally:
+                self._copiando = False
         r = r.translated(0, t.desloc)
         if not self._montando:
             self._bbr[bloco.position()] = QRectF(r)
@@ -580,6 +589,15 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         (o layout ainda nao foi refeito). As posicoes de D ja' andaram e as do trecho nao: mapear
         pela posicao acharia outro bloco. No primeiro nivel, o QTextLayout do proprio bloco tem a
         posicao (copiada do trecho); na celula, vai pela tabela (pela ordem) e pela celula."""
+        if getattr(self, "_no_velho", False):
+            return QRectF()
+        self._no_velho = True
+        try:
+            return self._retangulo_velho_(bloco)
+        finally:
+            self._no_velho = False
+
+    def _retangulo_velho_(self, bloco):
         d = self._d
         lay = bloco.layout()
         tab = QTextCursor(bloco).currentTable()
@@ -727,19 +745,133 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         total = d.characterCount()
         if self._pendente or not self._trechos or (de == 0 and inseridos >= total - 1) or \
                 d.pageSize().isNull():
+            if not self._pendente and self._trechos and removidos == inseridos and \
+                    not d.pageSize().isNull() and self._sincronizar_tudo():
+                # O documento inteiro "sujo" sem mudar o texto (formato do quadro raiz, realce
+                # das revisoes, markContentsDirty): copia formatos em cada trecho, sem remontar.
+                self._tam_sinc = d.characterCount()
+                self._medir()
+                self.update[QRectF].emit(QRectF(0, 0, 1e9, 1e9))
+                return
             if not self._pendente:
                 self._motivo('inteiro', de, removidos, inseridos)
             self._invalidar()
             return
         self._divergiu = False
-        if not self._mudanca(de, removidos, inseridos) or self._divergiu:
-            if self._divergiu:
-                self._motivo('divergiu', de, removidos, inseridos)
+        self._k_mudanca = None
+        ok = self._mudanca(de, removidos, inseridos)
+        if self._divergiu and self._k_mudanca is not None:
+            # As fronteiras ja' andaram: refaz o trecho da mudanca e o de cima (a copia de S_k).
+            self._motivo('divergiu', de, removidos, inseridos)
+            k = self._k_mudanca
+            self._remontar_faixa(max(0, k - 1), k + 1)
+        elif not ok and not self._refazer_parcial(de, removidos, inseridos):
             self._invalidar()
             return
         self._tam_sinc = d.characterCount()
         self._medir()
         self.update[QRectF].emit(QRectF(0, 0, 1e9, 1e9))
+
+    def _sincronizar_tudo(self) -> bool:
+        d = self._d
+        total = d.characterCount()
+        raiz = d.rootFrame().frameFormat()
+        for t in self._trechos:
+            if t.doc.rootFrame().frameFormat() != raiz:
+                t.doc.rootFrame().setFrameFormat(raiz)
+            fim = min(t.fim, total - 1)
+            if t.cauda >= 0:
+                bS = d.findBlock(t.fim)
+                fim = min(bS.position() + bS.length() - 1, total - 1)
+            if not self._sincronizar_formatos(t, t.ini, fim - t.ini):
+                return False
+        self._bbr.clear()
+        tr = self._trechos
+        for k, t in enumerate(tr):
+            if k:
+                self._espacar(k, self._alvo_do_anterior(k))
+            t.doc.documentLayout().documentSize()
+            self._topo(k)
+            self._copiar_blocos(t, None)
+        if getattr(self, "_divergiu", False):
+            self._divergiu = False
+            return False
+        return True
+
+    def _remontar_faixa(self, i0: int, i1: int) -> None:
+        """Remonta os trechos i0..i1-1 com as fronteiras atuais e segue a cascata."""
+        self._bbr.clear()
+        tr = self._trechos
+        self._montando = True
+        try:
+            for i in range(i0, min(i1, len(tr))):
+                t = tr[i]
+                t.alvo = None
+                self._montar_trecho(t)
+                if i:
+                    self._espacar(i, self._alvo_do_anterior(i))
+                t.doc.documentLayout().documentSize()
+                self._topo(i)
+                self._copiar_blocos(t, None)
+            j = i1
+            while j < len(tr):
+                alvo = self._alvo_do_anterior(j)
+                if alvo == tr[j].alvo:
+                    break
+                self._espacar(j, alvo)
+                tr[j].doc.documentLayout().documentSize()
+                self._topo(j)
+                self._copiar_blocos(tr[j], None)
+                j += 1
+        finally:
+            self._montando = False
+        self._divergiu = False
+
+    def _refazer_parcial(self, de: int, removidos: int, inseridos: int) -> bool:
+        """Mudanca de estrutura (tabela do primeiro nivel que entra ou sai, mudanca que atravessa
+        trechos): os trechos antes dela e depois dela ficam (os de depois so' andam `delta`); os
+        do meio sao montados de novo com as fronteiras novas. False: refazer tudo."""
+        d = self._d
+        delta = inseridos - removidos
+        velhos = self._trechos
+        if not velhos:
+            return False
+        novos_ini = self._inicios()
+        fins = novos_ini[1:] + [d.characterCount()]
+        k0 = max(0, self._dono(de) - 1)
+        if any(velhos[j].ini != novos_ini[j] for j in range(min(k0, len(novos_ini)))) or \
+                k0 > len(novos_ini):
+            return False
+        indice = {p: i for i, p in enumerate(novos_ini)}
+        j1 = len(velhos)
+        for j in range(k0, len(velhos)):
+            if velhos[j].ini > de + removidos and velhos[j].ini + delta in indice and \
+                    indice[velhos[j].ini + delta] >= k0:
+                j1 = j
+                break
+        i1 = indice[velhos[j1].ini + delta] if j1 < len(velhos) else len(novos_ini)
+        novos = velhos[:k0]
+        for i in range(k0, i1):
+            t = _Trecho()
+            t.ini, t.fim = novos_ini[i], fins[i]
+            novos.append(t)
+        for j in range(j1, len(velhos)):
+            t = velhos[j]
+            t.ini += delta
+            t.fim += delta
+            novos.append(t)
+        if len(novos) != len(novos_ini) or any(t.ini != p for t, p in zip(novos, novos_ini)):
+            return False
+        for t, f in zip(novos, fins):
+            t.fim = f
+        self._trechos = novos
+        self._motivo('parcial', de, removidos, inseridos, k0, i1)
+        self._remontar_faixa(k0, i1)
+        return True
+
+    def _recusa(self, nome) -> bool:
+        self._motivo('recusa_' + nome)
+        return False
 
     def _motivo(self, nome, *args) -> None:
         m = self.__dict__.setdefault('motivos', {})
@@ -779,6 +911,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             return False
         k = self._dono(de)
         t = tr[k]
+        self._k_mudanca = None
         fim_antigo = de + removidos
         # A mudanca tem de caber num trecho (sem atravessar o comeco do seguinte)...
         if k + 1 < len(tr) and fim_antigo >= tr[k + 1].ini and not (de == tr[k + 1].ini):
@@ -794,6 +927,7 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         if not so_formato and not self._repetir(t, de, removidos, inseridos):
             self._motivo('celula', de, removidos, inseridos)
             return False
+        self._k_mudanca = k  # daqui em diante as fronteiras ja' andaram
         # A copia de S_k (fim do trecho k-1) muda junto quando a mudanca e' no 1o bloco.
         afetou_cauda_anterior = False
         if k > 0:
@@ -931,6 +1065,18 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         So' dentro de uma celula, ou fora de tabela sem tabela no meio."""
         d = self._d
         c = t.doc
+        # A faixa do Qt pode terminar NA marca de paragrafo (o formato do separador mudou junto:
+        # Controlar alteracoes remarca o paragrafo da celula). O separador continua o mesmo nos
+        # dois; repetir so' o texto antes dele (o formato do bloco e' copiado abaixo).
+        if removidos and inseridos:
+            p0 = t.para_trecho(de)
+            bd = d.findBlock(de + inseridos - 1)
+            bc = c.findBlock(p0 + removidos - 1)
+            if de + inseridos - 1 == bd.position() + bd.length() - 1 and \
+                    p0 + removidos - 1 == bc.position() + bc.length() - 1 and \
+                    bd.position() <= de and bc.position() <= p0:
+                removidos -= 1
+                inseridos -= 1
         # Objeto com quadro (flutuante) entrando: o fragmento nao recria o quadro no trecho do
         # mesmo jeito (medido: o desfazer do Delete trazia o objeto sem o texto contornar).
         if inseridos:
@@ -939,28 +1085,37 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
                 it = b.begin()
                 while not it.atEnd():
                     fr = it.fragment()
-                    if de <= fr.position() < de + inseridos and fr.charFormat().objectIndex() >= 0:
-                        return False
+                    idx = fr.charFormat().objectIndex()
+                    if de <= fr.position() < de + inseridos and idx >= 0 and \
+                            hasattr(d.object(idx), "frameFormat"):
+                        return self._recusa('quadro')
                     it += 1
                 b = b.next()
         a_d = QTextCursor(d)
         a_d.setPosition(de)
         b_d = QTextCursor(d)
-        b_d.setPosition(min(de + inseridos, d.characterCount() - 1))
+        # O fim e' exclusivo: o ultimo caractere da faixa (a posicao do fim ja' pode ser a celula
+        # seguinte, quando o texto termina no fim da celula).
+        b_d.setPosition(min(max(de, de + inseridos - 1), d.characterCount() - 1))
         ta, tb = a_d.currentTable(), b_d.currentTable()
         if (ta is None) != (tb is None):
-            return False
+            return self._recusa('tabela_d')
         if ta is not None:
-            if ta != tb or ta.cellAt(de) != tb.cellAt(b_d.position()):
-                return False
+            ca, cb_ = ta.cellAt(de), tb.cellAt(b_d.position())
+            if ta.firstPosition() != tb.firstPosition() or \
+                    (ca.row(), ca.column()) != (cb_.row(), cb_.column()):
+                return self._recusa('celula_d')
         p = t.para_trecho(de)
         a_t = QTextCursor(c)
         a_t.setPosition(p)
         b_t = QTextCursor(c)
-        b_t.setPosition(min(p + removidos, c.characterCount() - 1))
+        b_t.setPosition(min(max(p, p + removidos - 1), c.characterCount() - 1))
         sa, sb = a_t.currentTable(), b_t.currentTable()
-        if (sa is None) != (sb is None) or (sa is not None and sa.cellAt(p) != sb.cellAt(b_t.position())):
-            return False
+        if (sa is None) != (sb is None) or (sa is not None and (\
+                sa.firstPosition() != sb.firstPosition() or\
+                (sa.cellAt(p).row(), sa.cellAt(p).column()) !=\
+                (sb.cellAt(b_t.position()).row(), sb.cellAt(b_t.position()).column()))):
+            return self._recusa('celula_trecho')
         cur = QTextCursor(c)
         cur.beginEditBlock()
         if removidos:
@@ -972,7 +1127,23 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
             sel.setPosition(de)
             sel.setPosition(de + inseridos, QTextCursor.MoveMode.KeepAnchor)
             cur.setPosition(p)
-            cur.insertFragment(QTextDocumentFragment(sel))
+            bloco_ini = d.findBlock(de)
+            if bloco_ini == d.findBlock(de + inseridos - 1) and \
+                    de + inseridos <= bloco_ini.position() + bloco_ini.length() - 1:
+                # Dentro de um bloco: texto com o formato de cada fragmento. O fragmento do Qt
+                # de uma celula inteira vira selecao de celula (uma tabela) e o trecho ganhava um
+                # bloco a mais (medido com Controlar alteracoes, que remarca a celula toda).
+                it = bloco_ini.begin()
+                while not it.atEnd():
+                    fr = it.fragment()
+                    a = max(de, fr.position())
+                    z = min(de + inseridos, fr.position() + fr.length())
+                    if a < z:
+                        cur.insertText(fr.text()[a - fr.position():z - fr.position()],
+                                       fr.charFormat())
+                    it += 1
+            else:
+                cur.insertFragment(QTextDocumentFragment(sel))
         # Formato de bloco, de caractere do bloco, visibilidade e realce de cada bloco tocado.
         b = d.findBlock(de)
         fim = de + inseridos

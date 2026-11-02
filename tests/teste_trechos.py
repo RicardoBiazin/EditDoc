@@ -102,6 +102,25 @@ def testar_posicoes() -> None:
         for _ in range(teclas + 5):
             painel.undo()
         checa_igual(diferentes(doc), 0, "desfazer tudo: as mesmas linhas")
+        # Estrutura: tabela nova no meio (17 -> 18 trechos) e desfeita, sem remontar tudo.
+        from PySide6.QtGui import QTextCursor
+        total = len(lay._trechos)
+        c = QTextCursor(doc.findBlock(td._ponto(painel, "plano_item")))
+        lay.refeitos = 0
+        c.insertTable(2, 2)
+        checa_igual(len(lay._trechos), total + 1, "tabela nova no primeiro nivel: um trecho a mais")
+        checa(lay.refeitos <= 3, f"so' os trechos tocados sao montados de novo ({lay.refeitos})")
+        checa_igual(diferentes(doc), 0, "tabela nova: as mesmas linhas")
+        lay.refeitos = 0
+        doc.undo()
+        checa_igual(len(lay._trechos), total, "desfeita: os trechos de antes")
+        checa(lay.refeitos <= 3, f"desfeita sem remontar tudo ({lay.refeitos})")
+        checa_igual(diferentes(doc), 0, "desfeita: as mesmas linhas")
+        # Documento inteiro "sujo" sem mudar o texto (o realce das revisoes): sem remontar.
+        lay.refeitos = 0
+        doc.markContentsDirty(0, doc.characterCount())
+        checa(lay.refeitos == 0, f"markContentsDirty do documento inteiro nao remonta ({lay.refeitos})")
+        checa_igual(diferentes(doc), 0, "e as linhas continuam as mesmas")
         # Contraprova: um trecho do meio deslocado de proposito.
         t = lay._trechos[8]
         t.desloc += 300
@@ -114,10 +133,36 @@ def testar_posicoes() -> None:
         td._fechar(painel)
 
 
+def testar_controle_ligado() -> None:
+    secao("layout por trechos com Controlar alteracoes: a celula remarcada a cada tecla")
+    from editdoc.formato_docx.escritor import escrever
+    from editdoc.formato_docx.leitor import ler
+    modelo, _ = ler(td.documento_plano())
+    modelo.controlar_alteracoes = True
+    painel = td._painel(escrever(modelo))
+    try:
+        doc = painel.documento_corpo()
+        lay = doc.documentLayout()
+        for ponto in ("plano_terco", "plano_item"):
+            _ir(painel, td._ponto(painel, ponto))
+            lay.refeitos = 0
+            for _ in range(8):
+                QTest.keyClick(painel, Qt.Key.Key_A)
+            QTest.keyClick(painel, Qt.Key.Key_Backspace)
+            checa(lay.refeitos == 0, f"{ponto}: digitar rastreado nao remonta trecho ({lay.refeitos})")
+            checa_igual(diferentes(doc), 0, f"{ponto}: digitar rastreado, as mesmas linhas")
+        for _ in range(25):
+            painel.undo()
+        checa_igual(diferentes(doc), 0, "desfazer: as mesmas linhas")
+    finally:
+        td._fechar(painel)
+
+
 def main() -> int:
     usar_fonte_windows()
     usar_fontes_do_documento()
     testar_posicoes()
+    testar_controle_ligado()
     return resumir()
 
 
