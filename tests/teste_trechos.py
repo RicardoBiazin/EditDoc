@@ -158,11 +158,143 @@ def testar_controle_ligado() -> None:
         td._fechar(painel)
 
 
+def _folhas(layout, selecao=None, escala: float = 0.06) -> list:
+    """Cada folha como sai no papel (a mesma pintura do PDF e da impressao) ou, com `selecao`,
+    o corpo com a selecao pintada (a da tela), numa imagem."""
+    from PySide6.QtGui import QImage, QPainter, QTransform
+    from editdoc.interface import impressao
+    from editdoc.interface.vista_paginas import desenhar_folha
+    total = layout.numero_paginas()
+    imagens = []
+    for n in range(total):
+        pag = layout.efetiva_da(n)
+        img = QImage(int(pag.largura_tw * escala) + 1, int(pag.altura_tw * escala) + 1,
+                     QImage.Format.Format_RGB32)
+        img.fill(0xFFFFFFFF)
+        p = QPainter(img)
+        transf = QTransform.fromScale(escala, escala)
+        if selecao is None:
+            impressao.pintar_pagina(p, layout, n, total, transf)
+        else:
+            desenhar_folha(p, layout, n, transf, selecao=selecao)
+        p.end()
+        imagens.append(img)
+    return imagens
+
+
+#: O trecho comeca ate' 0,6 twip (0,03 pt) fora do lugar exato (o espacador do Qt anda em
+#: passos inteiros): a letra e a borda da selecao podem cair no pixel vizinho. Medido: ate' 0,8%
+#: das folhas do plano; um trecho fora 600 twips da' 3 a 10%.
+PIXELS_DIFERENTES_MAX = 0.01
+
+
+def _diferenca(a, b) -> float:
+    """Fracao dos pixels com diferenca forte (> 64 num canal)."""
+    if a.size() != b.size():
+        return 1.0
+    n = 0
+    for y in range(a.height()):
+        for x in range(a.width()):
+            pa, pb = a.pixel(x, y), b.pixel(x, y)
+            if pa != pb and max(abs(((pa >> s) & 255) - ((pb >> s) & 255)) for s in (0, 8, 16)) > 64:
+                n += 1
+    return n / float(a.width() * a.height())
+
+
+def _comparar_pinturas(janela_ou_painel, rotulo: str, selecao=None) -> None:
+    """Pinta com o layout por trechos e com o do Qt (o mesmo documento) e compara pixel a pixel."""
+    from editdoc.interface import trechos
+    painel = getattr(janela_ou_painel, "painel", janela_ou_painel)
+    lay = painel.layout_pag
+    doc = painel.documento_corpo()
+    checa(trechos.em_trechos(doc), f"{rotulo}: com tabela, o layout e' o por trechos")
+    sel = selecao(doc) if selecao else None
+    com = _folhas(lay, sel)
+    trechos.trocar(doc, False)
+    sel = selecao(doc) if selecao else None
+    sem = _folhas(lay, sel)
+    trechos.trocar(doc, True)
+    checa_igual(len(com), len(sem), f"{rotulo}: o mesmo numero de folhas")
+    pior = max((_diferenca(a, b) for a, b in zip(com, sem)), default=0.0)
+    checa(pior <= PIXELS_DIFERENTES_MAX, f"{rotulo}: folhas iguais (pior folha com {pior:.3%} dos "
+                                          f"pixels diferentes; limite {PIXELS_DIFERENTES_MAX:.1%})")
+    if selecao is None:
+        # Contraprova: o trecho 3 deslocado 600 twips muda a pintura.
+        t = doc.documentLayout()._trechos[min(3, len(doc.documentLayout()._trechos) - 1)]
+        t.desloc += 600
+        torto = _folhas(lay)
+        t.desloc -= 600
+        doc.documentLayout()._copiar_blocos(t, None)
+        pior = max((_diferenca(a, b) for a, b in zip(torto, sem)), default=0.0)
+        checa(pior > PIXELS_DIFERENTES_MAX, f"{rotulo}: contraprova, trecho deslocado 600 twips "
+                                             f"passa do limite ({pior:.3%})")
+
+
+def testar_pintura() -> None:
+    secao("layout por trechos: papel (PDF e impressao), selecao entre trechos, colunas e secoes")
+    from PySide6.QtGui import QTextCursor
+    painel = td._painel(td.documento_plano())
+    try:
+        _comparar_pinturas(painel, "plano, papel")
+
+        def atravessa(doc):
+            lay = doc.documentLayout()
+            ini = lay._trechos[2].ini - 40 if hasattr(lay, "_trechos") else 0
+            from editdoc.interface import trechos
+            t = trechos.LayoutPorTrechos  # noqa: F841
+            c = QTextCursor(doc)
+            c.setPosition(max(0, ini))
+            c.setPosition(min(doc.characterCount() - 1, ini + 2500), QTextCursor.MoveMode.KeepAnchor)
+            return c
+        # A mesma faixa nos dois layouts: as posicoes de D nao mudam com a troca.
+        faixa = {}
+
+        def selecao(doc):
+            if "c" not in faixa:
+                faixa["c"] = atravessa(doc)
+            c = QTextCursor(doc)
+            c.setPosition(faixa["c"].selectionStart())
+            c.setPosition(faixa["c"].selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+            return c
+        _comparar_pinturas(painel, "selecao atravessando tres trechos", selecao)
+    finally:
+        td._fechar(painel)
+    # Colunas (0.1.29) com tabelas dentro do trecho, e duas secoes de papel diferente.
+    import teste_colunas as tc
+    tabela = ("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>"
+              "<w:top w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/>"
+              "<w:insideH w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>"
+              "<w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>"
+              + "".join("<w:tr>" + "".join(f"<w:tc><w:p><w:r><w:t>L{r}C{c}</w:t></w:r></w:p></w:tc>"
+                                           for c in range(2)) + "</w:tr>" for r in range(8))
+              + "</w:tbl>")
+    corpo = tc._paragrafos(20) + tabela + tc._paragrafos(30, 20) + tabela + tc._paragrafos(30, 50)
+    janela = tc._janela(tc.docx_colunas(corpo=corpo))
+    try:
+        _comparar_pinturas(janela, "duas colunas com tabelas")
+    finally:
+        tc._fechar(janela)
+    paisagem = ("<w:p><w:pPr><w:sectPr><w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/>"
+                "<w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" "
+                "w:header=\"709\" w:footer=\"709\" w:gutter=\"0\"/></w:sectPr></w:pPr>"
+                "<w:r><w:t>Fim da secao paisagem.</w:t></w:r></w:p>")
+    import fixtures_docx as fxd
+    janela = tc._janela(fxd.docx_com_xml(tc._paragrafos(15) + tabela + paisagem + tc._paragrafos(40, 15)
+                                         + tabela + tc._paragrafos(20, 60)))
+    try:
+        _comparar_pinturas(janela, "secao paisagem e secao retrato, com tabelas")
+    finally:
+        janela.painel.sair_da_faixa()
+        janela.painel.documento_corpo().setModified(False)
+        janela.close()
+
+
 def main() -> int:
     usar_fonte_windows()
     usar_fontes_do_documento()
     testar_posicoes()
     testar_controle_ligado()
+    testar_pintura()
     return resumir()
 
 

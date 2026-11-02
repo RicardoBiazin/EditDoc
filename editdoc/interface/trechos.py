@@ -142,6 +142,9 @@ def _delegado(original, d, trecho):
     return _Delegado()
 
 
+#: Folga da divisa de pintura entre trechos (twips): mais que meia borda grossa de tabela.
+FOLGA_TW = 60.0
+
 _TIPOS = range(QTextFormat.ObjectTypes.UserObject.value, QTextFormat.ObjectTypes.UserObject.value + 16)
 
 
@@ -699,8 +702,11 @@ class LayoutPorTrechos(QAbstractTextDocumentLayout):
         clip = contexto.clip
         tr = self._trechos
         for k, t in enumerate(tr):
-            y0 = t.topo
-            y1 = tr[k + 1].topo if k + 1 < len(tr) else float("inf")
+            # A divisa fica FOLGA_TW abaixo do fim da tabela: a borda de baixo dela passa um pouco
+            # do fim do quadro, e quem a pinta e' o trecho de cima (o de baixo so' tem o espacador
+            # ali). O de cima tem a copia de S_k+1 no mesmo lugar, entao a faixa sai igual.
+            y0 = t.topo + (FOLGA_TW if k else 0.0)
+            y1 = tr[k + 1].topo + FOLGA_TW if k + 1 < len(tr) else float("inf")
             if clip.isValid() and (clip.bottom() < y0 or clip.top() >= y1):
                 continue
             c2 = QAbstractTextDocumentLayout.PaintContext()
