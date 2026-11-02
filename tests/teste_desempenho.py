@@ -1065,6 +1065,12 @@ def testar_plano_sobre_o_qt() -> None:
         c.insertText("a")
         c.deletePreviousChar()
         c.endEditBlock()
+        lay = self.documento_corpo().documentLayout()
+        if hasattr(lay, "_invalidar"):
+            # Layout por trechos (experimento/tabelas): a tecla refazer o trabalho do Qt mais uma
+            # vez custa pouco (so' o trecho). A regressao equivalente e' remontar todos os
+            # trechos a cada tecla.
+            lay._invalidar()
 
     pd.PainelDocumento.keyPressEvent = em_dobro
     try:

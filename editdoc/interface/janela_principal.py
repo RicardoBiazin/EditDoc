@@ -884,6 +884,10 @@ class JanelaPrincipal(QMainWindow):
         self.painel.sair_da_faixa()
         self.painel.layout_pag.notas.limpar()
         para_qt.preencher(self.painel.documento_corpo(), modelo)
+        from editdoc.interface import trechos
+        if trechos.ligado():
+            # Layout por trechos (0.1.31): documento com tabela troca antes dos ajustes de abrir.
+            trechos.conferir(self.painel.documento_corpo())
         # Notas (0.1.10): o tipo cuja parte o EditDoc nao leu (preservada so' com as
         # separadoras) nao recebe nota nova.
         sufixos = {"footnotes": "rodape", "endnotes": "fim"}

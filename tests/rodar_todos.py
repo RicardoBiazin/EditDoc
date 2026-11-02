@@ -18,6 +18,9 @@ RAIZ = os.path.dirname(AQUI)
 #: Teto por suite. Um dialogo modal aberto sem ninguem para clicar bloqueia
 #: para sempre; sem o limite a rodada ficaria pendurada em vez de apontar a suite.
 LIMITE_POR_SUITE_S = 180
+#: Suites que medem tempo de proposito passam do teto comum: com o layout por trechos (0.1.31) a
+#: de desempenho leva ~170 s nos nucleos P e o dobro se o Windows a poe nos nucleos E.
+LIMITE_ESPECIAL_S = {"teste_desempenho.py": 480}
 
 SUITES = [
     ("teste_base.py",
@@ -116,6 +119,8 @@ SUITES = [
      "0.1.16: arquivo sem styles.xml reabre com as mesmas paginas; conferencia da formatacao efetiva"),
     ("teste_paginacao_word.py",
      "0.1.17: paginacao do Word (linha da fonte, espaco somado, viuvas, keepNext, tabela); oraculo"),
+    ("teste_trechos.py",
+     "0.1.31: layout por trechos (padrao com tabela): as linhas e a pintura do layout do Qt"),
     ("teste_mover_redimensionar.py",
      "0.1.9: mover e redimensionar objetos (mouse, setas, dialogo), quebra de texto, linha <-> flutuante, cabecalho, VML"),
     ("teste_notas.py",
@@ -145,6 +150,15 @@ SUITES = [
 ]
 
 
+#: Segunda passada (0.1.31) com EDITDOC_TRECHOS=0, o layout do Qt em todo documento (o escape do
+#: README): as suites que abrem documento com tabela. Sem a passada, o escape poderia quebrar sem
+#: ninguem ver. So' roda quando a variavel nao veio de fora.
+SEGUNDA_PASSADA_SEM_TRECHOS = ("teste_tabelas.py", "teste_paginacao_word.py", "teste_listas.py",
+                               "teste_revisoes.py", "teste_flutuantes.py", "teste_pdf.py",
+                               "teste_impressao.py", "teste_colunas.py", "teste_secoes.py",
+                               "teste_notas.py", "teste_desempenho.py")
+
+
 def main() -> int:
     total_ok = total_falhas = 0
     quebradas: list[tuple[str, str]] = []
@@ -155,7 +169,13 @@ def main() -> int:
     ambiente["PYTHONIOENCODING"] = "utf-8"
     ambiente["PYTHONPATH"] = RAIZ + os.pathsep + ambiente.get("PYTHONPATH", "")
 
-    for arquivo, descricao in SUITES:
+    rodadas = [(a, d, ambiente) for a, d in SUITES]
+    if "EDITDOC_TRECHOS" not in os.environ:
+        sem_trechos = dict(ambiente, EDITDOC_TRECHOS="0")
+        descricoes = dict(SUITES)
+        rodadas += [(a, "[EDITDOC_TRECHOS=0] " + descricoes[a], sem_trechos)
+                    for a in SEGUNDA_PASSADA_SEM_TRECHOS]
+    for arquivo, descricao, ambiente in rodadas:
         caminho = os.path.join(AQUI, arquivo)
         if not os.path.isfile(caminho):
             print("%-24s AUSENTE  %s" % (arquivo, descricao))
@@ -165,11 +185,11 @@ def main() -> int:
             proc = subprocess.run([sys.executable, "-u", caminho],
                                   capture_output=True, text=True,
                                   errors="replace", env=ambiente, cwd=RAIZ,
-                                  timeout=LIMITE_POR_SUITE_S)
+                                  timeout=LIMITE_ESPECIAL_S.get(arquivo, LIMITE_POR_SUITE_S))
         except subprocess.TimeoutExpired as expirou:
             parcial = (expirou.stdout or "") + (expirou.stderr or "")
             print("%-24s  TRAVOU apos %ds  [PROBLEMA]  %s"
-                  % (arquivo, LIMITE_POR_SUITE_S, descricao))
+                  % (arquivo, LIMITE_ESPECIAL_S.get(arquivo, LIMITE_POR_SUITE_S), descricao))
             quebradas.append((arquivo, "A SUITE TRAVOU (dialogo modal?)\n"
                               + parcial))
             continue

@@ -1,3 +1,48 @@
+## 0.1.31 - 2026-11-02
+
+Digitar antes de tabelas sem refazer as tabelas de baixo. No documento com tabelas, o layout do
+Qt (`QTextDocumentLayout`) refazia TODAS as tabelas depois do ponto editado a cada tecla, mesmo
+quando nada se movia (docs/SPIKES.md, 0.1.14 e 0.1.15): no plano de teste com 16 tabelas, a tecla
+sozinha levava 12 a 17 ms. Desde esta versão o corpo do documento com tabela no primeiro nível é
+paginado por trechos (`editdoc/interface/trechos.py`, `LayoutPorTrechos`): o documento continua um
+só (edição, cursor, desfazer, localizar, gravação), e o layout dele junta um QTextDocument por
+trecho (do bloco depois de uma tabela até a tabela seguinte), cada um com o layout do próprio Qt e
+posto na mesma altura da página por um espaçador. A tecla refaz só o trecho dela; o de baixo, só
+se o fim do trecho mudou de lugar. Documento sem tabela fica no layout do Qt, como antes.
+`EDITDOC_TRECHOS=0` no ambiente volta ao layout do Qt em todo documento (o escape está no README).
+
+Gate (p95 em ms da tecla com a pintura, núcleos P fixos, base e versão intercaladas, mediana de 3
+rodadas; entre parênteses, a tecla):
+
+| Ponto | 0.1.30 | 0.1.31 |
+|---|---|---|
+| documento simples | 6,0 (1,8) | 6,1 (1,9) |
+| plano, 1/3 | 21,8 (16,4) | 10,1 (4,6) |
+| plano, célula | 18,1 (11,8) | 8,4 (3,0) |
+| plano, item de lista | 18,7 (13,6) | 7,9 (2,5) |
+| plano com Controlar alterações | 22,8 (16,8) | 10,2 (4,5) |
+| manual (capa, sumário, corpo) | 8,9 / 9,8 / 7,8 | 8,6 / 9,6 / 7,4 |
+| capa cheia, antes das âncoras | 14,4 | 14,3 |
+| 2000 revisões, controle ligado | 6,8 | 6,6 |
+
+No plano real (16 tabelas) na janela de 1400 × 950: 19 a 27 ms → 11 a 15 ms. Trocar o modo das
+revisões num documento de 2000 revisões com tabelas: 1,25 s → 0,6 a 0,9 s. Abrir o plano: 2,2 s →
+2,3 s.
+
+Conferido: as linhas de todos os blocos (inclusive nas células) nas mesmas posições do layout do
+Qt, ao abrir, digitando antes das tabelas, numa célula, num item, com Controlar alterações, Enter,
+Backspace, desfazer, tabela nova e tabela apagada (`tests/teste_trechos.py`); a pintura de cada
+folha como no papel (PDF e impressão), com seleção atravessando trechos, em colunas e em seções de
+papel diferente, comparada pixel a pixel com a do layout do Qt; oráculo de páginas dos 16 `.docx` de
+referência e regressão c14n iguais com e sem o layout novo. A suíte roda uma segunda passada com
+`EDITDOC_TRECHOS=0` nas suítes que abrem documento com tabela (`tests/rodar_todos.py`).
+
+Limites: cada trecho começa até 0,6 twip (0,03 pt) fora do lugar exato, porque a altura do
+espaçador anda em passos inteiros: na tela, uma letra ou a borda da seleção pode cair no pixel
+vizinho (até 0,8% dos pixels de uma folha). A linha de tabela que não deve partir entre páginas
+(`w:cantSplit`) continua partindo, como antes. Digitar DENTRO de uma tabela muito grande continua
+refazendo a tabela inteira (só ela).
+
 ## 0.1.30 - 2026-10-29
 
 Gate de desempenho do plano à prova de núcleo. Uma medição apontou que a 0.1.29 (colunas) dobrou
