@@ -2475,3 +2475,13 @@ Nenhum ponto pior que o main; o plano inteiro (sintético e real, na janela) aba
 - O resto de até 0,6 twip do espaçador (pixel vizinho no antisserrilhado): sumiria com um
   espaçador que ande em frações de twip; o acolchoamento da célula também é arredondado (tentado).
 - `w:cantSplit` continua fora (a tabela usa a paginação do próprio Qt).
+
+## 0.1.31: o layout por trechos vira o padrão em documento com tabela
+
+O que estava no ramo `experimento/tabelas` (seções "experimento/tabelas" e "Segunda rodada" acima)
+entra como padrão: documento com tabela no primeiro nível usa o `LayoutPorTrechos`; sem tabela, o
+layout do Qt. `EDITDOC_TRECHOS=0` desliga (escape documentado no README). A suíte roda uma segunda
+passada com `EDITDOC_TRECHOS=0` nas suítes que abrem documento com tabela (`rodar_todos.py`,
+`SEGUNDA_PASSADA_SEM_TRECHOS`), e `teste_trechos.testar_padrao_e_desligado` confere o padrão e o
+escape. Os números do gate, do oráculo e da regressão são os da "Segunda rodada" (o código é o
+mesmo; só o padrão mudou), conferidos de novo na versão (CHANGELOG, 0.1.31).

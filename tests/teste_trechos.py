@@ -1,8 +1,10 @@
-"""Experimento (ramo experimento/tabelas): layout do corpo por trechos entre tabelas.
+"""Layout do corpo por trechos entre tabelas (0.1.31, o padrao em documento com tabela).
 
-`editdoc/interface/trechos.py` (ligado por EDITDOC_TRECHOS=1) pagina o corpo em pedacos, um
-QTextDocument por trecho terminado numa tabela, para a tecla antes das tabelas nao refazer todas
-as tabelas de baixo (docs/SPIKES.md, "experimento/tabelas"). Aqui, sem relogio:
+`editdoc/interface/trechos.py` pagina o corpo em pedacos, um QTextDocument por trecho terminado
+numa tabela, para a tecla antes das tabelas nao refazer todas as tabelas de baixo (docs/SPIKES.md,
+"experimento/tabelas" e "0.1.31"). EDITDOC_TRECHOS=0 volta ao layout do Qt. Aqui, sem relogio:
+
+- o padrao: documento com tabela usa o layout por trechos, sem tabela o do Qt; com =0, o do Qt;
 
 - as posicoes de TODAS as linhas de TODOS os blocos (inclusive nas celulas) sao as do
   QTextDocumentLayout do Qt sobre o documento inteiro, ao abrir, depois de digitar antes das
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 import os
 
-os.environ["EDITDOC_TRECHOS"] = "1"
+os.environ.pop("EDITDOC_TRECHOS", None)  # o padrao (a passada com =0 e' testar_desligado)
 
 from ajudantes import (checa, checa_igual, preparar_qt, resumir, secao,  # noqa: E402
                        usar_fonte_windows, usar_fontes_do_documento)
@@ -289,9 +291,37 @@ def testar_pintura() -> None:
         janela.close()
 
 
+def testar_padrao_e_desligado() -> None:
+    secao("0.1.31: por trechos e' o padrao com tabela; sem tabela e com EDITDOC_TRECHOS=0, o do Qt")
+    from editdoc.interface import trechos
+    checa(trechos.ligado(), "sem a variavel, ligado")
+    painel = td._painel(td.documento_plano())
+    try:
+        checa(trechos.em_trechos(painel.documento_corpo()), "plano (16 tabelas): por trechos")
+    finally:
+        td._fechar(painel)
+    painel = td._painel(td.documento_simples())
+    try:
+        checa(not trechos.em_trechos(painel.documento_corpo()), "documento sem tabela: o do Qt")
+    finally:
+        td._fechar(painel)
+    os.environ["EDITDOC_TRECHOS"] = "0"
+    try:
+        checa(not trechos.ligado(), "EDITDOC_TRECHOS=0: desligado")
+        painel = td._painel(td.documento_plano())
+        try:
+            checa(not trechos.em_trechos(painel.documento_corpo()),
+                  "EDITDOC_TRECHOS=0: o plano fica no layout do Qt")
+        finally:
+            td._fechar(painel)
+    finally:
+        os.environ.pop("EDITDOC_TRECHOS", None)
+
+
 def main() -> int:
     usar_fonte_windows()
     usar_fontes_do_documento()
+    testar_padrao_e_desligado()
     testar_posicoes()
     testar_controle_ligado()
     testar_pintura()

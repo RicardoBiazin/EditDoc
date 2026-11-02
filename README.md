@@ -121,6 +121,14 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   preservada. As notas que você não mexe voltam ao arquivo exatamente como vieram, com os
   links e as imagens; o PDF e a impressão têm as notas no pé da página, e o `.txt` as lista
   no fim, numeradas.
+- **Digitação rápida antes de tabelas** (0.1.31): num documento com muitas tabelas, digitar
+  antes delas não refaz mais todas as tabelas de baixo a cada tecla. O corpo do documento com
+  tabela é paginado em trechos (um por tabela), com as mesmas quebras de página, a mesma
+  gravação e a mesma pintura; no plano de teste com 16 tabelas a tecla com a pintura cai de
+  18 a 23 ms para 8 a 10 ms (núcleos P). Documento sem tabela não muda. Para voltar ao layout
+  de antes (se algo parecer errado na tela de um documento com tabela), abra o EditDoc com a
+  variável de ambiente `EDITDOC_TRECHOS=0`: no Prompt de Comando,
+  `set EDITDOC_TRECHOS=0` e depois `EditDoc.exe`.
 - **Digitação rápida em documento pesado** (0.1.8): num manual real de 51 páginas (capa com
   imagem de página inteira e caixas de texto, sumário com links e números de página,
   49 desenhos), digitar na capa, no sumário e no corpo fica abaixo de 16 ms por tecla
@@ -245,7 +253,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.30-win64.zip` da página
+1. Baixe `EditDoc-0.1.31-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -438,11 +446,16 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   usa as paradas do nível e a padrão do documento, não as tabulações próprias do parágrafo.
   Num documento com milhares de itens, Enter e Backspace entre parágrafos levam mais
   (medido: 50 ms com 3000 itens), porque a numeração é recalculada.
-- Tabelas: digitar numa tabela muito grande fica lento (o Qt refaz a tabela a cada tecla;
+- Tabelas: digitar DENTRO de uma tabela muito grande continua lento (o Qt refaz a tabela a
+  cada tecla; desde a 0.1.31 só ela, não as de baixo;
   acima de 5000 células a tabela abre como parágrafos, com aviso); "Dividir células" só desfaz
   mescla. A altura de linha do arquivo vale na tela, no PDF e na impressão desde a 0.1.26
   ("pelo menos", "exatamente" e "automática"), mas a linha "exatamente" mais baixa que o texto
   não corta o texto como o Word: fica com a altura do texto.
+- Layout por trechos (0.1.31): cada trecho começa até 0,6 twip (0,03 pt) fora do lugar exato
+  (o espaçador do Qt anda em passos inteiros): na tela, uma letra pode cair no pixel vizinho.
+  A linha de tabela marcada para não partir entre páginas (`w:cantSplit`) continua partindo,
+  como antes.
 - A quebra de página não acompanha a do Word linha a linha (não há viúva e órfã, e a
   medida das fontes é a do Qt). O número de páginas pode diferir em documentos longos.
 - Cabeçalho e rodapé que passam da margem (desde a 0.1.8): o corpo de cada página começa
@@ -481,7 +494,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.30-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.31-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

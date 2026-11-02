@@ -104,7 +104,7 @@ class LayoutPaginado:
         self.doc: QTextDocument = DocumentoQt()
         from editdoc.interface import trechos
         if trechos.ligado():
-            # Experimento (ramo experimento/tabelas): layout do corpo por trechos entre tabelas,
+            # Layout por trechos (0.1.31; EDITDOC_TRECHOS=0 desliga): o corpo paginado entre tabelas,
             # so' enquanto o documento tiver tabela no primeiro nivel.
             trechos.vigiar(self.doc)
         self.doc.setDocumentMargin(0)

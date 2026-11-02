@@ -1,4 +1,7 @@
-"""Layout por trechos (experimento, ramo experimento/tabelas; ligado por EDITDOC_TRECHOS=1).
+"""Layout por trechos (0.1.31): o padrao em documento com tabela no primeiro nivel.
+
+EDITDOC_TRECHOS=0 no ambiente volta ao `QTextDocumentLayout` do Qt (o escape do README).
+Sem tabela, o layout e' sempre o do Qt (`vigiar`/`conferir` trocam quando a tabela entra ou sai).
 
 O `QTextDocumentLayout` do Qt refaz TODAS as tabelas depois do ponto editado a cada tecla
 (`layoutFlow`: `if (document->pageSize().height() > 0.0f) cd->sizeDirty = true;`, ver
@@ -33,7 +36,8 @@ from PySide6.QtGui import (QAbstractTextDocumentLayout, QTextBlockFormat, QTextC
 
 
 def ligado() -> bool:
-    return os.environ.get("EDITDOC_TRECHOS") == "1"
+    """Padrao desde a 0.1.31 (documento com tabela). EDITDOC_TRECHOS=0 volta ao layout do Qt."""
+    return os.environ.get("EDITDOC_TRECHOS") != "0"
 
 
 def tem_tabela(doc) -> bool:

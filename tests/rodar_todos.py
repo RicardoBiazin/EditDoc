@@ -117,7 +117,7 @@ SUITES = [
     ("teste_paginacao_word.py",
      "0.1.17: paginacao do Word (linha da fonte, espaco somado, viuvas, keepNext, tabela); oraculo"),
     ("teste_trechos.py",
-     "experimento/tabelas: layout por trechos com as mesmas linhas do layout do Qt"),
+     "0.1.31: layout por trechos (padrao com tabela): as linhas e a pintura do layout do Qt"),
     ("teste_mover_redimensionar.py",
      "0.1.9: mover e redimensionar objetos (mouse, setas, dialogo), quebra de texto, linha <-> flutuante, cabecalho, VML"),
     ("teste_notas.py",
@@ -147,6 +147,15 @@ SUITES = [
 ]
 
 
+#: Segunda passada (0.1.31) com EDITDOC_TRECHOS=0, o layout do Qt em todo documento (o escape do
+#: README): as suites que abrem documento com tabela. Sem a passada, o escape poderia quebrar sem
+#: ninguem ver. So' roda quando a variavel nao veio de fora.
+SEGUNDA_PASSADA_SEM_TRECHOS = ("teste_tabelas.py", "teste_paginacao_word.py", "teste_listas.py",
+                               "teste_revisoes.py", "teste_flutuantes.py", "teste_pdf.py",
+                               "teste_impressao.py", "teste_colunas.py", "teste_secoes.py",
+                               "teste_notas.py", "teste_desempenho.py")
+
+
 def main() -> int:
     total_ok = total_falhas = 0
     quebradas: list[tuple[str, str]] = []
@@ -157,7 +166,13 @@ def main() -> int:
     ambiente["PYTHONIOENCODING"] = "utf-8"
     ambiente["PYTHONPATH"] = RAIZ + os.pathsep + ambiente.get("PYTHONPATH", "")
 
-    for arquivo, descricao in SUITES:
+    rodadas = [(a, d, ambiente) for a, d in SUITES]
+    if "EDITDOC_TRECHOS" not in os.environ:
+        sem_trechos = dict(ambiente, EDITDOC_TRECHOS="0")
+        descricoes = dict(SUITES)
+        rodadas += [(a, "[EDITDOC_TRECHOS=0] " + descricoes[a], sem_trechos)
+                    for a in SEGUNDA_PASSADA_SEM_TRECHOS]
+    for arquivo, descricao, ambiente in rodadas:
         caminho = os.path.join(AQUI, arquivo)
         if not os.path.isfile(caminho):
             print("%-24s AUSENTE  %s" % (arquivo, descricao))
