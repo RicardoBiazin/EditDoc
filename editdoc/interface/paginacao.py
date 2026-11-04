@@ -22,6 +22,12 @@ dos blocos e das tabelas do corpo, o que faz o Qt chegar ao layout do Word:
 3. Altura da linha de tabela (0.1.26, `_alturas_das_linhas`, parte "altura"): o w:trHeight
    (atLeast; exact quando o conteudo cabe; auto nao conta) vai no acolchoamento das celulas, sobre
    o do arquivo, num passo depois dos formatos, porque depende do layout delas.
+4. Linha que nao se parte (0.1.32, w:cantSplit, parte "inteira", dentro das regras): a linha que
+   o Qt partiria entre paginas desce inteira, com o arranjo que o proprio Qt usa quando nenhuma
+   celula cabe (a linha de cima vai ate' o pe' da pagina): o empurrao no acolchoamento de baixo
+   da linha de cima (`_linha_inteira`); a primeira linha, a do cabecalho repetido e a primeira
+   depois dele levam a tabela inteira (a quebra das regras no quadro). Mais alta que a pagina:
+   parte, como no Word.
 
 Os ajustes entram no desfazer como os das secoes e das notas: um passo anotado depois do passo
 do usuario (`ConjuntoDeNotas.ajustar`). Nada disso muda o arquivo gravado: o `de_qt` le' os
@@ -30,9 +36,10 @@ valores de verdade (`ponte_qt/paginacao.py`).
 Limites (docs/ARQUITETURA.md): a viuva de um paragrafo com tres linhas ou mais na pagina de cima
 pediria descer UMA linha, o que o layout do Qt nao faz (fica como esta'; na 0.1.26 o prototipo
 pelo espaco antes nao mudou nenhuma quebra do oraculo); o espaco antes do primeiro paragrafo de
-uma celula e o depois do ultimo (o Qt os ignora; medido na 0.1.26, somar piora o oraculo), a
-linha exata mais baixa que o conteudo (o Qt nao corta) e as linhas de tabela (cantSplit,
-cabecalho repetido) nao entram; cabecalho, rodape e notas nao sao compensados (so' a altura da
+uma celula e o depois do ultimo (o Qt os ignora; medido na 0.1.26, somar piora o oraculo) e a
+linha exata mais baixa que o conteudo (o Qt nao corta) nao entram; o Qt reserva no pe' (e no
+alto) de cada pagina de uma tabela a margem de CIMA do quadro, o espaco depois do paragrafo de
+cima (0.1.32, docs/SPIKES.md): a linha que cabe no Word pode partir no Qt; cabecalho, rodape e notas nao sao compensados (so' a altura da
 faixa soma o vazio escondido logo depois da tabela, 0.1.27: `cabecalhos.FaixaQt.escondida`).
 """
 
@@ -63,6 +70,9 @@ FOLGA = 0.5
 #: Histerese da quebra do motivo 3 (0.1.18): a quebra so' sai com esta folga (twips) sobrando no
 #: pe' da pagina de cima. Zero volta ao comportamento da 0.1.17 (contraprova do teste).
 HISTERESE_TW = 720.0
+#: 0.1.32 (cantSplit): a quebra antes da tabela, posta para a primeira linha (ou o cabecalho)
+#: descer inteira, so' sai se a linha couber com esta folga (twips) sem ela.
+HISTERESE_LINHA_TW = 60.0
 
 
 def _inteiro(flags) -> int:
@@ -92,7 +102,7 @@ class ConjuntoDePaginacao:
 
     #: As partes (os testes e a medicao ligam uma de cada vez): entrelinha da fonte, espaco
     #: somado entre paragrafos, vazio e espacos junto da tabela, regras de quebra.
-    PARTES = frozenset({"linha", "espaco", "tabela", "regras", "topo", "altura"})
+    PARTES = frozenset({"linha", "espaco", "tabela", "regras", "topo", "altura", "inteira"})
 
     def __init__(self, layout) -> None:
         self.layout = layout
@@ -107,6 +117,8 @@ class ConjuntoDePaginacao:
         #: inicio de cada pagina no ultimo plano das regras (para parar cedo)
         self._inicios: dict[int, tuple] = {}
         self._geo: tuple | None = None
+        #: JSON da celula -> a linha tem w:cantSplit (0.1.32)
+        self._cant: dict[str, bool] = {}
         #: contagens (os testes olham)
         self.ajustes = 0
         self.conferidas = 0
@@ -392,42 +404,61 @@ class ConjuntoDePaginacao:
                 if faixa is not None and (cels[-1].lastPosition() < faixa[0]
                                           or cels[0].firstPosition() > faixa[1]):
                     continue
-                formatos = [c.format() for c in cels]
-                if any(f.hasProperty(pq_notas.PROP_LINHA_EMPURRADA) for f in formatos):
-                    continue  # a linha empurrada da secao (0.1.12) cuida do acolchoamento
-                dado = ler_json(formatos[0], PROP_CELULA)
-                alvo = dado.get("altura_tw")
-                if not isinstance(alvo, (int, float)) or dado.get("altura_auto") or \
-                        "altura" not in self.partes:
-                    alvo = None
-                    if not any(f.hasProperty(pq.PROP_WORD_ALTURA) for f in formatos):
-                        continue  # sem altura e sem acrescimo: nada a fazer (o caso comum)
-                for cel in cels:
-                    fmt = cel.format().toTableCellFormat()
-                    base = acolchoamento_base(tabela, fmt)
-                    cima, baixo = base[0], base[2]
-                    if alvo is not None and cel.rowSpan() == 1:
-                        natural = self._altura_da_celula(tabela, cel, fmt, cima, baixo)
-                        falta = (float(alvo) - natural) / 15.0 if natural is not None else 0.0
-                        if falta > pq.FOLGA:
-                            va = fmt.verticalAlignment()
-                            if va == QTextCharFormat.VerticalAlignment.AlignMiddle:
-                                cima, baixo = cima + falta / 2.0, baixo + falta / 2.0
-                            elif va == QTextCharFormat.VerticalAlignment.AlignBottom:
-                                cima += falta
-                            else:
-                                baixo += falta
-                    acrescimo = abs(cima - base[0]) > pq.FOLGA or abs(baixo - base[2]) > pq.FOLGA
-                    if abs(fmt.topPadding() - cima) > pq.FOLGA or \
-                            abs(fmt.bottomPadding() - baixo) > pq.FOLGA or \
-                            fmt.hasProperty(pq.PROP_WORD_ALTURA) != acrescimo:
-                        fmt.setTopPadding(cima)
-                        fmt.setBottomPadding(baixo)
-                        if acrescimo:
-                            fmt.setProperty(pq.PROP_WORD_ALTURA, True)
-                        else:
-                            fmt.clearProperty(pq.PROP_WORD_ALTURA)
-                        mudancas.append((cel, fmt))
+                mudancas += self._acolchoar_linha(tabela, cels)
+        return mudancas
+
+    def _acolchoar_linha(self, tabela, cels, extra: float | None = None) -> list:
+        """O acolchoamento das celulas `cels` (as que comecam numa linha): o do arquivo, mais o
+        que falta para o w:trHeight, mais o empurrao da linha de baixo que nao se parte
+        (`extra`, px96, embaixo; None = o que as celulas ja' tem em PROP_WORD_INTEIRA)."""
+        formatos = [c.format() for c in cels]
+        if any(f.hasProperty(pq_notas.PROP_LINHA_EMPURRADA) for f in formatos):
+            return []  # a linha empurrada da secao (0.1.12) cuida do acolchoamento
+        if extra is None:
+            extra = max((pq.empurrao(f) for f in formatos), default=0.0)
+        if "inteira" not in self.partes:
+            extra = 0.0
+        dado = ler_json(formatos[0], PROP_CELULA)
+        alvo = dado.get("altura_tw")
+        if not isinstance(alvo, (int, float)) or dado.get("altura_auto") or \
+                "altura" not in self.partes:
+            alvo = None
+            if extra <= pq.FOLGA and \
+                    not any(f.hasProperty(pq.PROP_WORD_ALTURA) for f in formatos):
+                return []  # sem altura e sem acrescimo: nada a fazer (o caso comum)
+        mudancas = []
+        for cel in cels:
+            fmt = cel.format().toTableCellFormat()
+            base = acolchoamento_base(tabela, fmt)
+            cima, baixo = base[0], base[2]
+            if alvo is not None and cel.rowSpan() == 1:
+                natural = self._altura_da_celula(tabela, cel, fmt, cima, baixo)
+                falta = (float(alvo) - natural) / 15.0 if natural is not None else 0.0
+                if falta > pq.FOLGA:
+                    va = fmt.verticalAlignment()
+                    if va == QTextCharFormat.VerticalAlignment.AlignMiddle:
+                        cima, baixo = cima + falta / 2.0, baixo + falta / 2.0
+                    elif va == QTextCharFormat.VerticalAlignment.AlignBottom:
+                        cima += falta
+                    else:
+                        baixo += falta
+            # 0.1.32 (cantSplit): o empurrao vai embaixo de todas as celulas da linha (a altura
+            # dela cresce dele; a alinhada no meio ou embaixo nao sai do lugar).
+            proprio = extra if extra > pq.FOLGA and cel.rowSpan() == 1 else 0.0
+            baixo += proprio
+            acrescimo = abs(cima - base[0]) > pq.FOLGA or abs(baixo - base[2]) > pq.FOLGA
+            if abs(fmt.topPadding() - cima) > pq.FOLGA or \
+                    abs(fmt.bottomPadding() - baixo) > pq.FOLGA or \
+                    fmt.hasProperty(pq.PROP_WORD_ALTURA) != acrescimo or \
+                    abs(pq.empurrao(fmt) - proprio) > pq.FOLGA:
+                fmt.setTopPadding(cima)
+                fmt.setBottomPadding(baixo)
+                if acrescimo:
+                    fmt.setProperty(pq.PROP_WORD_ALTURA, True)
+                else:
+                    fmt.clearProperty(pq.PROP_WORD_ALTURA)
+                pq.definir_empurrao(fmt, proprio)
+                mudancas.append((cel, fmt))
         return mudancas
 
     def _altura_da_celula(self, tabela, cel, fmt, cima: float, baixo: float) -> float | None:
@@ -470,8 +501,11 @@ class ConjuntoDePaginacao:
             bloco = bloco.next()
         for quadro in _tabelas(doc.rootFrame()):
             fmt = quadro.format()
-            if fmt.hasProperty(pq.PROP_WORD_ANTES) or fmt.hasProperty(pq.PROP_WORD_DEPOIS):
-                mudancas.append((quadro, pq.sem_compensacao(fmt)))
+            if fmt.hasProperty(pq.PROP_WORD_ANTES) or fmt.hasProperty(pq.PROP_WORD_DEPOIS) or \
+                    pq.eh_regra(fmt):
+                novo = pq.sem_compensacao(fmt)
+                pq.definir_regra(novo, False)
+                mudancas.append((quadro, novo))
         partes, self.partes = self.partes, set()
         try:
             mudancas += self._alturas_das_linhas(None)  # sem "altura": o acolchoamento do arquivo
@@ -605,6 +639,20 @@ class ConjuntoDePaginacao:
                 # A unidade e' avaliada ANTES de parar: o bloco empurrado que comeca a pagina
                 # pode ter deixado de precisar da quebra (ou o de cima passou a precisar), e a
                 # pagina comecaria igual a do plano anterior mesmo assim.
+                if u.tabela is not None:
+                    # 0.1.32: a linha que nao se parte (w:cantSplit) desce inteira
+                    esgotadas = {c for c, n in tentativas.items() if n >= MAX_POR_BLOCO}
+                    inteira = self._linha_inteira(u, anterior, esgotadas)
+                    if inteira is not None:
+                        chave, muds, pagina = inteira
+                        tentativas[chave] = tentativas.get(chave, 0) + 1
+                        self._aplicar(muds)
+                        mudancas += 1
+                        mudou_algo = True
+                        ultima_mudanca = pagina + 1
+                        inicio = max(0, pagina - 1)
+                        reiniciar = True
+                        break
                 acao = self._avaliar(u, anterior)
                 if acao is not None:
                     alvo, ligar, motivo = acao
@@ -722,6 +770,244 @@ class ConjuntoDePaginacao:
         u = self._unidade_de(bloco=anterior)
         return u if u.paginas else None
 
+    # -- linha que nao se parte (w:cantSplit, 0.1.32) --------------------------------------------
+    def _linha_inteira(self, u: _Unidade, anterior: _Unidade | None, esgotadas=()):
+        """(chave, mudancas, pagina) da primeira linha da tabela `u` cujo arranjo para o
+        w:cantSplit tem de mudar, ou None.
+
+        O Qt parte qualquer linha de tabela entre as linhas de texto, e so' leva a linha
+        inteira para a pagina seguinte quando a primeira linha de texto de TODAS as celulas
+        ja' nao cabe (`layoutTable`, `dropRowToNextPage`); nesse caso a linha de cima vai ate'
+        o pe' da pagina. A linha que nao se parte ganha esse arranjo do proprio Qt: a linha de
+        cima ganha no acolchoamento de baixo (`PROP_WORD_INTEIRA`) o que falta para a primeira
+        linha de texto de cada celula de baixo passar do pe' da pagina. Linha do cabecalho
+        repetido, ou a primeira depois dele (o Qt leva a tabela inteira), e a primeira linha da
+        tabela: a quebra antes da tabela (a das regras, `PROP_QUEBRA_REGRA` 4). Linha mais alta
+        que a pagina: parte, como no Word."""
+        if "inteira" not in self.partes:
+            return None
+        tabela = u.tabela
+        linhas = tabela.rows()
+        cab = max(0, min(tabela.format().headerRowCount(), linhas - 1))
+        chave = ("q", tabela.firstPosition())
+        if chave not in esgotadas:
+            muds = self._quebra_da_tabela(u, anterior, cab)
+            if muds:
+                return chave, muds, u.paginas[0]
+        celulas = _LinhasDaTabela(tabela)
+        for r in range(cab + 1, linhas):
+            chave = ("l", tabela.firstPosition(), r)
+            if chave in esgotadas or not celulas[r] or not celulas[r - 1]:
+                continue
+            if not self._nao_partir(celulas[r]) and \
+                    not any(pq.empurrao(c.format()) > pq.FOLGA for c in celulas[r - 1]):
+                continue  # o caso comum: sem cantSplit e sem empurrao
+            res = self._empurrao_desejado(tabela, r, celulas, cab)
+            if res is None:
+                continue
+            alvo, pagina = res
+            atual = max(pq.empurrao(c.format()) for c in celulas[r - 1])
+            if abs(alvo - atual) <= pq.FOLGA:
+                continue
+            muds = self._acolchoar_linha(tabela, celulas[r - 1], alvo)
+            if muds:
+                return chave, muds, pagina
+        return None
+
+    def _nao_partir(self, cels) -> bool:
+        bruto = cels[0].format().property(PROP_CELULA)
+        if not isinstance(bruto, str) or "cantSplit" not in bruto:
+            return False  # sem ler o JSON (o caso comum, a cada tecla)
+        if bruto not in self._cant:
+            if len(self._cant) > 4096:
+                self._cant.clear()
+            self._cant[bruto] = pq.nao_partir(ler_json(cels[0].format(), PROP_CELULA)
+                                              .get("extras_linha"))
+        return self._cant[bruto]
+
+    @staticmethod
+    def _simples(tabela, r: int) -> bool:
+        """Nenhuma celula mesclada na vertical comeca, termina ou passa na linha r."""
+        for c in range(tabela.columns()):
+            cel = tabela.cellAt(r, c)
+            if cel.rowSpan() != 1:
+                return False
+        return True
+
+    def _linhas_de_texto(self, cel):
+        """(primeiro bloco visivel da celula com linhas, ultimo), ou None."""
+        doc = self.layout.doc
+        bloco = doc.findBlock(cel.firstPosition())
+        fim = cel.lastPosition()
+        primeiro = ultimo = None
+        while bloco.isValid() and bloco.position() <= fim:
+            if bloco.isVisible() and bloco.layout() is not None and \
+                    bloco.layout().lineCount() > 0:
+                primeiro = primeiro or bloco
+                ultimo = bloco
+            bloco = bloco.next()
+        return None if primeiro is None else (primeiro, ultimo)
+
+    def _partida(self, cels) -> bool:
+        """A linha (as celulas `cels`) tem texto em mais de uma pagina."""
+        dl = self.layout.doc.documentLayout()
+        mapa = self.layout.mapa
+        paginas = set()
+        for cel in cels:
+            par = self._linhas_de_texto(cel)
+            if par is None:
+                continue
+            a, b = par
+            ra, rb = dl.blockBoundingRect(a), dl.blockBoundingRect(b)
+            lb = b.layout()
+            paginas.add(mapa.pagina_de_y(ra.top() + a.layout().lineAt(0).y() + 1))
+            paginas.add(mapa.pagina_de_y(rb.top() + lb.lineAt(lb.lineCount() - 1).y() + 1))
+            if len(paginas) > 1:
+                return True
+        return False
+
+    def _topo_da_linha(self, cels) -> float | None:
+        """Y (twips) do alto da linha: o do primeiro bloco de cada celula menos o acolchoamento
+        de cima e meia borda (a celula mais alta da linha nao tem deslocamento vertical)."""
+        dl = self.layout.doc.documentLayout()
+        topo = None
+        for cel in cels:
+            par = self._linhas_de_texto(cel)
+            if par is None:
+                continue
+            fmt = cel.format().toTableCellFormat()
+            y = dl.blockBoundingRect(par[0]).top() - \
+                (fmt.topPadding() + fmt.topBorder() / 2.0) * 15.0
+            topo = y if topo is None else min(topo, y)
+        return topo
+
+    def _altura_natural(self, tabela, cels) -> float | None:
+        """Altura (twips) da linha sem o empurrao para a de baixo (com o do w:trHeight)."""
+        maior = 0.0
+        for cel in cels:
+            fmt = cel.format().toTableCellFormat()
+            h = self._altura_da_celula(tabela, cel, fmt, fmt.topPadding(),
+                                       fmt.bottomPadding() - pq.empurrao(fmt))
+            if h is None:
+                return None
+            maior = max(maior, h)
+        return maior
+
+    def _margens_do_qt(self, tabela) -> tuple[float, float]:
+        """(acima, abaixo) twips que o Qt reserva na pagina para as linhas da tabela: a margem
+        do quadro raiz e a da tabela. Abaixo, o Qt 6 soma a margem de CIMA da tabela
+        (`effectiveBottomMargin` em `layoutFrame`), nao a de baixo; aqui como o Qt faz."""
+        raiz = self.layout.doc.rootFrame().frameFormat()
+        tf = tabela.format()
+        proprio = tf.topMargin() + tf.border() + tf.padding()
+        return ((raiz.topMargin() + raiz.border() + raiz.padding() + proprio) * 15.0,
+                (raiz.bottomMargin() + raiz.border() + raiz.padding() + proprio) * 15.0)
+
+    def _cabe_ou_desce(self, tabela, topo: float, cels, cab_altura: float):
+        """Decide a linha que comeca em `topo` (natural): None = cabe, ou o Qt ja' a leva
+        inteira, ou e' mais alta que a pagina (parte, como no Word); senao (falta em twips para
+        a primeira linha de texto de cada celula passar do pe' da pagina, pagina)."""
+        mapa = self.layout.mapa
+        altura = self._altura_natural(tabela, cels)
+        if altura is None:
+            return None
+        acima, abaixo = self._margens_do_qt(tabela)
+        raiz = self.layout.doc.rootFrame().frameFormat()
+        pagina = mapa.pagina_de_y(topo + 1.0)
+        pe = mapa.fim(pagina) - abaixo
+        pe_word = mapa.fim(pagina) - (raiz.bottomMargin() + raiz.border() + raiz.padding()) * 15.0
+        if topo + altura <= pe_word + 1.0:
+            # Cabe no Word. O Qt pode partir assim mesmo (ele reserva no pe' a margem de CIMA
+            # da tabela, `_margens_do_qt`): a linha fica como o Qt a faz, uma linha de texto
+            # na pagina seguinte, mais perto do Word que a linha inteira descendo (doc_14,
+            # quebra 3, docs/SPIKES.md "cantSplit").
+            return None
+        deslocamentos = [(c.format().toTableCellFormat().topPadding()
+                          + c.format().toTableCellFormat().topBorder() / 2.0) * 15.0
+                         for c in cels]
+        primeira = topo + min(deslocamentos)
+        if primeira >= pe:
+            return None  # o Qt ja' leva a linha inteira
+        if altura + cab_altura > mapa.fim(pagina) - mapa.topo(pagina) - acima - abaixo:
+            return None  # mais alta que a pagina: parte
+        return pe - primeira + 0.5, pagina
+
+    def _altura_do_cabecalho(self, tabela, celulas, cab: int) -> float:
+        total = 0.0
+        for r in range(cab):
+            h = self._altura_natural(tabela, celulas[r]) if celulas[r] else None
+            total += h or 0.0
+        return total
+
+    def _empurrao_desejado(self, tabela, r: int, celulas, cab: int):
+        """(empurrao em px96 na linha r-1, pagina) para a linha r; None = nada a ver aqui."""
+        cels, ant = celulas[r], celulas[r - 1]
+        atual = max(pq.empurrao(c.format()) for c in ant)
+        quer = self._nao_partir(cels) and self._simples(tabela, r) and \
+            self._simples(tabela, r - 1)
+        if not quer:
+            return (0.0, self.layout.mapa.pagina_de_y(self._topo_da_linha(ant) or 0.0)) \
+                if atual > pq.FOLGA else None
+        if atual <= pq.FOLGA and not self._partida(cels):
+            return None  # o caso comum: a linha nao esta' partida e nao tem empurrao
+        topo_ant = self._topo_da_linha(ant)
+        altura_ant = self._altura_natural(tabela, ant)
+        if topo_ant is None or altura_ant is None:
+            return (0.0, 0) if atual > pq.FOLGA else None
+        topo = topo_ant + altura_ant
+        res = self._cabe_ou_desce(tabela, topo, cels,
+                                  self._altura_do_cabecalho(tabela, celulas, cab))
+        pagina = self.layout.mapa.pagina_de_y(topo + 1.0)
+        if res is None:
+            return 0.0, pagina
+        falta, pagina = res
+        return falta / 15.0, pagina
+
+    def _quebra_da_tabela(self, u: _Unidade, anterior: _Unidade | None, cab: int):
+        """Mudancas na quebra antes da tabela: a linha que nao se parte e' a primeira, uma do
+        cabecalho repetido ou a primeira depois dele (o Qt leva a tabela inteira quando uma
+        delas desce), nao cabe na pagina e cabe numa pagina so'."""
+        tabela = u.tabela
+        tf = tabela.format()
+        tem = pq.eh_regra(tf)
+        quer = False
+        if anterior is not None and not (pq.tem_quebra_antes(tf) and not tem):
+            celulas = [_celulas_da_linha(tabela, r) for r in range(cab + 1)]
+            if all(celulas) and any(self._nao_partir(c) for c in celulas) and \
+                    all(self._simples(tabela, r) for r in range(cab + 1)) and \
+                    (tem or any(self._partida(c) for c in celulas)):
+                if tem:
+                    # sem a quebra, a tabela comecaria logo depois da unidade de cima; a conta
+                    # e' estimada: a quebra so' sai com folga (histerese de HISTERESE_LINHA_TW)
+                    fa = anterior.bloco.blockFormat().bottomMargin() \
+                        if anterior.bloco is not None else 0.0
+                    topo = self._fim(anterior) + (fa + tf.topMargin() + tf.border()
+                                                  + tf.padding()) * 15.0 + HISTERESE_LINHA_TW
+                else:
+                    topo = self._topo_da_linha(celulas[0])
+                cab_alt = 0.0
+                for r in range(cab + 1):
+                    if topo is None:
+                        break
+                    if self._nao_partir(celulas[r]) and \
+                            self._cabe_ou_desce(tabela, topo, celulas[r], cab_alt) is not None:
+                        quer = True
+                        break
+                    h = self._altura_natural(tabela, celulas[r])
+                    if h is None:
+                        break
+                    topo += h
+                    if r < cab:
+                        cab_alt += h
+        if quer == tem:
+            return None
+        novo = type(tf)(tf)
+        if quer:
+            pq.definir_regra(novo, True, 4)
+        else:
+            pq.definir_regra(novo, False)
+        return [(tabela, novo)]
+
     def _fim(self, u: _Unidade) -> float:
         """Onde o Qt deixa o y depois da unidade (twips)."""
         dl = self.layout.doc.documentLayout()
@@ -815,6 +1101,19 @@ def _celulas_da_linha(tabela, r: int) -> list:
         else:
             c += 1
     return cels
+
+
+class _LinhasDaTabela:
+    """As celulas de cada linha (`_celulas_da_linha`), lidas so' quando pedidas."""
+
+    def __init__(self, tabela) -> None:
+        self.tabela = tabela
+        self._lidas: dict[int, list] = {}
+
+    def __getitem__(self, r: int) -> list:
+        if r not in self._lidas:
+            self._lidas[r] = _celulas_da_linha(self.tabela, r)
+        return self._lidas[r]
 
 
 def _tabelas(quadro, faixa=None):
