@@ -52,7 +52,7 @@ PROP_WORD_VISIVEL = _USUARIO + 49
 PROP_WORD_ALTURA = _USUARIO + 50
 #: Celula (0.1.32, cantSplit): quanto (px96) o acolchoamento de baixo tem a mais para a linha de
 #: BAIXO, que nao se parte, comecar na pagina seguinte (`interface/paginacao`, "linha inteira").
-PROP_WORD_INTEIRA = _USUARIO + 51
+PROP_WORD_INTEIRA = _USUARIO + 60
 #: Todas as propriedades da compensacao (o copiar e a rejeicao de formatacao as conhecem).
 PROPS_DE_PAGINACAO = (PROP_WORD_ANTES, PROP_WORD_DEPOIS, PROP_WORD_LINHA, PROP_QUEBRA_REGRA,
                       PROP_WORD_VISIVEL)
