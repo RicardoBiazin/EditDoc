@@ -91,6 +91,8 @@ SUITES = [
      "hiperlinks e marcadores: arquivo, Ctrl+K, Ctrl+clique (sem navegador), teclado e limites"),
     ("teste_campos_gerais.py",
      "campos TOC, REF, DATE, IF, XE e FORMTEXT preservados; apagar meio campo grava XML valido"),
+    ("teste_sumario.py",
+     "sumario: inserir, atualizar inteiro e numeros, um desfazer, salvar e reabrir, TOC do Word"),
     ("teste_cabecalho_rodape.py",
      "cabecalho e rodape: .docx, oraculo, limites, tela, edicao no lugar, desfazer e faixa"),
     ("teste_estilos.py",
@@ -156,7 +158,7 @@ SUITES = [
 SEGUNDA_PASSADA_SEM_TRECHOS = ("teste_tabelas.py", "teste_paginacao_word.py", "teste_listas.py",
                                "teste_revisoes.py", "teste_flutuantes.py", "teste_pdf.py",
                                "teste_impressao.py", "teste_colunas.py", "teste_secoes.py",
-                               "teste_notas.py", "teste_desempenho.py")
+                               "teste_notas.py", "teste_desempenho.py", "teste_sumario.py")
 
 
 def main() -> int:

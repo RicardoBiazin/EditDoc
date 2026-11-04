@@ -19,6 +19,7 @@ from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import formatacao, tabelas
 from editdoc.edicao import listas as ed_listas
 from editdoc.edicao import notas as ed_notas
+from editdoc.edicao import sumario as ed_sumario
 from editdoc.modelo.folhas import passo_de_zoom
 
 
@@ -284,6 +285,13 @@ DEFINICOES = (
               dica="Ir para a nota de rodapé ou de fim anterior"),
     Definicao("opcoes_notas", "Opções de notas...", (),
               dica="Formato, início, reinício e posição das notas; converter rodapé e fim"),
+    # Referencias: sumario (TOC), como no Word.
+    Definicao("inserir_sumario", "Inserir sumário", (),
+              dica="Inserir no cursor um sumário com os títulos de nível 1 a 3"),
+    Definicao("atualizar_sumario", "Atualizar sumário", (),
+              dica="Atualizar o sumário inteiro: as entradas e os números de página"),
+    Definicao("atualizar_numeros_sumario", "Atualizar só os números de página", (),
+              dica="Atualizar só os números de página do sumário, sem mexer nas entradas"),
 )
 
 #: Estilos que os atalhos aplicam: id da acao -> nome canonico do Word.
@@ -557,6 +565,9 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
     executores["proxima_nota"] = lambda: ed_notas.proxima(editor)
     executores["nota_anterior"] = lambda: ed_notas.proxima(editor, anterior=True)
     executores["opcoes_notas"] = lambda: _chamar(inserir, "opcoes_notas")
+    executores["inserir_sumario"] = lambda: ed_sumario.inserir(editor)
+    executores["atualizar_sumario"] = lambda: ed_sumario.atualizar(editor)
+    executores["atualizar_numeros_sumario"] = lambda: ed_sumario.atualizar(editor, so_numeros=True)
     return executores
 
 

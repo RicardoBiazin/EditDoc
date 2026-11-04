@@ -68,6 +68,7 @@ NOMES_PT = {
 }
 for _n in range(1, 10):
     NOMES_PT[f"heading {_n}"] = f"Título {_n}"
+    NOMES_PT[f"toc {_n}"] = f"Sumário {_n}"  # sumario (TOC): as linhas de cada nivel
 _NOME_CANONICO = {v.lower(): k for k, v in NOMES_PT.items()}
 _TITULO = re.compile(r"heading ([1-9])")
 
@@ -411,6 +412,13 @@ def estilos_latentes() -> list[Estilo]:
                prioridade=99, oculto=True, revelar_ao_usar=True,
                paragrafo={"espaco_depois_tw": 0, "espacamento_linha_pct": 100},
                caractere={"tamanho_meio_pt": 20}),
+        # Sumario: as linhas de cada nivel ("toc N"), como o Word cria ao inserir o sumario
+        # (5 pt depois, 11 pt de recuo por nivel).
+        *(Estilo(f"TOC{n}", f"toc {n}", baseado_em="Normal", proximo="Normal", prioridade=39,
+                 revelar_ao_usar=True,
+                 paragrafo={"espaco_depois_tw": 100,
+                            **({"recuo_esquerdo_tw": 220 * (n - 1)} if n > 1 else {})})
+          for n in range(1, 10)),
     ]
 
 
