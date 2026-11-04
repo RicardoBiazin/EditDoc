@@ -2485,3 +2485,77 @@ passada com `EDITDOC_TRECHOS=0` nas suítes que abrem documento com tabela (`rod
 `SEGUNDA_PASSADA_SEM_TRECHOS`), e `teste_trechos.testar_padrao_e_desligado` confere o padrão e o
 escape. Os números do gate, do oráculo e da regressão são os da "Segunda rodada" (o código é o
 mesmo; só o padrão mudou), conferidos de novo na versão (CHANGELOG, 0.1.31).
+
+## Sumário: inserir e atualizar (branch `sumario`, sobre a 0.1.31, sem versão nova)
+
+**Referências > Sumário > Inserir sumário** e **Atualizar Sumário** (inteiro, ou só os números pela
+seta do botão), como no Word. Código em `modelo/sumario.py` (opções do TOC e linhas, sem Qt) e
+`edicao/sumario.py` (Qt); testes em `tests/teste_sumario.py` (99 verificações, nas duas passadas).
+
+#### Como ficou
+
+- O sumário é o campo que o EditDoc já preservava desde a 0.1.3: marca de início com o código
+  `TOC \o "1-3" \h \z \u` no começo da primeira linha, fim num parágrafo próprio depois da
+  última, como o Word grava. Cada linha: estilo "toc N" (Sumário N, criado por
+  `Estilos.garantir` com os valores do Word: 5 pt depois, 11 pt de recuo por nível), tabulação
+  à direita com pontilhado na largura útil da seção (nos extras do parágrafo, `w:tabs`), o texto
+  do título, e o número como resultado de um `PAGEREF _Toc... \h`, tudo dentro de um hiperlink
+  interno para o marcador. O título ganha o marcador oculto `_Toc` + 9 dígitos; o que já tem um
+  (sumário vindo do Word) fica com ele. Ctrl+clique na linha usa o caminho do link interno que já
+  existia (0.1.3): o cursor vai ao título.
+- Título = bloco com nível de estrutura (`PROP_NIVEL`: o do estilo "Título N" ou o direto), dentro
+  dos níveis do `\o` (sem `\o`, 1 a 9, como o Word). `\h` liga o hiperlink, `\n` tira o número.
+  `\t`, `\f`, `\l`, `\b`, `\c` e `\a` não são reconstruídos (aviso na barra de status); "só os
+  números" funciona em qualquer TOC que tenha PAGEREF.
+- O número é o que o PAGE mostraria na folha onde o título começa: `layout.pagina_do_cursor` (a
+  folha, pela camada `mapa`, com colunas) e `contexto_campos.valor("PAGE", folha)` (formato e
+  recomeço da seção). Testado com romanos e com a seção 2 recomeçando em 1 (a linha diz "1" na
+  folha 2).
+- Ordem do comando: layout em dia (`preparar_para_impressao`), as linhas entram com a página de
+  antes, o layout é refeito (o sumário empurra o texto) e os números são corrigidos (até 3
+  rodadas, o número novo pode mudar a largura da linha). A contraprova do teste tira a correção
+  (`RODADAS = 0`): a Introdução, posta no pé da folha por busca binária de linhas curtas (a medida
+  da fonte muda entre offscreen e Windows), fica com o número de antes e o teste acusa.
+
+#### Desfazer em um passo (medido)
+
+A primeira versão juntava a correção dos números ao passo do usuário com `joinPreviousEditBlock`.
+Medido na janela: entre o passo do usuário (33 comandos internos do Qt) e a correção, o
+`preparar_para_impressao` gravou ajustes anotados do layout (`ConjuntoDeNotas.passos` = {38, 42});
+a correção juntada ao último deles levou a contagem a 46, que a anotação não conhecia, e o Ctrl+Z
+desfazia só os números (o sumário ficava, com os números de antes). Agora a correção é um passo
+próprio e anotado (`edicao/sumario._anotar`): o desfazer do painel passa pelos anotados (47, 42,
+38) e desfaz o do usuário; o refazer refaz tudo. Os títulos são guardados por `QTextCursor` no
+começo do bloco, não por `QTextBlock`: partir o bloco no começo do título (cursor ali ao inserir)
+deixaria a referência no pedaço vazio.
+
+#### Sumário do Word sem atualizar
+
+Nada roda ao abrir nem ao salvar. No teste, o sumário de três parágrafos da fixture (hiperlink,
+PAGEREF, fim no 3º parágrafo) volta em c14n igual ao que o Word gravou, e o document.xml e o
+styles.xml salvos pela janela são os do escritor direto (nenhum estilo criado). Atualizado, as
+linhas saem dos títulos, os marcadores `_Toc1`/`_Toc2` do Word são reaproveitados, o REF de fora
+fica, o fim continua no parágrafo próprio, e o arquivo passa no validador, abre sem aviso e na
+conferência.
+
+#### Medidas (base = main 3cbf976, ramo = `sumario`)
+
+- Suíte completa, QT_QPA_PLATFORM ausente: 5022 verificações, 0 falhas (com a segunda passada
+  `EDITDOC_TRECHOS=0`); com `EDITDOC_TRECHOS=0` em tudo: 3695, 0 falhas.
+- Oráculo de páginas (17 .docx de Downloads, plataforma `windows`): JSON da base e do ramo
+  idênticos (páginas, quebras do Word, acerto por parágrafo e por linha).
+- Regressão abrir-salvar-reabrir-salvar em c14n dos mesmos 17: JSON idêntico ao da base (o doc
+  com salvo1 ≠ salvo2 é o mesmo dos dois lados, de antes).
+- Gate nos núcleos P (`start /affinity FFFF`, 3 rodadas intercaladas, p95 total em ms, mediana
+  base / ramo): simples 6,72 / 6,86; plano_terco 10,90 / 10,77; plano_celula 9,19 / 9,33;
+  plano_item 8,71 / 8,87; capa 9,86 / 8,84; sumario 10,28 / 10,31; corpo 8,15 / 7,56; cheia
+  13,91 / 13,52; revisoes 6,94 / 6,91. Ruído: o comando não toca no caminho da tecla.
+
+#### O que falta
+
+- Conferir no Word, sem reparo, um arquivo com sumário inserido e um atualizado pelo EditDoc
+  (a estrutura segue a do Word e o validador passa; a regra do projeto é abrir no Word).
+- A linha não traz o número de lista do título ("1.2"), que o Word põe com uma tabulação.
+- Com o controle de alterações ligado, inserir e atualizar não são marcados como revisão.
+- O título do sumário ("Sumário", estilo "TOC Heading") e o controle de conteúdo que o Word
+  põe em volta (galeria "Sumário automático") não são criados: só o campo.

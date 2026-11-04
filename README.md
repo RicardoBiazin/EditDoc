@@ -193,7 +193,18 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   colchetes finos e cinza que marcam o começo e o fim do campo (eles não saem na
   impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
   comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
-  e o total de páginas, como antes).
+  e o total de páginas, como antes, e o sumário quando você manda atualizar, abaixo).
+- **Sumário** (branch `sumario`), como no Word: **Referências > Sumário > Inserir sumário**
+  insere no cursor um sumário com os títulos de nível 1 a 3 (o campo `TOC \o "1-3" \h \z \u`
+  do Word), uma linha por título no estilo "Sumário 1", "Sumário 2"... (criado se o documento
+  não tem), com o texto, a tabulação pontilhada e o número da página. O título ganha um marcador
+  oculto (`_Toc...`), e a linha aponta para ele: Ctrl+clique na linha leva ao título.
+  **Atualizar Sumário** refaz as linhas a partir dos títulos de agora (título editado, novo ou
+  apagado) e os números; a seta do botão tem **Atualizar só os números de página**. O número é o
+  da página do EditDoc, com o formato e o recomeço da seção, como o campo de número de página.
+  Inserir e atualizar são um passo só de desfazer (Ctrl+Z). O sumário vindo do Word não muda
+  enquanto você não manda atualizar, e o arquivo salvo tem um sumário que o Word reconhece e
+  atualiza.
 - **Listas e numeração** (desde a 0.1.4): marcadores e numeração do Word como o Word mostra:
   vários níveis ("1.", "1.1.", "1.1.1."), títulos numerados pelo estilo (Título 1, 2 e 3 com
   "1", "1.1", "1.1.1"), letras, romanos, números por extenso, o marcador na fonte Symbol ou
@@ -407,8 +418,13 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   aparecem onde o Word os põe, com a largura de linha do Word (na tela, no PDF e na impressão).
   A régua continua sem aceitar recuo negativo ao arrastar. O rodapé (e o cabeçalho) com uma
   tabela seguida de parágrafo vazio tem a altura do Word desde a 0.1.27.
-- O sumário (e os outros campos) não são recalculados pelo EditDoc: abra no Word e
-  atualize (F9) se o texto mudou. O controle de conteúdo que envolve uma linha ou uma
+- O sumário só é refeito quando você manda (Referências > Atualizar Sumário); os outros campos
+  (REF, data, IF...) não são recalculados pelo EditDoc: abra no Word e atualize (F9). O
+  sumário com estilos próprios (`\t`), entradas TC (`\f`, `\l`) ou limitado a um marcador
+  (`\b`), e o índice de ilustrações (`\c`), não são refeitos: só os números de página. A linha
+  não traz o número de lista do título ("1.2"), que o Word põe; o número da página é o da
+  paginação do EditDoc, que pode diferir da do Word num documento longo (o Word recalcula ao
+  atualizar). O controle de conteúdo que envolve uma linha ou uma
   célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
   ou só o fim de um controle de conteúdo tira o controle ao salvar, com aviso.
 - Formatação: o filho de propriedade que o formato não define (arquivo de outro programa) sai,
@@ -438,7 +454,7 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
   caixa de texto perdem a referência ao salvar (com aviso), porque o EditDoc não os lê dali. A lista numerada dentro da caixa volta (desde a 0.1.4).
 - Fora desta versão: revisão com controle de alterações,
-  gerar ou atualizar sumário e índices, mala direta, editar equações e formas (elas são
+  índice remissivo e índice de ilustrações, mala direta, editar equações e formas (elas são
   preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), seção contínua com colunas na tela (preservada no arquivo), ortografia, `.doc`, RTF,
   ODT e macros (nunca).
 - Numeração de listas: o EditDoc não edita a definição de uma lista do arquivo (fonte,
