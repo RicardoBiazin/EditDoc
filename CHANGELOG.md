@@ -1,3 +1,57 @@
+## 0.1.32 - 2026-11-04
+
+Formulários do Office montados em tabela. Um modelo de "tarefas semanais" do Office aberto no Word
+e no EditDoc mostrava sete diferenças, todas do EditDoc; quatro vinham de uma causa só.
+
+- **Célula com parágrafo de estilo** (o defeito de fundo): o Qt guarda o formato da célula (fundo,
+  bordas, alinhamento vertical e o JSON da célula com a altura da linha) no mesmo caractere que o
+  formato de caractere do primeiro bloco dela. Ao abrir, o parágrafo cujo estilo tem propriedade de
+  caractere trocava esse formato e apagava o da célula. Na tela: a primeira coluna sem fundo e sem a
+  barra colorida (os rótulos pareciam fora da tabela), as linhas da altura do texto (o `w:trHeight`
+  é lido do JSON da primeira célula), a linha sob o cabeçalho sumida (borda de cima das células do
+  cabeçalho da grade) e os rótulos Nome/Mês/Ano fora do lugar (sem o `w:vAlign` bottom). No arquivo
+  salvo: o `w:shd`, o `w:tcBorders`, o `w:vAlign`, a mescla vertical e o `w:trPr` dessas células
+  e linhas se perdiam, sem aviso. Agora o formato do bloco é juntado ao da célula
+  (`para_qt._comeco_de_celula`).
+- **Maiúsculas do estilo**: `w:caps`, `w:smallCaps`, `w:spacing` (entre letras) e `w:w` do rPr de
+  um ESTILO não chegavam à tela (só os do próprio run). Agora vêm do estilo (`Estilo.aparencia`),
+  com o `w:caps w:val="0"` do estilo filho desligando o da base, e acompanham a troca de estilo.
+  Só tela: nada vira formatação direta no arquivo.
+- **Caixa de fonte**: no texto sem família própria (o cursor ao abrir) ela ficava com a fonte da
+  interface ("Segoe UI"); agora mostra a fonte padrão do documento (a do tema, Calibri no modelo).
+  A resolução de `asciiTheme`/`majorHAnsi` pelo tema já estava certa.
+- **Moldura do controle de conteúdo**: o colchete de cada `w:sdt` aparecia sempre. Como no Word, agora
+  aparece só no controle onde está o cursor, nunca no de aparência oculta
+  (`w15:appearance="hidden"`, o caso de todos os controles do modelo), e em todos com as marcas de
+  formatação ligadas. O arquivo não muda.
+
+Fica como estava (docs/SPIKES.md, 0.1.32): o corpo do EditDoc tem a mesma altura em todas as páginas,
+a da página com o rodapé mais alto; no modelo (rodapé só da 2ª página em diante, `titlePg`) a
+1ª página do Word tem 455 twips a mais, e o parágrafo vazio do fim, que no Word cabe, desce para
+uma 2ª página no EditDoc. A marca do controle de conteúdo continua com largura (o cursor anda sobre
+ela). O `w:vAlign` de célula de continuação de mescla vertical continua não voltando ao arquivo
+(o Word usa o da célula de início).
+
+Prova: `tests/teste_formulario.py` (estruturas do modelo geradas por código, 30 verificações, cada
+uma com contraprova), suíte completa nas duas passadas, oráculo de páginas e regressão c14n nos 17
+`.docx` de referência, gate de desempenho nos núcleos P (números abaixo).
+
+Gate (p95 em ms da tecla com a pintura, núcleos P fixos, 0.1.31 e 0.1.32 intercaladas; mediana
+de 3 rodadas, e de 6 nos pontos do plano e no corpo, que variaram de 9 a 19 ms nas duas versões
+nesta máquina):
+
+| Ponto | 0.1.31 | 0.1.32 |
+|---|---|---|
+| documento simples | 6,4 | 6,6 |
+| plano, 1/3 | 14,0 | 14,2 |
+| plano, célula | 11,7 | 10,4 |
+| plano, item de lista | 8,9 | 8,5 |
+| manual (capa, sumário, corpo) | 8,9 / 10,1 / 8,7 | 9,0 / 9,9 / 8,7 |
+| capa cheia, antes das âncoras | 15,2 | 14,5 |
+| 2000 revisões | 7,0 | 7,2 |
+
+Nenhuma piora consistente (todas abaixo de 0,3 ms, dentro do ruído).
+
 ## 0.1.31 - 2026-11-02
 
 Digitar antes de tabelas sem refazer as tabelas de baixo. No documento com tabelas, o layout do

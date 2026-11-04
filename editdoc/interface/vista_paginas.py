@@ -47,6 +47,7 @@ from editdoc.ponte_qt import notas as pq_notas
 from editdoc.ponte_qt import paginacao as pq_paginacao
 from editdoc.ponte_qt import flutuantes as pq_flutuantes
 from editdoc.ponte_qt import listas as pq_listas
+from editdoc.ponte_qt import marcas as pq_marcas
 from editdoc.ponte_qt import propriedades as pq_props
 from editdoc.ponte_qt import revisoes as pq_revisoes
 from editdoc.ponte_qt import secoes as pq_secoes
@@ -311,7 +312,8 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
         ctx.selections = selecoes
     # Imagem reduzida sem suavizacao sai serrilhada (0.1.18): o Qt amostra o pixel mais proximo.
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    layout.doc.documentLayout().draw(painter, ctx)
+    with pq_marcas.com_marcas_de_formatacao(marcas):  # 0.1.32: moldura dos controles
+        layout.doc.documentLayout().draw(painter, ctx)
     # Numeros e marcadores das listas (0.1.4): pintados aqui, na funcao unica da folha.
     pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
     # Bordas de paragrafo e de trecho e preenchimento das tabulacoes (0.1.5).
@@ -379,7 +381,8 @@ def _desenhar_colunas(painter, layout: LayoutPaginado, n: int, transf: QTransfor
         if selecoes:
             ctx.selections = selecoes
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        layout.doc.documentLayout().draw(painter, ctx)
+        with pq_marcas.com_marcas_de_formatacao(marcas):
+            layout.doc.documentLayout().draw(painter, ctx)
         pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
         pq_props.desenhar(painter, layout.doc, ctx.clip)
         pq_revisoes.desenhar(painter, layout.doc, ctx.clip)
@@ -505,7 +508,8 @@ def desenhar_faixas(painter, layout: LayoutPaginado, n: int, transf: QTransform,
             fmt.setBackground(COR_SELECAO)
             sel.format = fmt
             ctx.selections = [sel]
-        faixa.doc.documentLayout().draw(painter, ctx)
+        with pq_marcas.com_marcas_de_formatacao(marcas):
+            faixa.doc.documentLayout().draw(painter, ctx)
         pq_listas.desenhar_rotulos(painter, faixa.doc, None)
         pq_props.desenhar(painter, faixa.doc, None)
         if marcas:
@@ -555,6 +559,9 @@ class VistaPaginas(QAbstractScrollArea):
         self._faixas_pintadas: OrderedDict = OrderedDict()
         self._bytes_faixas = 0
         self._caret_ligado = True
+        #: Controle de conteudo do cursor (0.1.32, `_conferir_controle`): (caret, revisao).
+        self._chave_controle: tuple | None = None
+        self._bloco_controle: int | None = None
         #: Exibir (M6): marcas de formatacao e folhas lado a lado.
         self._marcas = False
         self._colunas = 1
@@ -1273,6 +1280,41 @@ class VistaPaginas(QAbstractScrollArea):
         self.verticalScrollBar().setValue(int(m.y_da_linha(linha) - folga))
 
     # ----- pintura --------------------------------------------------------
+    def _conferir_controle(self) -> None:
+        """Controle de conteudo do cursor (0.1.32): o colchete aparece so' nele, como a
+        moldura do Word (`pq_marcas.controle_em`). Quando o cursor entra ou sai de um, os
+        tiles das marcas do velho e do novo saem do cache. Documento sem controle: nada."""
+        doc = self.layout_pag.doc
+        if not pq_marcas.tem_controles(doc):
+            return
+        pos = self._posicao_caret() if self._faixa_editada() is None else None
+        chave = (pos, doc.revision())
+        if chave == self._chave_controle:
+            return
+        velho = getattr(doc, "_controle_ativo", None)
+        bloco = doc.findBlock(pos) if pos is not None else None
+        numero = bloco.blockNumber() if bloco is not None and bloco.isValid() else None
+        if velho is None and numero is not None and numero == self._bloco_controle and \
+                "￼" not in bloco.text():
+            # Digitando fora de controle num bloco sem marca: continua fora (sem a busca, que
+            # anda ate' LIMITE_DE_BLOCOS para tras a cada tecla).
+            self._chave_controle = chave
+            return
+        self._chave_controle = chave
+        self._bloco_controle = numero
+        novo = pq_marcas.controle_em(doc, pos) if pos is not None else None
+        if novo == velho:
+            return
+        doc._controle_ativo = novo
+        ultimo = max(0, doc.characterCount() - 1)
+        for par in (velho, novo):
+            if not par:
+                continue
+            topo = self._extensao(doc.findBlock(min(par[0], ultimo)))[0]
+            base = self._extensao(doc.findBlock(min(par[1], ultimo)))[1]
+            self._invalidar_faixa(min(topo, base) - self.FOLGA_VERTICAL_TW,
+                                  max(topo, base) + self.FOLGA_VERTICAL_TW)
+
     def _conferir_rotulos(self, numerador) -> None:
         """Numeros de lista que mudaram desde a pintura anterior (0.1.15), mesmo que outro tenha
         recalculado antes (a janela pede o rotulo do cursor depois da tecla, e o `atualizar` da
@@ -1337,6 +1379,7 @@ class VistaPaginas(QAbstractScrollArea):
                 self._atualizar_geometria()
         self._conferir_flutuantes()
         self._aplicar_pendencias()
+        self._conferir_controle()
         vp = self.viewport()
         p = QPainter(vp)
         p.fillRect(vp.rect(), COR_FUNDO)

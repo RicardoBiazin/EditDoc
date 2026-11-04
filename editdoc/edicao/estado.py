@@ -83,6 +83,12 @@ def ler(editor: QTextEdit) -> EstadoDoCursor:
     else:
         alinhamento = "esquerda"
 
+    if not familias:
+        # 0.1.32: texto sem familia propria usa a fonte padrao do documento (a do docDefaults,
+        # que no arquivo do Word vem do tema). Sem isto a caixa ficava com a fonte anterior
+        # (a da interface, "Segoe UI", logo ao abrir).
+        padrao = doc.defaultFont().families() or [doc.defaultFont().family()]
+        familias = [f for f in padrao if f]
     return EstadoDoCursor(
         familia=familias[0] if familias else "",
         tamanho=float(tamanho),

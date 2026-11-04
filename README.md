@@ -129,6 +129,15 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   de antes (se algo parecer errado na tela de um documento com tabela), abra o EditDoc com a
   variável de ambiente `EDITDOC_TRECHOS=0`: no Prompt de Comando,
   `set EDITDOC_TRECHOS=0` e depois `EditDoc.exe`.
+- **Formulários do Office** (0.1.32): nos modelos do Office montados em tabela (um de tarefas
+  semanais, por exemplo), a célula cujo primeiro parágrafo tem estilo com fonte própria mantém o
+  fundo, as bordas, o alinhamento vertical e a altura da linha, na tela e no arquivo salvo (até a
+  0.1.31 o EditDoc os apagava, e o arquivo salvo perdia o sombreamento dessas células). As
+  maiúsculas, o versalete e o espaçamento entre letras que vêm do estilo (Título em
+  "TAREFAS SEMANAIS") aparecem na tela; a caixa de fonte mostra a fonte do tema quando o texto não
+  tem fonte própria; e o colchete do controle de conteúdo aparece só no controle onde está o
+  cursor (nunca no de aparência oculta), como a moldura do Word, ou em todos com as marcas de
+  formatação ligadas.
 - **Digitação rápida em documento pesado** (0.1.8): num manual real de 51 páginas (capa com
   imagem de página inteira e caixas de texto, sumário com links e números de página,
   49 desenhos), digitar na capa, no sumário e no corpo fica abaixo de 16 ms por tecla
@@ -253,7 +262,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.31-win64.zip` da página
+1. Baixe `EditDoc-0.1.32-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -494,7 +503,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.31-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.32-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

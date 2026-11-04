@@ -137,6 +137,30 @@ def props_de_rpr(rpr, fontes_tema: dict) -> dict:
     return out
 
 
+def aparencia_de_rpr(rpr) -> dict:
+    """O que a tela mostra de um w:rPr de estilo e o modelo nao guarda (0.1.32): maiusculas
+    (w:caps), versalete (w:smallCaps), espacamento entre caracteres (w:spacing) e escala (w:w).
+    O on/off vale com False, para o estilo filho desligar o da base."""
+    out: dict = {}
+    if rpr is None:
+        return out
+    for f in rpr:
+        loc = _local(f)
+        if loc == "caps":
+            out["maiusculas"] = _onoff(f)
+        elif loc == "smallCaps":
+            out["versalete"] = _onoff(f)
+        elif loc == "spacing":
+            v = _inteiro(_atr(f, "val"))
+            if v is not None:
+                out["espacamento_tw"] = min(max(v, -1584), 31680)
+        elif loc == "w":
+            v = _inteiro(_atr(f, "val"))
+            if v is not None:
+                out["escala_pct"] = min(max(v, 1), 600)
+    return out
+
+
 def props_de_ppr(ppr) -> dict:
     """Propriedades de paragrafo que o EditDoc entende num w:pPr, mais "nivel"."""
     out: dict = {}
@@ -235,6 +259,7 @@ def ler_estilos(raiz, dados: bytes, fontes_tema: dict, numeracao=None,
             e.nivel = par.pop("nivel", None)
             e.paragrafo = par
             e.caractere = props_de_rpr(el.find(q("rPr")), fontes_tema)
+            e.aparencia = aparencia_de_rpr(el.find(q("rPr")))
             if ppr is not None:
                 e.lista, e.lista_nivel, e.numeracao = _lista_do_estilo(ppr, numeracao, coletor)
             if e.nivel is None and tipo == "paragrafo":

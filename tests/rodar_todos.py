@@ -121,6 +121,8 @@ SUITES = [
      "0.1.17: paginacao do Word (linha da fonte, espaco somado, viuvas, keepNext, tabela); oraculo"),
     ("teste_trechos.py",
      "0.1.31: layout por trechos (padrao com tabela): as linhas e a pintura do layout do Qt"),
+    ("teste_formulario.py",
+     "0.1.32: formulario do Office: celula com estilo, altura da linha, maiusculas do estilo, controles"),
     ("teste_mover_redimensionar.py",
      "0.1.9: mover e redimensionar objetos (mouse, setas, dialogo), quebra de texto, linha <-> flutuante, cabecalho, VML"),
     ("teste_notas.py",
@@ -156,7 +158,7 @@ SUITES = [
 SEGUNDA_PASSADA_SEM_TRECHOS = ("teste_tabelas.py", "teste_paginacao_word.py", "teste_listas.py",
                                "teste_revisoes.py", "teste_flutuantes.py", "teste_pdf.py",
                                "teste_impressao.py", "teste_colunas.py", "teste_secoes.py",
-                               "teste_notas.py", "teste_desempenho.py")
+                               "teste_notas.py", "teste_desempenho.py", "teste_formulario.py")
 
 
 def main() -> int:

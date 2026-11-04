@@ -110,6 +110,10 @@ class Estilo:
     #: EditDoc grava a referencia como veio e NAO cria a definicao; na tela vale a aparencia
     #: padrao do Word para os latentes conhecidos (`ESTILOS_LATENTES_WORD`) e nada para o resto.
     virtual: bool = False
+    #: Aparencia de caractere do rPr do estilo que o modelo nao representa (0.1.32): so' a tela
+    #: a usa ("maiusculas", "versalete": bool; "espacamento_tw", "escala_pct": int). O XML do
+    #: estilo continua sendo a fonte do arquivo; nada daqui e' gravado.
+    aparencia: dict = field(default_factory=dict)
 
     def nome_exibido(self) -> str:
         return nome_exibido(self.nome)
@@ -213,6 +217,15 @@ class Estilos:
         car = dict(car)
         car.update(self.resolver_caractere(sid_car))
         return car
+
+    def aparencia_de(self, sid_par: str | None, sid_car: str | None) -> dict:
+        """A aparencia de tela (0.1.32, `Estilo.aparencia`) do texto: a cadeia do estilo de
+        paragrafo e, por cima, a do de caractere. Um False (w:caps w:val="0") desliga o da base."""
+        ap: dict = {}
+        for sid in (sid_par or self.id_padrao(), sid_car):
+            for e in reversed(self.cadeia(sid)):
+                ap.update(e.aparencia)
+        return ap
 
     def numeracao_de(self, sid: str | None) -> str | None:
         for e in self.cadeia(sid):

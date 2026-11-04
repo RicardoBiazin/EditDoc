@@ -103,6 +103,35 @@ def aplicar_rpr(cf: QTextCharFormat, extras: str | None) -> None:
         cf.setFontStretch(int(ap.escala_pct))
 
 
+def aplicar_aparencia_do_estilo(cf: QTextCharFormat, ap: dict | None) -> None:
+    """Maiusculas, versalete, espacamento e escala que vem do ESTILO (0.1.32, `Estilo.aparencia`).
+    Chamar antes de `aplicar_rpr`: o rPr do proprio run vence. So' a tela: nada disso volta ao
+    modelo (o `de_qt` le' os extras, nao a capitalizacao do formato)."""
+    if not ap:
+        return
+    if ap.get("maiusculas"):
+        cf.setFontCapitalization(QFont.Capitalization.AllUppercase)
+    elif ap.get("versalete"):
+        cf.setFontCapitalization(QFont.Capitalization.SmallCaps)
+    if ap.get("espacamento_tw"):
+        cf.setFontLetterSpacingType(QFont.SpacingType.AbsoluteSpacing)
+        cf.setFontLetterSpacing(ap["espacamento_tw"] / _TWIPS_POR_PX96)
+    if ap.get("escala_pct") and ap["escala_pct"] != 100:
+        cf.setFontStretch(int(ap["escala_pct"]))
+
+
+def trocar_aparencia_do_estilo(cf: QTextCharFormat, ap: dict | None) -> None:
+    """O estilo do texto mudou (0.1.32): sai a aparencia do estilo velho, entra a do novo, e a
+    do rPr proprio do run (os extras) volta por cima."""
+    for prop in (P.FontCapitalization, P.FontLetterSpacing, P.FontLetterSpacingType,
+                 P.FontStretch):
+        cf.clearProperty(prop)
+    aplicar_aparencia_do_estilo(cf, ap)
+    extras = extras_de_rpr(cf)
+    if extras:
+        aplicar_rpr(cf, extras)
+
+
 # -- paragrafo ---------------------------------------------------------------------------
 
 def extras_de_ppr(fmt: QTextFormat) -> str | None:

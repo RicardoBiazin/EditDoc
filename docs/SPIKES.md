@@ -2485,3 +2485,77 @@ passada com `EDITDOC_TRECHOS=0` nas suítes que abrem documento com tabela (`rod
 `SEGUNDA_PASSADA_SEM_TRECHOS`), e `teste_trechos.testar_padrao_e_desligado` confere o padrão e o
 escape. Os números do gate, do oráculo e da regressão são os da "Segunda rodada" (o código é o
 mesmo; só o padrão mudou), conferidos de novo na versão (CHANGELOG, 0.1.31).
+
+## 0.1.32: um formulário do Office (modelo de tarefas semanais) no Word e no EditDoc
+
+O mesmo arquivo (um modelo do Office: título, Nome/Mês/Ano, grade colorida de 5 dias × 6 linhas)
+aberto no Word e na 0.1.31. Sete diferenças na tela; a investigação, item a item, pelo XML de uma
+cópia do arquivo (o original não entra no repositório; as estruturas estão geradas por código em
+`tests/teste_formulario.py`).
+
+Estrutura: duas tabelas. A de cima (`Table Grid` com as bordas desligadas, grade 6138/3955/2885/1052)
+tem o título em mescla vertical na primeira coluna; na linha 1 os rótulos "Nome:", "Mês:", "Ano:"
+(estilo "Cabeçalho do formulário", `w:vAlign` bottom); na linha 2 os valores (estilo
+"Informações"). A de baixo (sem estilo de tabela, grade 1276 + 5 × 2563) tem a linha dos dias
+(estilo "Dia/Data", com `w:framePr` no estilo) e seis linhas de `w:trHeight` 1396; a primeira
+coluna é o rótulo da linha (estilo "Categoria", baseado no "Cabeçalho do formulário"), com fundo
+mais forte (`themeFillTint` 66) e borda direita de `sz` 18. Todo texto está em controle de
+conteúdo (`w:sdt`) com `w15:appearance w15:val="hidden"`.
+
+| Item | Causa | Correção |
+|---|---|---|
+| 2, 3, 7 e parte do 4 | O formato da célula do Qt e o formato de caractere do primeiro bloco dela são o MESMO caractere (medido: `setBlockCharFormat` no primeiro bloco troca o `QTextTableCell.format()`, e um `setFormat` depois volta). Os parágrafos "Categoria", "Dia/Data", "Título", "Cabeçalho do formulário" e "Informações" têm estilo com caractere: `_escrever_paragrafo` trocava o formato e apagava fundo, bordas, `vAlign` e o `PROP_CELULA` (com a altura da linha e o `trPr`). | `mergeBlockCharFormat` no começo de célula |
+| 1 | `w:caps` (e `w:spacing` 20) no rPr do ESTILO: o leitor de estilos só guarda o que o modelo representa (negrito, cor, fonte...), e a tela só aplicava o `w:caps` dos extras do run | `Estilo.aparencia`, aplicada na tela |
+| 4 (resto) | Com o layout por trechos, a mescla vertical da tabela de cima parecia deslocar a linha 2 uma coluna (o valor "Nome" embaixo do título). Era o mesmo formato apagado: com a correção da célula a linha 2 fica no lugar nos dois layouts (`EDITDOC_TRECHOS=0` já mostrava certo) | a mesma da célula |
+| 5 | A fonte do tema estava certa (theme: Calibri nas duas; o `minorHAnsi` do docDefaults vira Calibri). O cursor ao abrir fica no bloco estrutural antes da tabela, sem família própria; `estado.ler` devolvia "" e a caixa ficava com a fonte que tinha (a da interface) | família padrão do documento quando o formato não tem |
+| 6 | O colchete da marca de controle era pintado sempre; os controles do modelo são de aparência oculta (o Word nunca mostra a moldura deles) | colchete só no controle do cursor (não oculto) ou com as marcas de formatação |
+
+A perda no arquivo, que nenhum gate pegava: salvo pela 0.1.31, o modelo perdia 6 de 36 `w:shd`,
+12 de 42 `w:tcBorders`, os 8 `w:vAlign`, 9 `w:trPr` (`trHeight`, `cantSplit`) e uma mescla
+vertical, e a primeira e a segunda gravação diferiam (`salvo1 == salvo2` falso na regressão). A
+conferência pós-gravação não compara a formatação da célula; fica como pendência (uma conferência
+nova pode recusar arquivos que hoje salvam: medir antes nos 17).
+
+Oráculo de páginas (17 `.docx`, plataforma windows, base 0.1.31 e 0.1.32 na mesma hora): 13 iguais.
+Mudam os três do manual (49 → 48: os estilos de título dele têm `w:spacing` e `w:caps`/`w:smallCaps`,
+que agora valem; o `Pages` do `app.xml` de uma gravação antiga do Word é 48, seção "Páginas: Word ×
+EditDoc" acima) e o modelo (1 → 2). No modelo a grade agora tem as linhas do Word (2,46 cm), e o
+parágrafo vazio do fim desce para a 2ª página: o corpo do EditDoc tem a altura da página com o
+rodapé mais alto (rodapé com PAGE da 2ª página em diante, 642 twips embaixo); a 1ª página do Word,
+com `titlePg` e sem rodapé de primeira página, usa a margem de 187 e tem 455 twips a mais. Corpo de
+altura diferente por página é a limitação da 0.1.8 (o `QTextDocument` pagina com um `pageSize` só);
+não entra aqui.
+
+Regressão abrir-salvar-reabrir-salvar (c14n contra a 0.1.31): 15 iguais. Diferem só no
+`word/document.xml` o modelo e um documento de 26 páginas, e só por linhas A MAIS (diff das duas
+gravações): no modelo 12 `w:tcBorders`, 9 `w:trPr`, 8 `w:vAlign`, 1 `w:vMerge` e os `w:shd`
+devolvidos; no de 26 páginas, 4 `w:vAlign` de células cujo primeiro parágrafo tem estilo com
+caractere. Nos dois, a 1ª e a 2ª gravação agora são iguais. No de 26 páginas ainda faltam 6
+`w:vAlign` de células de continuação de mescla vertical (já faltavam; o Word usa o `vAlign` da
+célula de início; pendência).
+
+Layout por trechos: com o formato da célula apagado (o estado da 0.1.31), a estrutura do teste
+(cabeçalho com mescla vertical e grade com rótulo de estilo) derruba o processo ao abrir (access
+violation em `trechos._montar_trecho`, `b.layout().formats()`), na 0.1.31 e na 0.1.32 com a
+correção sabotada; o arquivo real do modelo não caía. Com a correção a estrutura não chega lá; a
+causa no trechos não foi isolada. A contraprova da altura no teste roda com `EDITDOC_TRECHOS=0`.
+
+Desempenho: a moldura do controle procura o controle do cursor andando até 400 blocos para trás;
+digitando fora de controle num bloco sem marca não há busca (`_conferir_controle`), e documento sem
+controle não passa por ali. Gate abaixo.
+
+Gate (p95 em ms da tecla com a pintura, núcleos P fixos, 0.1.31 e 0.1.32 intercaladas; mediana
+de 3 rodadas, e de 6 nos pontos do plano e no corpo, que variaram de 9 a 19 ms nas duas versões
+nesta máquina):
+
+| Ponto | 0.1.31 | 0.1.32 |
+|---|---|---|
+| documento simples | 6,4 | 6,6 |
+| plano, 1/3 | 14,0 | 14,2 |
+| plano, célula | 11,7 | 10,4 |
+| plano, item de lista | 8,9 | 8,5 |
+| manual (capa, sumário, corpo) | 8,9 / 10,1 / 8,7 | 9,0 / 9,9 / 8,7 |
+| capa cheia, antes das âncoras | 15,2 | 14,5 |
+| 2000 revisões | 7,0 | 7,2 |
+
+Nenhuma piora consistente (todas abaixo de 0,3 ms, dentro do ruído).

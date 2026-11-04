@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import json
+import re
 
 from PySide6.QtCore import QPointF, QSizeF
 from PySide6.QtGui import (QColor, QFontMetricsF, QPen, QPyTextObject, QTextCharFormat,
@@ -47,6 +48,8 @@ PROPS_DE_MARCA = (QTextFormat.Property.ObjectType, PROP_MARCA)
 _PROFUNDIDADE = 8
 
 _impressao = {"ativa": False}
+#: Marcas de formatacao ligadas na pintura em andamento (0.1.32): mostram todo controle de conteudo.
+_formatacao = {"ligada": False}
 
 
 @contextlib.contextmanager
@@ -58,6 +61,123 @@ def sem_pintar_marcas():
         yield
     finally:
         _impressao["ativa"] = anterior
+
+
+@contextlib.contextmanager
+def com_marcas_de_formatacao(ligadas: bool):
+    """A pintura da tela diz se as marcas de formatacao estao ligadas (0.1.32)."""
+    anterior = _formatacao["ligada"]
+    _formatacao["ligada"] = bool(ligadas)
+    try:
+        yield
+    finally:
+        _formatacao["ligada"] = anterior
+
+
+# -- controle de conteudo na tela (0.1.32) ----------------------------------------------
+#
+# O Word so' mostra a moldura de um controle de conteudo (w:sdt) com o cursor dentro dele, e
+# nunca a do controle com aparencia oculta (w15:appearance w15:val="hidden"). O colchete da
+# marca segue isso: pintado so' no controle do cursor (`doc._controle_ativo`, as posicoes das
+# duas marcas, que a vista atualiza) ou com as marcas de formatacao ligadas. O arquivo nao muda.
+
+_OCULTA = re.compile(rb"appearance\b[^>]*\bval=\"hidden\"")
+#: Quantos blocos a busca do controle do cursor anda para tras e para frente.
+LIMITE_DE_BLOCOS = 400
+
+
+def aparencia_oculta(marca: MarcaConteudo) -> bool:
+    return bool(marca.propriedades) and _OCULTA.search(marca.propriedades) is not None
+
+
+def esquecer_controles(doc: QTextDocument) -> None:
+    """Documento esvaziado (preencher de novo): sem controle ate' uma marca entrar."""
+    try:
+        doc._tem_controles = False
+        doc._controle_ativo = None
+    except (AttributeError, RuntimeError):
+        pass
+
+
+def tem_controles(doc: QTextDocument) -> bool:
+    return bool(getattr(doc, "_tem_controles", False))
+
+
+def _conteudos_do_bloco(bloco):
+    """(posicao, MarcaConteudo) das marcas de controle do bloco, em ordem."""
+    saida = []
+    if CARACTERE_OBJETO not in bloco.text():
+        return saida  # bloco sem caractere de objeto: sem marca (barato, sem andar fragmentos)
+    it = bloco.begin()
+    while not it.atEnd():
+        frag = it.fragment()
+        it += 1
+        if not frag.isValid():
+            continue
+        cf = frag.charFormat()
+        if cf.objectType() != TIPO_MARCA_CAMPO:
+            continue
+        m = marca_de(cf)
+        if isinstance(m, MarcaConteudo):
+            saida.extend((frag.position() + i, m) for i, c in enumerate(frag.text())
+                         if c == CARACTERE_OBJETO)
+    return saida
+
+
+def _fim_do_controle(doc: QTextDocument, inicio: int, marca: MarcaConteudo) -> int | None:
+    """A posicao da marca de fim do controle que comeca em `inicio`."""
+    bloco = doc.findBlock(inicio)
+    nivel = 0
+    for _ in range(LIMITE_DE_BLOCOS):
+        if not bloco.isValid():
+            return None
+        for pos, m in _conteudos_do_bloco(bloco):
+            if pos <= inicio:
+                continue
+            if m.tipo == "inicio":
+                nivel += 1
+            elif marca.par and m.par:
+                if m.par == marca.par:
+                    return pos
+            elif nivel == 0:
+                return pos
+            else:
+                nivel -= 1
+        bloco = bloco.next()
+    return None
+
+
+def controle_em(doc: QTextDocument, pos: int) -> tuple[int, int] | None:
+    """(inicio, fim): as posicoes das marcas do controle de conteudo mais interno, nao oculto,
+    que tem o cursor `pos` dentro (entre as duas marcas). None fora de controle."""
+    if not tem_controles(doc):
+        return None
+    bloco = doc.findBlock(pos)
+    abertos = 0
+    for _ in range(LIMITE_DE_BLOCOS):
+        if not bloco.isValid():
+            return None
+        for p, m in reversed(_conteudos_do_bloco(bloco)):
+            if p >= pos:
+                continue
+            if m.tipo == "fim":
+                abertos += 1
+                continue
+            if abertos:
+                abertos -= 1
+                continue
+            fim = _fim_do_controle(doc, p, m)
+            if fim is not None and fim >= pos and not aparencia_oculta(m):
+                return p, fim
+        bloco = bloco.previous()
+    return None
+
+
+def _pintar_conteudo(doc, pos: int) -> bool:
+    if _formatacao["ligada"]:
+        return True
+    ativo = getattr(doc, "_controle_ativo", None)
+    return bool(ativo) and pos in ativo
 
 
 # -- JSON ------------------------------------------------------------------------------
@@ -185,6 +305,11 @@ def formato_de_marca(base: QTextCharFormat, marca) -> QTextCharFormat:
 
 
 def inserir(cursor: QTextCursor, marca, base: QTextCharFormat | None = None) -> None:
+    if isinstance(marca, MarcaConteudo):
+        try:
+            cursor.document()._tem_controles = True  # 0.1.32: a vista procura o do cursor
+        except (AttributeError, RuntimeError):
+            pass
     cursor.insertText(CARACTERE_OBJETO, formato_de_marca(base or QTextCharFormat(), marca))
 
 
@@ -254,6 +379,8 @@ class ManipuladorDeMarca(QPyTextObject):
             marca = marca_de(fmt)
             if marca is None:
                 return
+            if isinstance(marca, MarcaConteudo) and not _pintar_conteudo(doc, pos):
+                return  # 0.1.32: como o Word, so' o controle do cursor (ver `controle_em`)
             painter.save()
             caneta = QPen(QColor(0x6f, 0x8f, 0xb5) if isinstance(marca, MarcaConteudo)
                           else QColor(0x9a, 0xa3, 0xad))

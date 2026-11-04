@@ -380,15 +380,27 @@ def _formato_do_bloco(p: Paragrafo, res: pq_estilos.Resolvedor,
 
 def _formato_do_run(r, sid_par: str | None, res: pq_estilos.Resolvedor) -> QTextCharFormat:
     base = res.caractere(sid_par, r.estilo)
-    if not base and not r.estilo:
+    aparencia = res.aparencia(sid_par, r.estilo)
+    if not base and not r.estilo and not aparencia:
         cf = _formato_de_run(r)
     else:
         proprio = {k: getattr(r, k) for k in CAMPOS_CARACTERE if getattr(r, k) is not None}
         cf = pq_estilos.formato_de_caractere({**base, **proprio}, r.estilo)
+        # 0.1.32: maiusculas, versalete e espacamento do estilo (w:caps no rPr do estilo).
+        pq_props.aplicar_aparencia_do_estilo(cf, aparencia)
         pq_props.aplicar_rpr(cf, r.extras)
     if pq_revisoes.run_revisado(r):
         pq_revisoes.aplicar_run(cf, r)  # alteracoes controladas (0.1.13)
     return cf
+
+
+def _comeco_de_celula(cursor: QTextCursor) -> bool:
+    """O bloco do cursor e' o primeiro de uma celula de tabela."""
+    tabela = cursor.currentTable()
+    if tabela is None:
+        return False
+    celula = tabela.cellAt(cursor.position())
+    return celula.isValid() and celula.firstPosition() == cursor.block().position()
 
 
 def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resolvedor) -> None:
@@ -403,7 +415,13 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
             base = {**base, **marca}
     if base:
         # Bloco vazio: a altura da linha e o texto digitado nele seguem o estilo.
-        cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
+        if _comeco_de_celula(cursor):
+            # 0.1.32: o formato de caractere do primeiro bloco da celula E' o formato da celula
+            # (o Qt guarda os dois no mesmo caractere): trocar apagava fundo, bordas, alinhamento
+            # vertical e o JSON da celula (que nao voltava ao salvar). Junta, nao troca.
+            cursor.mergeBlockCharFormat(pq_estilos.formato_de_caractere(base))
+        else:
+            cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
     if pq_revisoes.paragrafo_revisado(p) or any(pq_revisoes.run_revisado(r) for r in p.runs):
         cursor.document()._tem_revisoes = True  # 0.1.13: o realce vale depois de preencher
     for r in p.runs:
@@ -533,6 +551,7 @@ def preencher_blocos(documento_qt: QTextDocument, blocos: list, estilos=None) ->
     """
     documento_qt.clear()
     _reiniciar_flutuantes(documento_qt, None)
+    marcas.esquecer_controles(documento_qt)
     if estilos is None:
         estilos = pq_estilos.catalogo(documento_qt)
     cursor = QTextCursor(documento_qt)
@@ -563,6 +582,7 @@ def preencher(documento_qt: QTextDocument, modelo: Documento) -> None:
     """
     documento_qt.clear()
     _reiniciar_flutuantes(documento_qt, modelo.pagina)
+    marcas.esquecer_controles(documento_qt)  # 0.1.32: a marca de controle liga de novo
     # Secoes (0.1.12): registro novo; a ultima secao com o tipo, os extras e os cabecalhos dela.
     pq_secoes.limpar(documento_qt)
     final = pq_secoes.sem_conteudo(getattr(modelo, "secao", None) or pq_secoes.Secao())
