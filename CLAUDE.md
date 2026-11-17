@@ -79,6 +79,9 @@ causou defeito.
   `propriedades.aplicar_aparencia_do_estilo`), `marcas.controle_em` e
   `VistaPaginas._conferir_controle` (moldura do controle de conteúdo); testes em
   `tests/teste_formulario.py`.
+- Sumario (branch `sumario`): `modelo/sumario.py` (opcoes do TOC, linhas, sem Qt) e
+  `edicao/sumario.py` (achar o campo pelas marcas, titulos pelo nivel do bloco, marcadores `_Toc`,
+  inserir, atualizar, numeros pela pagina do PAGE); testes em `tests/teste_sumario.py`.
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -338,3 +341,4 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | aparencia do estilo (0.1.32) | w:caps, w:smallCaps, w:spacing e w:w do rPr do ESTILO ficam em `Estilo.aparencia` (fora de `caractere`, `originais` e da gravacao) e so' a tela os usa: o `de_qt` le' os extras do run, nao a capitalizacao do formato, entao o arquivo nao muda. Trocar o estilo do texto troca a aparencia junto (`recompor_blocos` -> `trocar_aparencia_do_estilo`). Um False (w:caps w:val="0") desliga o da base. |
 | moldura do controle de conteudo (0.1.32) | O colchete da marca de w:sdt so' e' pintado no controle do cursor (`doc._controle_ativo`, as posicoes das duas marcas) ou com as marcas de formatacao ligadas (`marcas.com_marcas_de_formatacao`, em volta do `draw` do layout), nunca no de `w15:appearance="hidden"`. A largura da marca continua (o caret precisa andar sobre ela). A vista tira do cache os tiles das marcas do controle que entra e do que sai; digitando num bloco sem marca fora de controle nao ha' busca. |
 | layout por trechos e celula sem formato (0.1.32) | Com o formato da primeira celula apagado (a 0.1.31), o `LayoutPorTrechos` caia ao abrir a estrutura do `teste_formulario` (access violation em `_montar_trecho`, `b.layout().formats()`); com o formato certo nao cai. A causa no trechos nao foi isolada (docs/SPIKES.md, 0.1.32): contraprova que apaga o formato da celula roda com `EDITDOC_TRECHOS=0`. |
+| passo depois do layout (sumario) | O que o comando corrige DEPOIS do layout refeito (os numeros do sumario) nao pode usar `joinPreviousEditBlock`: o `preparar_para_impressao` grava ajustes anotados no meio, e a correcao juntada ao ultimo deles fica com um numero de passo que `ConjuntoDeNotas.passos` nao conhece (medido: o Ctrl+Z desfazia so' os numeros). Passo proprio e anotado (`edicao/sumario._anotar`). Referencia a titulo que vai ser partido: `QTextCursor` no comeco do bloco, nao `QTextBlock` (o bloco partido no comeco fica com o pedaco vazio). |

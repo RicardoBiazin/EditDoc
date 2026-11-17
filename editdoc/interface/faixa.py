@@ -12,7 +12,7 @@ acao por sinal.
 
 Abas (M6): Pagina Inicial (Area de transferencia, Fonte, Paragrafo, Estilos e Edicao),
 Inserir (Paginas, Tabelas, Ilustracoes, Links, Cabecalho e Rodape), Layout (Configurar Pagina e
-Paragrafo: recuos e espacamento), Referencias (0.1.10: Notas de Rodape), Revisao (0.1.6: Comentarios) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
+Paragrafo: recuos e espacamento), Referencias (Sumario; 0.1.10: Notas de Rodape), Revisao (0.1.6: Comentarios) e Exibir (Mostrar e Zoom). A aba "Cabeçalho e Rodapé"
 (M5) so' aparece durante a edicao do cabecalho, como a aba contextual do Word. Cada aba
 tem o seu recolhimento; a largura minima da faixa e' a da aba mais larga toda recolhida.
 
@@ -80,6 +80,7 @@ ROTULOS = {
     "painel_revisoes": "Painel de revisões",
     "inserir_nota_rodape": "Nota de Rodapé", "inserir_nota_fim": "Nota de Fim",
     "proxima_nota": "Próxima", "nota_anterior": "Anterior", "opcoes_notas": "Opções",
+    "atualizar_sumario": "Atualizar Sumário",
 }
 
 #: Nome da aba contextual do cabecalho e do rodape.
@@ -565,7 +566,19 @@ class Faixa(QFrame):
         return linha
 
     def _montar_referencias(self, c: Comandos) -> LinhaDeGrupos:
-        """Referencias (0.1.10): o grupo Notas de Rodape, como no Word."""
+        """Referencias (0.1.10): os grupos Sumario e Notas de Rodape, como no Word."""
+        atualizar = _botao(c, "atualizar_sumario")
+        menu_atualizar = QMenu(atualizar)
+        menu_atualizar.addAction(c.acao("atualizar_sumario"))
+        menu_atualizar.addAction(c.acao("atualizar_numeros_sumario"))
+        atualizar.setMenu(menu_atualizar)
+        atualizar.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        atualizar.setAccessibleDescription(
+            f"{atualizar.accessibleDescription()}. A seta abre Atualizar só os números de página.")
+        sumario = GrupoFaixa(
+            "Sumário", _duas_linhas([_menu("Sumário", [c.acao("inserir_sumario")])], [atualizar]),
+            _menu("Sumário", [c.acao(i) for i in (
+                "inserir_sumario", "atualizar_sumario", "atualizar_numeros_sumario")]))
         notas = GrupoFaixa(
             "Notas de Rodapé", _duas_linhas(
                 [_botao(c, "inserir_nota_rodape"), _botao(c, "inserir_nota_fim")],
@@ -574,7 +587,7 @@ class Faixa(QFrame):
             _menu("Notas de Rodapé", [c.acao(i) for i in (
                 "inserir_nota_rodape", "inserir_nota_fim", "proxima_nota", "nota_anterior",
                 "opcoes_notas")]))
-        linha = LinhaDeGrupos([notas], [notas])
+        linha = LinhaDeGrupos([sumario, notas], [notas, sumario])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha
