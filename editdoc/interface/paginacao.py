@@ -795,13 +795,23 @@ class ConjuntoDePaginacao:
             if muds:
                 return chave, muds, u.paginas[0]
         celulas = _LinhasDaTabela(tabela)
+        # Por tecla, o caso comum (linha sem cantSplit e sem empurrao) olha so' a celula da
+        # coluna 0: o JSON da linha esta' em todas, e o empurrao em todas as da linha de cima.
+        fmt_ant = tabela.cellAt(cab, 0).format()
         for r in range(cab + 1, linhas):
+            fmt = tabela.cellAt(r, 0).format()
+            bruto = fmt.property(PROP_CELULA)
+            cant = isinstance(bruto, str) and "cantSplit" in bruto
+            empurrada = pq.empurrao(fmt_ant) > pq.FOLGA
+            fmt_ant = fmt
+            if not cant and not empurrada:
+                continue
             chave = ("l", tabela.firstPosition(), r)
             if chave in esgotadas or not celulas[r] or not celulas[r - 1]:
                 continue
             if not self._nao_partir(celulas[r]) and \
                     not any(pq.empurrao(c.format()) > pq.FOLGA for c in celulas[r - 1]):
-                continue  # o caso comum: sem cantSplit e sem empurrao
+                continue  # sem cantSplit e sem empurrao
             res = self._empurrao_desejado(tabela, r, celulas, cab)
             if res is None:
                 continue
