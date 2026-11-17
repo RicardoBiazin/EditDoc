@@ -203,6 +203,9 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
   comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
   e o total de páginas, como antes, e o sumário quando você manda atualizar, abaixo).
+- **Linha de tabela que não parte** (0.1.34): a linha com `w:cantSplit` desce inteira para a
+  página seguinte, e o cabeçalho repetido (`w:tblHeader`) entra na conta; na tela, no PDF e na
+  impressão. O arquivo gravado não muda.
 - **Sumário** (0.1.33), como no Word: **Referências > Sumário > Inserir sumário**
   insere no cursor um sumário com os títulos de nível 1 a 3 (o campo `TOC \o "1-3" \h \z \u`
   do Word), uma linha por título no estilo "Sumário 1", "Sumário 2"... (criado se o documento
@@ -273,7 +276,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.33-win64.zip` da página
+1. Baixe `EditDoc-0.1.34-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -479,8 +482,10 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   não corta o texto como o Word: fica com a altura do texto.
 - Layout por trechos (0.1.31): cada trecho começa até 0,6 twip (0,03 pt) fora do lugar exato
   (o espaçador do Qt anda em passos inteiros): na tela, uma letra pode cair no pixel vizinho.
-  A linha de tabela marcada para não partir entre páginas (`w:cantSplit`) continua partindo,
-  como antes.
+  A linha de tabela marcada para não partir entre páginas (`w:cantSplit`) desce inteira desde a
+  0.1.34 (a que é mais alta que a página parte, como no Word); quando ela cabe no Word mas o Qt
+  a parte (o Qt reserva no pé a margem de cima da tabela), fica partida. Linha com célula
+  mesclada na vertical e linha com tabela dentro da célula ficam como o Qt as faz.
 - A quebra de página não acompanha a do Word linha a linha (não há viúva e órfã, e a
   medida das fontes é a do Qt). O número de páginas pode diferir em documentos longos.
 - Cabeçalho e rodapé que passam da margem (desde a 0.1.8): o corpo de cada página começa
@@ -519,7 +524,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.33-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.34-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em
