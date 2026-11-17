@@ -2633,7 +2633,7 @@ conferência.
 - Com o controle de alterações ligado, inserir e atualizar não são marcados como revisão.
 - O título do sumário ("Sumário", estilo "TOC Heading") e o controle de conteúdo que o Word
   põe em volta (galeria "Sumário automático") não são criados: só o campo.
-## cantSplit: a linha de tabela que não se parte (branch `cantsplit`, sobre a 0.1.32, sem versão nova)
+## 0.1.34: cantSplit, a linha de tabela que não se parte (medido sobre a 0.1.33)
 
 `w:cantSplit` na tela, no PDF e na impressão, nos dois modos de layout (por trechos, o padrão, e
 `EDITDOC_TRECHOS=0`). O cabeçalho repetido (`w:tblHeader`) já era o `headerRowCount` do Qt; aqui ele
@@ -2671,7 +2671,7 @@ cima da tabela) mas o Qt a partiria, o ramo deixa o Qt partir. Empurrá-la a far
 que o Word mantém na página (doc_19, quebra 3: o primeiro experimento a empurrava e piorava de
 (108, linha 1) para (107, 0) contra o (109, 0) do Word). O teste fixa as duas direções.
 
-### Oráculo (`w:lastRenderedPageBreak`), base (main 0.1.32) x branch, mesma hora, nos dois modos
+### Oráculo (`w:lastRenderedPageBreak`), base (main 0.1.33, 02499dc) x branch, mesma hora, nos dois modos
 
 Páginas | par/lin (blocos e linhas certos do Word, de N marcas). Idêntico com e sem
 `EDITDOC_TRECHOS`; nenhum arquivo pior em nenhuma quebra:
@@ -2709,18 +2709,19 @@ como veio, sem `tcMar` nem quebra). 154 verificações no arquivo, nos dois modo
 ### Regressão, suíte e desempenho
 
 - Abrir-salvar-reabrir-salvar nos 22: c14n (salvo 1 e salvo 2, todas as partes) e páginas idênticos aos da
-  base (main 0.1.32), com e sem `EDITDOC_TRECHOS`. O salvo 1 já difere do salvo 2 em 7 arquivos na
+  base (main 0.1.33), com e sem `EDITDOC_TRECHOS`. O salvo 1 já difere do salvo 2 em 7 arquivos na
   própria base (doc_04, 05, 06, 13, 19, 20, 21), igual na branch: não é desta mudança.
-- Suíte completa (`rodar_todos.py`, segunda passada com `EDITDOC_TRECHOS=0` incluída): 4928
-  verificações, 0 falhas.
+- Suíte completa (`rodar_todos.py`, segunda passada com `EDITDOC_TRECHOS=0` incluída): 5126
+  verificações, 0 falhas (a medida anterior, sobre a 0.1.32, deu 4928).
 - Gate (p95 em ms, 80 teclas com pintura, núcleos P por `start /affinity FFFF`, mediana de 5 rodadas
-  intercaladas, total com a tecla entre parênteses; base x branch): documento simples 6,33 / 5,76;
-  plano 1/3 9,74 (4,23) / 9,93 (4,28), célula 9,07 / 9,15, item 8,80 / 8,62; plano com controle de
-  alterações 10,48 / 10,37; manual capa 8,85 / 8,68, sumário 9,64 / 9,77, corpo 7,36 / 7,03; capa
-  cheia 13,02 / 13,39; 2000 revisões 6,24 / 6,06. Janela de 1400 × 950 com o doc_19: 1/3 10,65 /
-  9,26, célula 29,39 / 29,76, item 11,32 / 10,95. Nenhum ponto com piora de 1,5 ms; o custo por
-  tecla da parte nova no caso comum é só ler a propriedade da célula da coluna 0 de cada linha (a
-  primeira versão lia o JSON de todas as células: foi cortada antes da medida).
+  intercaladas, total com a tecla entre parênteses; base 0.1.33 x branch): documento simples 5,53 /
+  5,87; plano 1/3 9,00 (3,90) / 9,16 (3,92), célula 8,27 / 8,59, item 6,94 / 7,57; plano com controle
+  de alterações 9,86 / 9,87; manual capa 8,02 / 7,91, sumário 9,25 / 8,82, corpo 7,14 / 6,67; capa
+  cheia 12,86 / 11,69; 2000 revisões 5,58 / 6,13. Janela de 1400 × 950 com o doc_19: 1/3 8,64 / 8,85,
+  célula 27,89 / 27,69, item 10,00 / 10,14. Maior diferença: +0,63 ms (plano, item); nenhum ponto
+  com piora de 1,5 ms. O custo por tecla da parte nova no caso comum é só ler a propriedade da célula
+  da coluna 0 de cada linha (a primeira versão lia o JSON de todas as células: foi cortada antes da
+  medida). Na medida sobre a 0.1.32 o resultado foi o mesmo (diferenças de -1,39 a +0,37 ms).
 
 ### Limites
 
