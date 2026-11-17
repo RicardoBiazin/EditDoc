@@ -20,6 +20,10 @@ tem outro, so' para o layout do Qt chegar ao do Word:
 - PROP_WORD_ALTURA (celula, 0.1.26): o acolchoamento de cima ou de baixo tem o que falta para a
   linha ter a altura do w:trHeight (`interface/paginacao._alturas_das_linhas`). O arquivo nao
   muda: o acolchoamento nao volta ao modelo (a margem da celula vem dos extras).
+- PROP_WORD_INTEIRA (celula, 0.1.32): o acolchoamento de baixo tem o empurrao (px96) para a linha
+  de baixo, com w:cantSplit, descer inteira; e PROP_QUEBRA_REGRA 4 no formato da TABELA: a quebra
+  antes dela, para a primeira linha (ou o cabecalho repetido) descer inteira. O `de_qt` nao le'
+  o acolchoamento nem a quebra do quadro: o arquivo nao muda.
 
 O valor "real" vazio quer dizer "o bloco nao tinha a propriedade". Se alguem troca o valor do
 formato (formatacao, estilo), o valor novo e' do usuario: a propriedade so' vale enquanto o
@@ -46,6 +50,9 @@ PROP_WORD_VISIVEL = _USUARIO + 49
 #: arquivo. So' marca (o valor de verdade sai do tcMar/tblCellMar, `para_qt.acolchoamento_base`):
 #: a linha sem altura e sem a marca nem e' conferida a cada tecla.
 PROP_WORD_ALTURA = _USUARIO + 50
+#: Celula (0.1.32, cantSplit): quanto (px96) o acolchoamento de baixo tem a mais para a linha de
+#: BAIXO, que nao se parte, comecar na pagina seguinte (`interface/paginacao`, "linha inteira").
+PROP_WORD_INTEIRA = _USUARIO + 60
 #: Todas as propriedades da compensacao (o copiar e a rejeicao de formatacao as conhecem).
 PROPS_DE_PAGINACAO = (PROP_WORD_ANTES, PROP_WORD_DEPOIS, PROP_WORD_LINHA, PROP_QUEBRA_REGRA,
                       PROP_WORD_VISIVEL)
@@ -221,6 +228,46 @@ def definir_regra(fmt, ligar: bool, motivo: int = 1) -> None:
     if not pq_notas.eh_espacador(fmt) and not bits & 2:
         fmt.setPageBreakPolicy(QTextFormat.PageBreakFlag(_inteiro(fmt.pageBreakPolicy())
                                                          & ~_inteiro(_ANTES)))
+
+
+def empurrao(fmt) -> float:
+    """O acrescimo (px96) no acolchoamento de baixo da celula para a linha de baixo descer."""
+    valor = fmt.property(PROP_WORD_INTEIRA)
+    return float(valor) if isinstance(valor, (int, float)) and not isinstance(valor, bool) \
+        else 0.0
+
+
+def definir_empurrao(fmt, px: float) -> None:
+    if px > FOLGA:
+        fmt.setProperty(PROP_WORD_INTEIRA, float(px))
+    else:
+        fmt.clearProperty(PROP_WORD_INTEIRA)
+
+
+_NAO_PARTIR: dict = {}
+
+
+def nao_partir(extras_linha) -> bool:
+    """A linha tem w:cantSplit ligado (nos extras do w:trPr guardados no JSON da celula)."""
+    if not isinstance(extras_linha, str) or "cantSplit" not in extras_linha:
+        return False
+    if extras_linha not in _NAO_PARTIR:
+        from lxml import etree
+        ligado = False
+        try:
+            raiz = etree.fromstring(extras_linha.encode("utf8"),
+                                    etree.XMLParser(resolve_entities=False, no_network=True))
+            for el in raiz.iter("{%s}cantSplit" % mod.W):
+                if el.getparent() is not raiz:
+                    continue  # o de dentro de um w:trPrChange e' o valor antigo
+                val = el.get("{%s}val" % mod.W)
+                ligado = val is None or val.lower() not in ("0", "false", "off")
+        except (etree.XMLSyntaxError, ValueError):
+            ligado = False
+        if len(_NAO_PARTIR) > 4096:
+            _NAO_PARTIR.clear()
+        _NAO_PARTIR[extras_linha] = ligado
+    return _NAO_PARTIR[extras_linha]
 
 
 def visivel(fmt) -> bool:

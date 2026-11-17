@@ -1,3 +1,34 @@
+## 0.1.34 - 2026-11-17
+
+Linha de tabela que não parte entre páginas (`w:cantSplit`) e cabeçalho repetido (`w:tblHeader`), na
+tela, no PDF e na impressão, nos dois modos de layout (por trechos, o padrão, e `EDITDOC_TRECHOS=0`).
+Até a 0.1.33 o Qt partia qualquer linha entre as linhas de texto; no arquivo do Word com 97 de 113
+linhas marcadas, a quebra 5 caía numa linha de texto de uma linha que o Word leva inteira.
+
+- **Como**: o Qt só leva uma linha inteira para a página seguinte quando a primeira linha de texto de
+  todas as células já não cabe no pé, e então estica a linha de cima até o pé. O EditDoc reproduz esse
+  arranjo: a linha de cima ganha, no acolchoamento de baixo das células, o empurrão mínimo para a
+  primeira linha de texto da de baixo passar do pé (um passo anotado do desfazer, como a altura da
+  linha da 0.1.26). A primeira linha, as do cabeçalho repetido e a primeira depois dele levam a tabela
+  inteira (quebra das regras no quadro da tabela, com histerese de 60 twips). Linha mais alta que a
+  página parte, como no Word. O arquivo gravado não muda (o empurrão não volta ao modelo).
+- **Oráculo** (`w:lastRenderedPageBreak`, 22 arquivos de referência, base 0.1.33, nos dois modos;
+  páginas | quebras certas por bloco/linha, de N marcas do Word): só o doc_19 muda, de 14 | 4/4 para
+  14 | **5/5** de 13 (a quebra 5 cai no bloco e na linha do Word). doc_17 3 | 2/2 de 2, doc_18 4 | 3/3 de
+  3, doc_20 26 | 0/0, doc_21 26 | 2/2 de 23, doc_22 2 | 1/1 de 1 e os 16 sem marcas, iguais.
+  Nenhuma quebra de nenhum arquivo ficou pior.
+- **Limites**: no doc_19, quebra 3, a linha cabe no Word mas o Qt a parte (ele reserva no pé a margem
+  de cima da tabela): deixada ao Qt, porque empurrá-la a fazia descer uma linha que o Word mantém
+  (a quebra ia de bloco 108, linha 1, para o bloco 107, contra o 109 do Word). As quebras 7 a 12 do
+  doc_19 seguem de 1 a 5 blocos antes do Word, por diferença de altura, não por cantSplit. O doc_21
+  não melhora (2/2 de 23). Linha com célula mesclada na vertical e linha com tabela dentro da
+  célula ficam como o Qt as faz. Nenhum arquivo foi conferido no Word depois desta mudança.
+
+Prova: `tests/teste_paginacao_word.py` (154 verificações nos dois modos, fixtures em código, cada
+regra com contraprova: o Qt parte sem a parte nova, o PDF também), suíte completa nas duas passadas,
+oráculo e regressão c14n nos 22 arquivos iguais à 0.1.33 (as partes gravadas não mudam), gate de
+desempenho nos núcleos P (docs/SPIKES.md, "cantSplit"): nenhum ponto 1,5 ms pior que a 0.1.33.
+
 ## 0.1.33 - 2026-11-17
 
 Sumário como no Word: **Referências > Sumário > Inserir sumário** e **Atualizar Sumário** (o inteiro, ou

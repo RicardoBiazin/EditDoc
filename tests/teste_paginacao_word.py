@@ -555,6 +555,243 @@ def testar_altura_da_linha(j) -> None:
     lay2.doc.setModified(False)
 
 
+_BORDAS = "".join(f'<w:{lado} w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                  for lado in ("top", "left", "bottom", "right", "insideH", "insideV"))
+
+
+def _tabela_inteira(n: int, linhas: int, cant: bool = True, cab: int = 0,
+                    altas: dict | None = None) -> str:
+    """Tabela de duas colunas e `n` linhas; a celula 1 de cada linha tem `linhas` linhas de
+    texto (w:br; `altas`: linha -> outro numero), w:cantSplit em todas (`cant`) e as `cab`
+    primeiras com w:tblHeader (cabecalho repetido)."""
+    corpo = ""
+    for i in range(n):
+        tr_pr = ("<w:cantSplit/>" if cant else "") + ("<w:tblHeader/>" if i < cab else "")
+        texto = "<w:br/>".join(f"<w:t>L{i}a{k}</w:t>" for k in range((altas or {}).get(i, linhas)))
+        corpo += (f"<w:tr>{f'<w:trPr>{tr_pr}</w:trPr>' if tr_pr else ''}"
+                  f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p><w:r>{texto}'
+                  f'</w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>'
+                  f"<w:p><w:r><w:t>X{i}</w:t></w:r></w:p></w:tc></w:tr>")
+    return (f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>{_BORDAS}'
+            f'</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/>'
+            f"</w:tblGrid>{corpo}</w:tbl>")
+
+
+def _paginas_da_linha(lay, tab, r: int) -> list[int]:
+    """As paginas em que a linha r da tabela tem texto."""
+    s = set()
+    for c in range(tab.columns()):
+        cel = tab.cellAt(r, c)
+        b = lay.doc.findBlock(cel.firstPosition())
+        while b.isValid() and b.position() <= cel.lastPosition():
+            s.update(paginas(lay, b))
+            b = b.next()
+    return sorted(s)
+
+
+def _partidas(lay, tab) -> list[int]:
+    return [r for r in range(tab.rows()) if len(_paginas_da_linha(lay, tab, r)) > 1]
+
+
+def _empurroes(tab) -> list[int]:
+    return [r for r in range(tab.rows())
+            if any(pq.empurrao(tab.cellAt(r, c).format()) > 0 for c in range(tab.columns()))]
+
+
+def _achar_partidas(j, faixa, montar) -> dict:
+    """{k: linhas partidas sem a linha inteira} para cada k da faixa em que o Qt parte uma."""
+    achados = {}
+    for k in faixa:
+        lay = abrir(j, docx(montar(k)), partes=ConjuntoDePaginacao.PARTES - {"inteira"})
+        tab = _quadro_tabela(lay)
+        partidas = _partidas(lay, tab)
+        if partidas:
+            achados[k] = partidas
+    return achados
+
+
+def testar_linha_inteira(j, cap: int) -> None:
+    secao("linha que nao se parte (w:cantSplit, 0.1.32): desce inteira; alta demais, parte")
+    from editdoc.interface import impressao
+    from leitor_pdf import ler_pdf, sem_espacos
+
+    def montar(k, cant=True):
+        return fillers(cap - 6 - k) + _tabela_inteira(8, 4, cant) + p("Fim")
+
+    achados = _achar_partidas(j, range(0, 10), montar)
+    checa(len(achados) >= 3, f"sem a parte nova, o Qt parte linhas com cantSplit ({achados})")
+    certos = 0
+    for k, partidas in achados.items():
+        lay = abrir(j, docx(montar(k)))
+        tab = _quadro_tabela(lay)
+        r = partidas[0]
+        antes = _paginas_da_linha(lay, tab, r - 1) if r > 0 else [0]
+        depois = _paginas_da_linha(lay, tab, r)
+        if not _partidas(lay, tab) and len(depois) == 1 and depois[0] == antes[-1] + 1:
+            certos += 1
+    checa_igual(certos, len(achados), "com w:cantSplit cada linha fica numa pagina so' e a que "
+                "nao cabia comeca a pagina seguinte")
+    k0 = sorted(achados)[0]
+    lay = abrir(j, docx(montar(k0, cant=False)))
+    checa(bool(_partidas(lay, _quadro_tabela(lay))) and not _empurroes(_quadro_tabela(lay)),
+          "contraprova: sem w:cantSplit a mesma linha se parte (como no Word) e nada e' empurrado")
+
+    # O empurrao fica na linha de cima, e e' o minimo: a linha de baixo comeca no pe' das
+    # linhas do Qt (o Qt a leva e estica a de cima ate' la', como faz sozinho).
+    lay = abrir(j, docx(montar(k0)))
+    tab = _quadro_tabela(lay)
+    r = achados[k0][0]
+    checa_igual(_empurroes(tab), [r - 1] if r > 0 else [],
+                "o empurrao fica na linha de cima da que desceu")
+    cp = lay.paginacao
+    ant = [tab.cellAt(r - 1, c) for c in range(tab.columns())]
+    fim_natural = cp._topo_da_linha(ant) + cp._altura_natural(tab, ant)
+    pagina = _paginas_da_linha(lay, tab, r - 1)[-1]
+    empurrao = max(pq.empurrao(c.format()) for c in ant) * 15.0
+    checa(fim_natural + empurrao <= lay.mapa.fim(pagina) + 0.01 and
+          fim_natural + empurrao > lay.mapa.fim(pagina) - 120,
+          f"o empurrao ({empurrao:.0f} twips) leva o fim da linha {r - 1} ao pe' da pagina, nao "
+          f"alem ({fim_natural + empurrao:.1f} de {lay.mapa.fim(pagina):.0f})")
+
+    # O Qt reserva no pe' de cada pagina da tabela a margem de CIMA dela (o espaco depois do
+    # paragrafo de cima): a linha que cabe no Word ainda se parte no Qt e fica assim (uma linha
+    # de texto descendo e' mais perto do Word que a linha inteira; doc_14, quebra 3).
+    def com_margem(k):
+        return fillers(cap - 7 - k) + p("Antes", ppr='<w:spacing w:after="240"/>') + \
+            _tabela_inteira(8, 4) + p("Fim")
+
+    casos = {"desce": 0, "fica": 0}
+    for k in range(0, 10):
+        lay = abrir(j, docx(com_margem(k)), partes=ConjuntoDePaginacao.PARTES - {"inteira"})
+        tab = _quadro_tabela(lay)
+        partidas = _partidas(lay, tab)
+        if not partidas:
+            continue
+        cp = lay.paginacao
+        rr = partidas[0]
+        topo = cp._topo_da_linha([tab.cellAt(rr, c) for c in range(2)])
+        altura = cp._altura_natural(tab, [tab.cellAt(rr, c) for c in range(2)])
+        cabe_no_word = topo + altura <= lay.mapa.fim(lay.mapa.pagina_de_y(topo + 1))
+        lay = abrir(j, docx(com_margem(k)))
+        tab = _quadro_tabela(lay)
+        if cabe_no_word and _partidas(lay, tab) == [rr] and not _empurroes(tab):
+            casos["fica"] += 1
+        elif not cabe_no_word and not _partidas(lay, tab):
+            casos["desce"] += 1
+        else:
+            casos.setdefault("errado", []).append(k)
+        lay.doc.setModified(False)
+    checa(casos["fica"] >= 1 and casos["desce"] >= 1 and "errado" not in casos,
+          f"margem de cima na tabela: cabe no Word, fica como o Qt; nao cabe, desce ({casos})")
+
+    # PDF (a mesma pintura da impressao): o texto da linha que desceu numa folha so'.
+    for partes, inteira in ((None, True), (ConjuntoDePaginacao.PARTES - {"inteira"}, False)):
+        lay = abrir(j, docx(montar(k0)), partes=partes)
+        textos = [sem_espacos(pg.texto) for pg in
+                  ler_pdf(impressao.gerar_pdf(lay, list(range(lay.numero_paginas())),
+                                              impressao.Metadados())).paginas]
+        folhas = {n for n, t in enumerate(textos) for i in range(4) if f"L{r}a{i}" in t}
+        if inteira:
+            checa(len(folhas) == 1, f"PDF: a linha {r} inteira numa folha ({sorted(folhas)})")
+        else:
+            checa(len(folhas) == 2, f"contraprova: sem a parte nova o PDF a parte ({sorted(folhas)})")
+        lay.doc.setModified(False)
+
+    # Mais alta que a pagina: parte, como no Word (e nada e' empurrado).
+    alta = fillers(cap - 6) + _tabela_inteira(3, 2, altas={1: cap + 10}) + p("Fim")
+    lay = abrir(j, docx(alta))
+    tab = _quadro_tabela(lay)
+    checa(_partidas(lay, tab) == [1] and not _empurroes(tab),
+          "linha mais alta que a pagina: parte, sem empurrao")
+
+    # Editar acima: a linha volta a caber (ou outra desce); nenhuma partida, e o desfazer volta.
+    lay = abrir(j, docx(montar(k0)))
+    tab = _quadro_tabela(lay)
+    painel = j.painel
+    cur = QTextCursor(lay.doc)
+    cur.setPosition(bloco_com(lay, "F002").position())
+    cur.setPosition(bloco_com(lay, "F008").position(), QTextCursor.MoveMode.KeepAnchor)
+    painel.setTextCursor(cur)
+    painel.setFocus()
+    QTest.keyClick(painel, Qt.Key.Key_Delete)
+    drenar_eventos()
+    lay.atualizar_secoes()
+    checa(not _partidas(lay, tab), f"6 paragrafos a menos acima: nenhuma linha partida "
+          f"(empurroes {_empurroes(tab)})")
+    checa(_empurroes(tab) != [r - 1], "e o empurrao da linha de antes saiu ou mudou de linha")
+    QTest.keyClick(painel, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    drenar_eventos()
+    lay.atualizar_secoes()
+    checa(not _partidas(lay, tab) and _empurroes(tab) == [r - 1],
+          f"desfeito: a linha {r} desce de novo ({_empurroes(tab)})")
+    lay.doc.setModified(False)
+
+    # Nada disso vai para o arquivo.
+    com = escrever(j._modelo_atual())
+    conferencia.conferir(com, j._modelo_atual())
+    xml = fx.partes_de(com)["word/document.xml"].decode("utf-8")
+    checa(xml.count("<w:cantSplit/>") == 8 and "tcMar" not in xml and "pageBreakBefore" not in xml,
+          "o w:cantSplit volta como veio; o empurrao nao vira tcMar nem quebra")
+    abrir(j, docx(montar(k0)), ligado=False)
+    sem = escrever(j._modelo_atual())
+    checa_igual(fx.partes_de(com)["word/document.xml"], fx.partes_de(sem)["word/document.xml"],
+                "o document.xml e' o mesmo com e sem a linha inteira na tela")
+    j.painel.documento_corpo().setModified(False)
+
+
+def testar_cabecalho_e_primeira_linha(j, cap: int) -> None:
+    secao("cantSplit com cabecalho repetido (w:tblHeader) e na primeira linha: a tabela desce")
+
+    def montar(k, cab=1):
+        return fillers(cap - 6 - k) + _tabela_inteira(8, 4, cab=cab) + p("Fim")
+
+    achados = _achar_partidas(j, range(0, 10), montar)
+    casos = {"corpo": None, "cabeca": None}
+    for k, partidas in achados.items():
+        if partidas[0] > 1 and casos["corpo"] is None:
+            casos["corpo"] = (k, partidas[0])
+        if partidas[0] <= 1 and casos["cabeca"] is None:
+            casos["cabeca"] = (k, partidas[0])
+    checa(casos["corpo"] is not None, f"ha' uma linha do corpo partida sem a parte nova ({achados})")
+    if casos["corpo"] is not None:
+        k, r = casos["corpo"]
+        lay = abrir(j, docx(montar(k)))
+        tab = _quadro_tabela(lay)
+        nova = _paginas_da_linha(lay, tab, r)[0]
+        dl = lay.doc.documentLayout()
+        topo_r = dl.blockBoundingRect(lay.doc.findBlock(tab.cellAt(r, 1).firstPosition())).top()
+        topo_0 = dl.blockBoundingRect(lay.doc.findBlock(tab.cellAt(0, 1).firstPosition())).top()
+        topo_1 = dl.blockBoundingRect(lay.doc.findBlock(tab.cellAt(1, 1).firstPosition())).top()
+        cabeca = topo_1 - topo_0
+        folga = topo_r - lay.mapa.topo(nova)
+        checa(not _partidas(lay, tab) and cabeca - 5 < folga < cabeca + 200,
+              f"a linha {r} desce inteira e fica logo abaixo do cabecalho repetido "
+              f"({folga:.0f} twips do alto; cabecalho {cabeca:.0f})")
+    # Primeira linha (sem cabecalho) e a primeira depois do cabecalho: a tabela inteira desce.
+    for cab, rotulo in ((0, "primeira linha"), (1, "primeira linha depois do cabecalho")):
+        achados = _achar_partidas(j, range(-4, 10), lambda k: fillers(cap - 2 - k)
+                                  + _tabela_inteira(4, 4, cab=cab) + p("Fim"))
+        alvo = next((k for k, pt in achados.items() if pt[0] == cab), None)
+        checa(alvo is not None, f"{rotulo}: o Qt a parte sem a parte nova ({achados})")
+        if alvo is None:
+            continue
+        lay = abrir(j, docx(fillers(cap - 2 - alvo) + _tabela_inteira(4, 4, cab=cab) + p("Fim")))
+        tab = _quadro_tabela(lay)
+        ultimo = bloco_com(lay, f"F{cap - 3 - alvo:03d}")
+        checa(not _partidas(lay, tab) and pq.eh_regra(tab.format())
+              and _paginas_da_linha(lay, tab, 0)[0] == paginas(lay, ultimo)[-1] + 1,
+              f"{rotulo}: a tabela desce inteira (quebra das regras antes dela)")
+        # sem precisar (paragrafos a menos acima), a quebra sai
+        cur = QTextCursor(lay.doc)
+        cur.setPosition(bloco_com(lay, "F002").position())
+        cur.setPosition(bloco_com(lay, "F012").position(), QTextCursor.MoveMode.KeepAnchor)
+        cur.removeSelectedText()
+        lay.atualizar_secoes()
+        checa(not pq.eh_regra(tab.format()) and not _partidas(lay, tab),
+              f"{rotulo}: 10 paragrafos a menos acima, a quebra antes da tabela sai")
+        lay.doc.setModified(False)
+
+
 TEXTO_LONGO = " ".join(f"palavra{i}" for i in range(80))
 #: Tabela com w:tblInd negativo (a celula fica antes da margem no Word).
 TABELA_NEGATIVA = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblInd w:w="-300" '
@@ -1050,6 +1287,8 @@ def main() -> int:
         testar_tabela(j)
         testar_margem_da_celula(j)
         testar_altura_da_linha(j)
+        testar_linha_inteira(j, cap)
+        testar_cabecalho_e_primeira_linha(j, cap)
         testar_recuo_negativo(j)
         testar_rodape_com_tabela(j)
         testar_imagem_na_linha(j)
