@@ -1,3 +1,39 @@
+## 0.1.33 - 2026-11-17
+
+Sumário como no Word: **Referências > Sumário > Inserir sumário** e **Atualizar Sumário** (o inteiro, ou
+só os números de página, pela seta do botão). Até a 0.1.32 o EditDoc só preservava o sumário do Word.
+
+- **Inserir**: o campo `TOC \o "1-3" \h \z \u` entra no cursor, em parágrafos próprios, com uma linha por
+  título de nível 1 a 3 (o nível do estilo "Título N" ou o direto) nos estilos "Sumário 1..3" (criados
+  se o documento não os tem), tabulação à direita com pontilhado na largura útil da seção, hiperlink
+  interno e o número da página como resultado de um `PAGEREF`. Cada título ganha um marcador oculto
+  `_Toc` (o que já tem fica com ele). Ctrl+clique na linha leva ao título.
+- **Atualizar**: refaz as linhas a partir dos títulos de agora (editados, novos ou apagados) e os
+  números; o código do campo fica como estava. O número é o da folha do EditDoc onde o título
+  começa, com o formato e o recomeço da numeração da seção (a mesma conta do campo de número de
+  página, inclusive com colunas). Os números são corrigidos depois de o layout refazer, porque o
+  sumário empurra o texto.
+- **Um passo de desfazer** para inserir e para atualizar (Ctrl+Z devolve o texto, os marcadores dos
+  títulos e o catálogo de estilos; Ctrl+Y refaz). A correção dos números é um passo anotado, não
+  `joinPreviousEditBlock`: o layout grava ajustes no meio e a correção juntada ao último deles
+  fazia o Ctrl+Z desfazer só os números (medido, docs/SPIKES.md).
+- **Sumário do Word**: nada muda ao abrir nem ao salvar enquanto você não manda atualizar (os
+  parágrafos voltam iguais em c14n). Atualizado, reaproveita os marcadores do Word.
+- O arquivo gravado tem begin/separate/end equilibrados, `instrText` com `xml:space`, hiperlinks e
+  `PAGEREF` para marcadores que existem, e passa no validador e na conferência pós-gravação.
+
+Limites (README, "Limites conhecidos"): `\t` (estilos próprios), `\f`/`\l` (entradas TC), `\b` (trecho)
+e `\c`/`\a` (índice de ilustrações) não são reconstruídos (aviso na barra de status; "só os números"
+funciona); a linha não traz o número de lista do título ("1.2"); o número da página é o da
+paginação do EditDoc, que pode diferir da do Word em documento longo (o Word recalcula ao
+atualizar); com o controle de alterações ligado, inserir e atualizar não viram revisão; o título
+"Sumário" e o controle de conteúdo da galeria do Word não são criados (só o campo); nenhum
+arquivo gerado foi aberto no Word ainda.
+
+Prova: `tests/teste_sumario.py` (99 verificações, nas duas passadas; com contraprova do número
+corrigido depois do layout), suíte completa nas duas passadas, oráculo de páginas e regressão c14n
+nos 22 `.docx` de referência iguais à 0.1.32, gate de desempenho nos núcleos P (docs/SPIKES.md, 0.1.33): nenhum ponto pior que a 0.1.32 dentro do ruído.
+
 ## 0.1.32 - 2026-11-04
 
 Formulários do Office montados em tabela. Um modelo de "tarefas semanais" do Office aberto no Word

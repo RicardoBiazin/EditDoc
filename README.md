@@ -203,7 +203,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
   comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
   e o total de páginas, como antes, e o sumário quando você manda atualizar, abaixo).
-- **Sumário** (branch `sumario`), como no Word: **Referências > Sumário > Inserir sumário**
+- **Sumário** (0.1.33), como no Word: **Referências > Sumário > Inserir sumário**
   insere no cursor um sumário com os títulos de nível 1 a 3 (o campo `TOC \o "1-3" \h \z \u`
   do Word), uma linha por título no estilo "Sumário 1", "Sumário 2"... (criado se o documento
   não tem), com o texto, a tabulação pontilhada e o número da página. O título ganha um marcador
@@ -273,7 +273,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.32-win64.zip` da página
+1. Baixe `EditDoc-0.1.33-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -519,7 +519,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.32-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.33-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

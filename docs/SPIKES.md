@@ -2560,7 +2560,7 @@ nesta máquina):
 
 Nenhuma piora consistente (todas abaixo de 0,3 ms, dentro do ruído).
 
-## Sumário: inserir e atualizar (branch `sumario`, sobre a 0.1.31, sem versão nova)
+## 0.1.33: sumário (inserir e atualizar)
 
 **Referências > Sumário > Inserir sumário** e **Atualizar Sumário** (inteiro, ou só os números pela
 seta do botão), como no Word. Código em `modelo/sumario.py` (opções do TOC e linhas, sem Qt) e
@@ -2612,18 +2612,18 @@ linhas saem dos títulos, os marcadores `_Toc1`/`_Toc2` do Word são reaproveita
 fica, o fim continua no parágrafo próprio, e o arquivo passa no validador, abre sem aviso e na
 conferência.
 
-#### Medidas (base = main 3cbf976, ramo = `sumario`)
+#### Medidas (base = main 0.1.32, 808e415; ramo = `sumario` com a 0.1.33)
 
-- Suíte completa, QT_QPA_PLATFORM ausente: 5022 verificações, 0 falhas (com a segunda passada
-  `EDITDOC_TRECHOS=0`); com `EDITDOC_TRECHOS=0` em tudo: 3695, 0 falhas.
-- Oráculo de páginas (17 .docx de Downloads, plataforma `windows`): JSON da base e do ramo
-  idênticos (páginas, quebras do Word, acerto por parágrafo e por linha).
-- Regressão abrir-salvar-reabrir-salvar em c14n dos mesmos 17: JSON idêntico ao da base (o doc
-  com salvo1 ≠ salvo2 é o mesmo dos dois lados, de antes).
+- Suíte completa, QT_QPA_PLATFORM ausente: 5082 verificações, 0 falhas (inclui a segunda passada
+  `EDITDOC_TRECHOS=0` e as 30 do `teste_formulario`); com `EDITDOC_TRECHOS=0` em tudo: 3725, 0 falhas.
+- Oráculo de páginas (22 .docx de Downloads, plataforma `windows`): JSON da base e do ramo
+  idênticos (páginas, quebras do Word, acerto por parágrafo e por linha), nenhum erro.
+- Regressão abrir-salvar-reabrir-salvar em c14n dos mesmos 22: JSON idêntico ao da base.
 - Gate nos núcleos P (`start /affinity FFFF`, 3 rodadas intercaladas, p95 total em ms, mediana
-  base / ramo): simples 6,72 / 6,86; plano_terco 10,90 / 10,77; plano_celula 9,19 / 9,33;
-  plano_item 8,71 / 8,87; capa 9,86 / 8,84; sumario 10,28 / 10,31; corpo 8,15 / 7,56; cheia
-  13,91 / 13,52; revisoes 6,94 / 6,91. Ruído: o comando não toca no caminho da tecla.
+  base / ramo): simples 5,64 / 5,93; plano_terco 9,21 / 8,73; plano_celula 8,24 / 7,86;
+  plano_item 7,69 / 7,40; plano_rev 9,71 / 9,45; capa 7,91 / 7,92; sumario 8,74 / 8,85;
+  corpo 6,61 / 6,95; cheia 12,20 / 12,32; revisoes 5,84 / 5,63. Ruído: o comando não toca no
+  caminho da tecla.
 
 #### O que falta
 
