@@ -75,6 +75,12 @@ causou defeito.
   ligado em `LayoutPaginado.__init__` e trocado em `JanelaPrincipal.carregar`; testes em
   `tests/teste_trechos.py`. `EDITDOC_TRECHOS=0` desliga.
 - Linha de tabela que nao parte (0.1.34, `w:cantSplit`): `interface/paginacao.py` (`_linha_inteira`, `_empurrao_desejado`, `_quebra_da_tabela`, parte `"inteira"` das regras); `ponte_qt/paginacao.py` (`PROP_WORD_INTEIRA`, `empurrao`, `nao_partir`); testes em `tests/teste_paginacao_word.py` (`testar_linha_inteira`).
+- Colunas, o que a 0.1.29 deixou (0.1.35): `modelo/documento._partir_quebras_de_coluna` (quebra de
+  coluna no meio do paragrafo, dentro de `normalizar`: leitor, escritor e conferencia passam por ele),
+  `interface/vista_paginas.fim_do_texto_da_coluna` (linha do w:sep), `interface/regua._colunas`,
+  `ponte_qt/flutuantes.Contexto.coluna_do_y` e `edicao/objetos._bloco_para_ancora` (x da coluna);
+  `Secao.desiguais`. Testes em `tests/teste_colunas.py`. Secao continua com colunas e colunas
+  desiguais seguem de fora: docs/SPIKES.md, "0.1.35".
 - Formulário do Office (0.1.32): `para_qt._comeco_de_celula` (o formato da célula no primeiro
   bloco), `Estilo.aparencia` e `Estilos.aparencia_de` (maiúsculas do estilo, só tela,
   `propriedades.aplicar_aparencia_do_estilo`), `marcas.controle_em` e
@@ -344,3 +350,4 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | layout por trechos e celula sem formato (0.1.32) | Com o formato da primeira celula apagado (a 0.1.31), o `LayoutPorTrechos` caia ao abrir a estrutura do `teste_formulario` (access violation em `_montar_trecho`, `b.layout().formats()`); com o formato certo nao cai. A causa no trechos nao foi isolada (docs/SPIKES.md, 0.1.32): contraprova que apaga o formato da celula roda com `EDITDOC_TRECHOS=0`. |
 | passo depois do layout (sumario) | O que o comando corrige DEPOIS do layout refeito (os numeros do sumario) nao pode usar `joinPreviousEditBlock`: o `preparar_para_impressao` grava ajustes anotados no meio, e a correcao juntada ao ultimo deles fica com um numero de passo que `ConjuntoDeNotas.passos` nao conhece (medido: o Ctrl+Z desfazia so' os numeros). Passo proprio e anotado (`edicao/sumario._anotar`). Referencia a titulo que vai ser partido: `QTextCursor` no comeco do bloco, nao `QTextBlock` (o bloco partido no comeco fica com o pedaco vazio). |
 | cantSplit (0.1.34) | O Qt so' leva a linha inteira quando a 1.a linha de texto de TODAS as celulas nao cabe no pe', e entao estica a de cima. O EditDoc reproduz isso com o empurrao no acolchoamento de baixo da linha de cima (`PROP_WORD_INTEIRA`) e, na 1.a linha ou no cabecalho repetido, com a quebra das regras no quadro da tabela (`PROP_QUEBRA_REGRA` 4). O Qt reserva no pe' a margem de CIMA da tabela: a linha que cabe no Word mas o Qt parte fica partida (empurrar piorou o doc_19). Novo PROP_ de usuario precisa de numero proprio (`teste_campos`). |
+| colunas e altura de pagina (0.1.35) | O Qt corta as linhas na altura UNICA da pagina (`pageSize`) e o espacador das notas so' empurra BLOCOS inteiros. Pagina de altura menor que a do documento no meio do paragrafo (secao continua com colunas no meio da folha, balanceamento) e coluna de largura propria (colunas desiguais) nao saem sem layout proprio: nao reabrir por espacador ou recuo escondido (SPIKES, 0.1.35). A quebra de coluna no meio do paragrafo e' estrutural: parte o paragrafo no modelo (`normalizar`), nao no layout; o item de lista e o campo aberto nao partem. |

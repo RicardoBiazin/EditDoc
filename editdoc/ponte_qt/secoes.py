@@ -162,7 +162,8 @@ def guardar(doc: QTextDocument, secao: Secao, ident: str | None = None) -> str:
 def sem_conteudo(secao: Secao) -> Secao:
     """Copia da secao sem os blocos dos cabecalhos (eles vivem nas faixas do layout)."""
     return Secao(pagina=copy.deepcopy(secao.pagina), tipo=secao.tipo, extras=secao.extras,
-                 original=secao.original, chaves=dict(secao.chaves), colunas=secao.colunas)
+                 original=secao.original, chaves=dict(secao.chaves), colunas=secao.colunas,
+                 desiguais=secao.desiguais)
 
 
 # -- formato ---------------------------------------------------------------------------------

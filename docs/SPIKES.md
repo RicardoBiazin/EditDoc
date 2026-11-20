@@ -2731,6 +2731,153 @@ como veio, sem `tcMar` nem quebra). 154 verificações no arquivo, nos dois modo
 - O empurrão é do acolchoamento de baixo da linha de cima; ela cresce no desenho (a borda de baixo
   desce com ela), como quando o próprio Qt leva uma linha inteira.
 
+## 0.1.35: colunas, o que a 0.1.29 deixou (branch `colunas2`, sobre a 0.1.34)
+
+Tarefa: fechar o que "Colunas iguais: passos 2 e 3" listou em "O que não funciona", por ordem de valor,
+parando de cada item quando o risco passar do aceitável. Leitura de código e sessão com tela do Windows
+(capturas na plataforma `windows`, `viewport().grab()`, fora do repositório). Nenhum arquivo do Word foi
+aberto nesta sessão: o que se diz do Word abaixo é o comportamento documentado, não medido aqui.
+
+### 1. Equilíbrio da última folha: nada a fazer fora do item 2
+
+O Word equilibra as colunas só antes de uma quebra de seção **contínua**. No fim do documento e antes de
+uma seção em página nova ele enche a coluna 1 até o pé e deixa o resto na 2 (para equilibrar o fim do
+documento é preciso pôr uma quebra contínua no fim). O EditDoc já faz exatamente isso nos dois casos que
+a tela mostra (a seção de colunas começa e termina em folha nova). O único caso que pede equilíbrio é a
+seção seguida de contínua, que é o item 2: sem ele não há o que implementar, e implementar equilíbrio no
+fim do documento seria diferir do Word.
+
+### 2. Seção contínua com colunas no meio da folha (e o equilíbrio): não feito
+
+O que precisaria existir: na primeira folha da seção de colunas, as colunas têm a altura que sobrou
+(`corpo - t`, com `t` a altura do texto de uma coluna que vem antes); com equilíbrio, uma altura `u`
+menor que a do corpo, achada por tentativa; e o texto depois da seção continua sob as colunas, na
+largura toda. Em termos do Qt: páginas de altura diferente **cortadas no meio do parágrafo**, e uma
+mesma página do Qt com dois deslocamentos (x e y) no meio dela (o fim da coluna 2 e o texto de largura
+toda que vem depois ficam na mesma página do Qt).
+
+Por que não, medido no código (nenhuma linha foi escrita para isto):
+
+- O `QTextDocumentLayout` só corta linhas em múltiplos de `pageSize().height()`. O único outro corte é
+  a política de quebra de página **no começo de um bloco**.
+- O espaçador que o EditDoc já tem para a "página mais curta" (`interface/notas.py`, `_conferir_pagina`
+  e `_marcar`: a seção mais baixa da 0.1.12 e as notas) liga `PageBreak_AlwaysBefore` numa **unidade**
+  (bloco ou tabela) inteira. O parágrafo que passa do pé curto desce inteiro; se é o primeiro da página,
+  ele continua e o Qt o corta em `hb`, passando do pé curto. Numa seção de duas colunas de um parágrafo
+  só (o caso comum) o equilíbrio daria tudo na coluna 1 ou tudo na 2.
+- Cortar no meio do parágrafo pede dividir o bloco na linha (estrutura derivada pelo layout, como a
+  quebra de coluna do item 3, mas decidida a cada tecla e refeita até convergir): desfazer, cursor,
+  seleção, âncoras de comentário e marcadores, numeração de lista e a conferência pós-gravação veriam um
+  parágrafo que o usuário não criou. Avaliado e descartado.
+- Um float de largura toda como enchimento (a reserva dos objetos flutuantes) exigiria um caractere âncora
+  no texto; o layout próprio por trechos (0.1.31) é cópia de documento e perderia cursor e desfazer,
+  que a 0.1.19 já descartou; pintar a região em colunas de um documento à parte quebra a pintura (listas,
+  campos, revisões e seleção vêm do documento do usuário).
+- `MapaFolhas` guarda um deslocamento por **página do Qt**; o texto abaixo das colunas pede deslocamento
+  por faixa dentro da página (cursor, clique, seleção, setas, PageUp/Down, notas, PDF e impressão
+  teriam de ser refeitos).
+
+Fica o aviso COLUNAS e a seção em uma coluna, como antes (`teste_secoes.testar_continua_e_colunas`).
+Caminho, se for retomado: um layout próprio de corpo (como o `LayoutPorTrechos`, mas paginando por
+linha com alturas de página por região) e o `MapaFolhas` por regiões; é um projeto de versão própria.
+
+### 3. Quebra de coluna no meio do parágrafo: feito
+
+`w:br w:type="column"` no meio do texto de um parágrafo, numa seção cujas colunas a tela mostra
+(`modelo/secoes.colunas_na_tela`), parte o parágrafo em dois em `modelo/documento.normalizar`
+(`_partir_quebras_de_coluna`): a quebra vira o primeiro item do parágrafo de depois, e a quebra "no
+começo do parágrafo" da 0.1.29 faz o resto (nada novo no layout). `normalizar` é o ponto certo porque o
+leitor, a conferência pós-gravação (que normaliza os dois lados) e o escritor passam por ele: o que o
+Qt devolve com a quebra no meio (colado, por exemplo) e o arquivo relido ficam iguais.
+
+- Propriedades dos pedaços: espaço antes só no primeiro, espaço depois e `w:sectPr` só no último (a
+  marca de revisão do parágrafo também), recuo positivo da primeira linha só no primeiro.
+- Não parte: item de lista (o de baixo ganharia número), campo ou controle de conteúdo que atravessa
+  a quebra, quebra sem texto antes ou depois (já é caso de começo/fim). Quem não parte fica com a quebra
+  no meio do bloco, inerte, como antes.
+- Fora das seções que a tela mostra em colunas nada muda (o parágrafo volta inteiro).
+- O arquivo salvo tem a `w:br` no mesmo ponto do texto e uma marca de parágrafo a mais, exatamente como a
+  quebra de página no meio do texto (`leitor._paragrafos`). Não foi aberto no Word.
+
+### 4. Colunas desiguais e `nextColumn`: não feito
+
+`equalWidth="0"` com `w:col` de larguras diferentes: no Qt cada bloco tem uma largura só (a do documento
+menos o recuo direito escondido da 0.1.12); a largura de uma "coluna" depende da página do Qt em que a
+linha cai, que depende do layout, que depende da largura (laço que não converge: o parágrafo que
+atravessa duas colunas teria linhas em duas larguras no mesmo bloco, e o Qt só tem uma). `nextColumn`
+é a seção que começa no meio da folha (item 2). Colunas `equalWidth="0"` com todas as larguras e vãos
+iguais já contavam como iguais desde a 0.1.29 (`formato_docx/secoes.colunas_iguais_de`); a 0.1.35 só
+guarda `Secao.desiguais` para o resto, que continua com o aviso COLUNAS.
+
+### 5. Linha do `w:sep`, régua e flutuantes: feito
+
+- **`w:sep`**: `vista_paginas.fim_do_texto_da_coluna(layout, p)`: a base da última linha da coluna
+  (página do Qt `p`), em cache por revisão, geração das seções e plano de notas; folha com nota de
+  rodape vai até o pé do corpo. A linha de uma folha vai até a coluna mais longa dela. Pixels: com a
+  coluna 1 curta (quebra de coluna) e a 2 mais longa, a linha existe até o fim da 2, passa do fim da 1 e
+  não passa dali (mais de 7 000 twips do corpo ficam sem linha); folha cheia: a linha chega a menos
+  de 1 000 twips do pé (as regras de viúva e órfã deixam o texto um pouco acima).
+- **Régua**: `Regua._colunas()` (coluna do cursor, quantas, deslocamento, largura e passo, em cache por
+  posição e revisão). O zero da régua é a esquerda da coluna do cursor, a área branca é cada coluna e o vão
+  fica cinza como a margem; os marcadores de recuo contam da coluna. Sem colunas, o código de antes.
+- **Flutuantes**: `Contexto.coluna_do_y` dá o deslocamento e a largura da coluna da âncora, e
+  `Gerente.referencia` os põe em `coluna_x`/`coluna_w` (antes, sempre a margem da folha): o objeto
+  "relativo à coluna, à esquerda" cai na coluna 2 quando a âncora está nela. O arraste
+  (`edicao/objetos._bloco_para_ancora`) reancora no parágrafo da coluna sob o canto do objeto, não na
+  primeira coluna da folha (valia também para o arraste na mesma folha).
+
+Testes: `tests/teste_colunas.py`, de 73 para 115 verificações (as 42 novas passam também na plataforma
+`windows`; as duas falhas daquela plataforma, "sem seleção, nada azul" e "a referência está na coluna 2",
+já falhavam na base 0.1.34 nela e não são de nenhuma mudança desta versão).
+
+### Sem colunas, nada muda (medido na mesma hora, base 0.1.34 = `08e5fe9` x branch)
+
+- Suíte (`tests/rodar_todos.py`, sem `QT_QPA_PLATFORM`, nas duas passadas: layout por trechos e
+  `EDITDOC_TRECHOS=0`): 5210 verificações, 0 falhas (as 42 novas de `teste_colunas.py` incluídas).
+- Oráculo de páginas (`w:lastRenderedPageBreak`, 22 .docx de uma pasta pessoal, plataforma `windows`,
+  rótulos doc_NN, os dois modos): JSON **idêntico** nas duas árvores (22 de 22), sem erro. Páginas | quebras
+  certas por bloco/linha: doc_01 4, doc_02 4, doc_03 1, doc_04 5, doc_05 5, doc_06 5, doc_07 6, doc_08 2,
+  doc_09 48, doc_10 48, doc_11 48, doc_12 3, doc_13 4, doc_14 3, doc_15 1, doc_16 1, doc_17 3 | 2/2,
+  doc_18 4 | 3/3, doc_19 14 | 5/5, doc_20 26, doc_21 26 | 2/2, doc_22 2 | 1/1.
+- Regressão c14n (abrir, salvar, reabrir, salvar; todas as partes do pacote; `docProps/core.xml` sem as
+  datas): **todas as partes iguais** nos 22 arquivos, nos dois modos; salvo 1 = salvo 2 e páginas abertas =
+  reabertas nos 22. O script de antes dava `C14NError` em 7 dos 22 (doc_04, 05, 06, 13, 19, 20, 21) nas duas
+  árvores (o erro já existia na base: o `etree.tostring(method="c14n")` do lxml recusa essas partes); essa
+  rodada usa a serialização comum quando o c14n falha, e aí os 22 saem sem erro e iguais.
+- Gate de desempenho (núcleos P, afinidade `FFFF`, uma medida por processo, rodadas intercaladas
+  base/branch; `medir.py`, p95 de 80 teclas com pintura, em ms, total e (tecla); mediana de 3 rodadas):
+
+| Ponto | base 0.1.34 | branch | diferença |
+|---|---|---|---|
+| simples | 6,63 (1,91) | 6,49 (1,86) | -0,14 |
+| plano 1/3 | 10,59 (4,67) | 12,39 (5,31) | +1,80 (ver abaixo) |
+| plano célula | 8,96 (3,00) | 9,09 (2,90) | +0,13 |
+| plano item | 8,98 (2,59) | 8,92 (2,43) | -0,06 |
+| plano com revisões | 10,25 (4,32) | 11,27 (4,79) | +1,02 (ver abaixo) |
+| capa | 9,34 (3,37) | 9,12 (3,36) | -0,22 |
+| sumário | 9,63 (3,17) | 10,37 (3,37) | +0,74 (ver abaixo) |
+| corpo | 7,77 (2,10) | 7,40 (1,95) | -0,37 |
+| cheia | 13,60 (3,57) | 13,80 (3,54) | +0,20 |
+| 2000 revisões | 6,46 (1,17) | 6,40 (1,23) | -0,06 |
+| janela doc_14, 1/3 | 3,95 (0,68) | 4,64 (0,66) | +0,69 |
+| janela doc_14, célula | 3,40 (0,58) | 3,50 (0,59) | +0,10 |
+| janela doc_14, item | 4,14 (0,67) | 3,99 (0,67) | -0,15 |
+
+  O plano 1/3 passou de 1,5 ms só pela mediana de 3 rodadas, e a causa está num pico isolado: na 3ª
+  rodada a branch deu 18,01 ms total com tecla 5,31 e pintura 5,98 (a soma não fecha: a medida teve um
+  tranco), enquanto na 1ª a branch foi 1 ms MELHOR que a base. Por isso o ponto, o sumário e o plano com
+  revisões foram medidos de novo, 5 rodadas intercaladas: plano 1/3 **+0,55** (10,73 | 11,28), sumário
+  **-0,46** (10,91 | 10,45), plano com revisões **+0,10** (11,18 | 11,28), simples -0,09. Nessa série a
+  base também teve um pico (plano 1/3, 1ª rodada, 38,65 ms) e a branch outro (plano com revisões, 3ª
+  rodada, 23,99; sumário, 5ª rodada, 15,70): a diferença troca de sinal de uma rodada para outra e nenhum
+  ponto fica consistentemente 1,5 ms pior. Código novo por tecla no caminho sem colunas: um `tem_colunas()`
+  por pintura da régua (`Regua._colunas`); o resto roda ao abrir e salvar (`normalizar`).
+- Capturas (plataforma `windows`, fora do repositório): a quebra no meio do parágrafo leva o "Depois da
+  quebra" ao alto da coluna 2 e o "Antes" fica no fim da coluna 1 (o cursor na coluna 2; a régua com o
+  zero na esquerda da coluna 2, as duas colunas brancas e o vão cinza, conferido por pixel: 255,255,255 em
+  ambas e 208,212,218 no vão); a linha do `w:sep` termina na base da coluna 2 (a mais longa), bem acima
+  do pé do corpo, passando do fim da coluna 1.
+
 ## Paginação 2 (branch `paginacao2`, sobre a 0.1.34): a margem de cima da tabela e as quebras do doc_19 (diagnóstico; nada mudou no código, sem versão nova)
 
 Oráculo `w:lastRenderedPageBreak` dos 22 `.docx` de Downloads (rótulos doc_NN pela ordem de `sorted(Path)`

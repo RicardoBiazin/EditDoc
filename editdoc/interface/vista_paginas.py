@@ -336,6 +336,64 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
 ESPESSURA_SEPARADOR_COLUNAS_TW = 15.0
 
 
+def fim_do_texto_da_coluna(layout: LayoutPaginado, p: int) -> float:
+    """Onde o texto da pagina do Qt `p` (a coluna) termina, em twips a partir do topo do corpo da
+    coluna (0.1.35): a base da ultima linha que cai nela. A coluna com nota de rodape vai ate' o
+    pe' do corpo (a nota fica la'). Em cache por revisao do documento, pagina e geometria."""
+    doc = layout.doc
+    chave = (doc.revision(), layout.secoes.geracao, layout.hb, layout.doc.pageCount(),
+             len(layout.notas.paginas))
+    cache = getattr(layout, "_fim_do_texto", None)
+    if cache is None or cache[0] != chave:
+        cache = (chave, {})
+        layout._fim_do_texto = cache
+    achado = cache[1].get(p)
+    if achado is not None:
+        return achado
+    mapa = layout.mapa
+    topo = mapa.topo(p)
+    corpo = float(layout.altura_do_corpo(mapa.folha_da_pagina(p)))
+    pe = topo + corpo
+    valor = corpo
+    if not layout.notas.paginas.get(p):
+        valor = _base_do_texto_ate(layout, topo, pe) - topo
+    valor = min(max(valor, 0.0), corpo)
+    cache[1][p] = valor
+    return valor
+
+
+def _base_do_texto_ate(layout: LayoutPaginado, topo: float, pe: float) -> float:
+    """Base da ultima linha do corpo cujo topo cai em [topo, pe); `topo` se a pagina esta' vazia."""
+    doc = layout.doc
+    dl = doc.documentLayout()
+    pos = dl.hitTest(QPointF(1.0, pe - 0.5), Qt.HitTestAccuracy.FuzzyHit)
+    bloco = doc.findBlock(max(0, pos))
+    for _ in range(64):
+        if not bloco.isValid():
+            return topo
+        tabela = QTextCursor(bloco).currentTable()
+        if tabela is not None:
+            while isinstance(tabela.parentFrame(), QTextTable):
+                tabela = tabela.parentFrame()
+            r = dl.frameBoundingRect(tabela)
+            if r.top() < pe - 0.5:
+                return max(topo, min(r.bottom(), pe))
+            bloco = doc.findBlock(tabela.firstPosition() - 1)
+            continue
+        r = dl.blockBoundingRect(bloco)
+        lay = bloco.layout()
+        if r.top() < pe - 0.5 and lay is not None and lay.lineCount():
+            for i in range(lay.lineCount() - 1, -1, -1):
+                linha = lay.lineAt(i)
+                t = r.top() + linha.y()
+                if t < pe - 0.5 and t >= topo - 0.5:
+                    return min(t + linha.height(), pe)
+            if r.top() < topo:
+                return topo  # o bloco vem de antes e nenhuma linha dele cai aqui
+        bloco = bloco.previous()
+    return topo
+
+
 def _desenhar_colunas(painter, layout: LayoutPaginado, n: int, transf: QTransform, cfg,
                       permitido: QRectF, corpo_recorte, selecao, marcas: bool,
                       comentarios: bool) -> None:
@@ -405,9 +463,12 @@ def _desenhar_colunas(painter, layout: LayoutPaginado, n: int, transf: QTransfor
         caneta = QPen(QColor(0, 0, 0))
         caneta.setWidthF(ESPESSURA_SEPARADOR_COLUNAS_TW)
         painter.setPen(caneta)
+        # 0.1.35: a linha vai ate' o fim do texto da coluna mais longa da folha (e ate' o pe'
+        # do corpo quando a folha tem nota de rodape), como no Word.
+        altura = max(fim_do_texto_da_coluna(layout, p) for p, _dx, _w in colunas)
         for (_p, dx, largura), (_q, dx2, _w) in zip(colunas, colunas[1:]):
             x = (dx + largura + dx2) / 2.0
-            painter.drawLine(QPointF(x, 0.0), QPointF(x, permitido.height()))
+            painter.drawLine(QPointF(x, 0.0), QPointF(x, altura))
         painter.restore()
 
 

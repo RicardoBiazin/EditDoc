@@ -63,8 +63,28 @@ class Regua(QWidget):
             "Layout, grupo Parágrafo, ou por Ctrl+M e Ctrl+Shift+M.")
 
     # ----- conversao ---------------------------------------------------------
-    def _x_do_corpo(self) -> float:
-        """X, na regua, da margem esquerda (inicio do corpo)."""
+    def _colunas(self):
+        """(coluna do cursor, quantas, deslocamento da coluna, largura, passo) quando o cursor esta'
+        numa secao de colunas (0.1.35); None sem colunas."""
+        painel = self._painel
+        lay = painel.layout_pag
+        if not lay.mapa.tem_colunas() or not painel._no_corpo():
+            return None
+        pos = painel.textCursor().position()
+        # A pintura pergunta uma vez por marca da escala: em cache por posicao e revisao.
+        chave = (pos, lay.doc.revision(), lay.secoes.geracao, lay.doc.pageCount(), lay.mapa.grupos)
+        guardado = getattr(self, "_col_cache", None)
+        if guardado is not None and guardado[0] == chave:
+            return guardado[1]
+        p = lay.pagina_qt_do_cursor(pos)
+        g = lay.mapa.grupo_da_pagina(p)
+        valor = None if g is None else (lay.mapa.coluna_da_pagina(p), g.colunas,
+                                        lay.mapa.deslocamento(p), g.largura, g.passo)
+        self._col_cache = (chave, valor)
+        return valor
+
+    def _x_da_margem(self) -> float:
+        """X, na regua, da margem esquerda da folha."""
         m = self._painel.mapa()
         margem = self._painel.configuracao_pagina().margem_esq_tw * m.escala
         if self._painel.layout_pag.secoes.multiplas():
@@ -72,6 +92,22 @@ class Regua(QWidget):
             x, _y, _w, _h = m.folha_na_tela(self._painel.pagina_atual())
             return x + margem
         return m.esquerda_folha - m.origem_x + margem
+
+    def _x_do_corpo(self) -> float:
+        """X, na regua, do inicio do texto onde esta' o cursor: a margem esquerda, ou a esquerda da
+        coluna do cursor (0.1.35, os recuos contam da coluna)."""
+        x = self._x_da_margem()
+        col = self._colunas()
+        if col is not None:
+            x += col[2] * self._painel.mapa().escala
+        return x
+
+    def _largura_do_corpo(self) -> float:
+        """Largura do texto onde esta' o cursor, em twips: o corpo, ou a coluna do cursor."""
+        col = self._colunas()
+        if col is not None:
+            return col[3]
+        return self._painel.configuracao_pagina().corpo_largura_tw()
 
     def _x_de_tw(self, tw: float) -> float:
         return self._x_do_corpo() + tw * self._painel.mapa().escala
@@ -88,10 +124,17 @@ class Regua(QWidget):
     def paintEvent(self, ev) -> None:  # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), COR_MARGEM)
-        cfg = self._painel.configuracao_pagina()
         x0 = self._x_do_corpo()
-        x1 = self._x_de_tw(cfg.corpo_largura_tw())
-        p.fillRect(QRectF(x0, 0, x1 - x0, self.height()), COR_CORPO)
+        x1 = self._x_de_tw(self._largura_do_corpo())
+        col = self._colunas()
+        if col is None:
+            p.fillRect(QRectF(x0, 0, x1 - x0, self.height()), COR_CORPO)
+        else:
+            # Colunas (0.1.35): cada coluna e' branca, o vao entre elas fica cinza como a margem.
+            e = self._painel.mapa().escala
+            base = self._x_da_margem()
+            for i in range(col[1]):
+                p.fillRect(QRectF(base + i * col[4] * e, 0, col[3] * e, self.height()), COR_CORPO)
 
         fonte = QFont(p.font())
         fonte.setPointSizeF(7.0)
@@ -146,12 +189,11 @@ class Regua(QWidget):
     def mouseMoveEvent(self, ev) -> None:  # noqa: N802
         if self._arrasto is None:
             return
-        cfg = self._painel.configuracao_pagina()
         tw = round(self._tw_de_x(ev.position().x()) / PASSO_TW) * PASSO_TW
         esquerdo, primeira = self._painel.recuos_do_paragrafo()
         if self._arrasto == "esquerdo":
             # O marcador de baixo leva o recuo esquerdo; a primeira linha acompanha.
-            novo_esq = min(max(0, tw), cfg.corpo_largura_tw())
+            novo_esq = min(max(0, tw), self._largura_do_corpo())
             self._valor = (novo_esq, primeira)
         else:
             # O marcador de cima e' absoluto; no modelo o recuo da primeira linha e' relativo.

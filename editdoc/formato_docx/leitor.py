@@ -2438,7 +2438,8 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
                                numeracao=ctx.numeracao, comentarios=comentarios,
                                secao=Secao(tipo=final.tipo, extras=final.extras,
                                            original=final.original, chaves=final.chaves,
-                                           colunas=final.colunas), **meta))
+                                           colunas=final.colunas, desiguais=final.desiguais),
+                               **meta))
     doc.notas = notas
     doc.controlar_alteracoes = controlar
     mod_numeracao.tipos_dos_paragrafos(doc)

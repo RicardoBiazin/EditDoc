@@ -176,12 +176,15 @@ def _mudanca(est: posicao.Estado, ref: mf.Referencia, x_tw: float, y_tw: float,
                            tamanho=tamanho)
 
 
-def _bloco_para_ancora(layout, n: int, y_tw: float):
-    """O paragrafo do corpo mais perto do topo `y_tw` (twips da folha n), ou None."""
+def _bloco_para_ancora(layout, n: int, y_tw: float, x_tw: float | None = None):
+    """O paragrafo do corpo mais perto do topo `y_tw` (twips da folha n), ou None. Com colunas,
+    o da coluna sob `x_tw` (0.1.35; sem x, a primeira coluna da folha)."""
     doc = layout.doc
     hb = layout.hb
     topo = layout.topo_da_pagina(n)
     p = layout.mapa.primeira_pagina(n)  # colunas (passo 2): a primeira coluna da folha
+    if x_tw is not None and layout.mapa.tem_colunas():
+        p = layout.mapa.coluna_no_x(n, x_tw - layout.efetiva_da(n).margem_esq_tw)
     y_doc = layout.mapa.topo(p) + min(max(y_tw - topo, 0.0), hb - 1.0)
     pos = doc.documentLayout().hitTest(QPointF(1.0, y_doc), Qt.HitTestAccuracy.FuzzyHit)
     pos = layout.ajustar_para_pagina(max(0, pos), p)
@@ -215,7 +218,8 @@ def mover(doc, g, pos: int, n: int, x_tw: float, y_tw: float, tamanho_tw: tuple 
     destino = None
     v_rel = None
     if layout is not None and n != n_atual:
-        bloco = _bloco_para_ancora(layout, n, y_tw) if reancorar and not est.travado else None
+        bloco = _bloco_para_ancora(layout, n, y_tw, x_tw) if reancorar and not est.travado \
+            else None
         if bloco is not None and _reancoravel(doc, bloco, pos):
             destino = bloco.position()
         elif not est.simples:
@@ -224,7 +228,7 @@ def mover(doc, g, pos: int, n: int, x_tw: float, y_tw: float, tamanho_tw: tuple 
             v_rel = "page"
     elif layout is not None and reancorar and not est.travado and \
             est.v_rel in ("paragraph", "line") and not est.simples:
-        bloco = _bloco_para_ancora(layout, n, y_tw)
+        bloco = _bloco_para_ancora(layout, n, y_tw, x_tw)
         if bloco is not None and _reancoravel(doc, bloco, pos):
             destino = bloco.position()
     if destino is not None:

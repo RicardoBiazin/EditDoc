@@ -55,6 +55,9 @@ class Secao:
     #: Colunas (w:cols) que a secao tem: (numero, espaco em twips). So' informativo: as colunas
     #: voltam ao arquivo pelos extras e a tela mostra uma coluna. Fora da comparacao.
     colunas: tuple = field(default=(1, 0), compare=False)
+    #: As colunas tem larguras diferentes (w:cols equalWidth="0" com w:col de w diferentes): a
+    #: tela nao as mostra (0.1.35). Fora da comparacao, como `colunas`.
+    desiguais: bool = field(default=False, compare=False)
 
     def faixas(self, onde: str) -> dict:
         return self.cabecalhos if onde == "cabecalho" else self.rodapes

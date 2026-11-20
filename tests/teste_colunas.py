@@ -538,6 +538,244 @@ def testar_quebra_de_coluna() -> None:
         _fechar(janela)
 
 
+# -- 0.1.35: o que a 0.1.29 deixou de fora ---------------------------------------------------
+
+BR_COLUNA = '<w:r><w:br w:type="column"/></w:r>'
+
+
+def _texto_de(p) -> str:
+    return "".join(r.texto for r in p.runs)
+
+
+def _modelo_de_colunas(paragrafos: list, **kw):
+    """Documento de uma secao de 2 colunas iguais montado no modelo (sem arquivo)."""
+    from editdoc.modelo.documento import Documento
+    from editdoc.modelo.secoes import Secao
+    return Documento(paragrafos=paragrafos, pagina=Pagina(),
+                     secao=Secao(colunas=(2, ESPACO_TW), **kw))
+
+
+def testar_quebra_de_coluna_no_meio() -> None:
+    secao("quebra de coluna no MEIO do paragrafo: parte o paragrafo, a w:br volta no mesmo ponto")
+    from editdoc.formato_docx import conferencia
+    from editdoc.modelo.documento import (Campo, MarcaCampo, MarcaQuebra, Paragrafo, Run,
+                                          normalizar)
+    meio = ("<w:p><w:r><w:t>Antes da quebra no meio.</w:t></w:r>" + BR_COLUNA
+            + "<w:r><w:t>Depois da quebra no meio.</w:t></w:r></w:p>")
+    corpo = _paragrafos(3) + meio + _paragrafos(3, 10)
+    modelo, avisos = ler(docx_colunas(corpo=corpo))
+    textos = [_texto_de(p) for p in modelo.paragrafos]
+    i = textos.index("Antes da quebra no meio.")
+    checa_igual(textos[i + 1], "Depois da quebra no meio.", "o paragrafo partiu em dois")
+    checa(isinstance(modelo.paragrafos[i + 1].runs[0].marca, MarcaQuebra),
+          "a quebra e' o primeiro run do paragrafo de depois (a tela a leva para a coluna 2)")
+    checa(not any(isinstance(r.marca, MarcaQuebra) for r in modelo.paragrafos[i].runs),
+          "e saiu do paragrafo de antes")
+    checa_igual([a.codigo for a in avisos if a.codigo == "COLUNAS"], [], "sem aviso COLUNAS")
+    checa(normalizar(modelo).paragrafos == modelo.paragrafos, "normalizar de novo: nada muda")
+    janela = _janela(docx_colunas(corpo=corpo))
+    try:
+        lay = janela.painel.layout_pag
+        dl = lay.doc.documentLayout()
+
+        def pagina(texto):
+            b = lay.doc.begin()
+            while b.isValid():
+                if texto in b.text():
+                    return lay.mapa.pagina_de_y(dl.blockBoundingRect(b).top() + 1)
+                b = b.next()
+            return None
+        checa_igual((pagina("Antes da quebra"), pagina("Depois da quebra")), (0, 1),
+                    "antes na coluna 1, depois na coluna 2")
+        checa_igual(lay.numero_paginas(), 1, "uma folha")
+        atual = janela._modelo_atual()
+        gravado = escrever(atual)
+        xml = fx.partes_de(gravado)["word/document.xml"].decode("utf-8")
+        checa(xml.count('w:type="column"') == 1 and 'w:type="page"' not in xml,
+              "o arquivo traz uma w:br de coluna e nenhuma de pagina")
+        checa(xml.index("Antes da quebra") < xml.index('w:type="column"')
+              < xml.index("Depois da quebra"), "e ela fica entre o antes e o depois")
+        conferencia.conferir(gravado, atual)  # levanta se o arquivo relido difere
+        checa(True, "a conferencia pos-gravacao aceita o arquivo")
+        outra, _a = ler(gravado)
+        checa_igual([_texto_de(p) for p in outra.paragrafos], textos,
+                    "reler o arquivo salvo da os mesmos paragrafos")
+    finally:
+        _fechar(janela)
+    # Contraprovas.
+    sem, _a = ler(fx.docx_com_xml(corpo))
+    checa("Antes da quebra no meio.Depois da quebra no meio." in [_texto_de(p) for p in sem.paragrafos],
+          "contraprova: sem w:cols o paragrafo continua inteiro")
+    q = Run(marca=MarcaQuebra("coluna"))
+    antes, depois = Run("Antes. "), Run("Depois.")
+    casos = {
+        "item de lista": [Paragrafo(runs=[antes, q, depois], lista=5, lista_nivel=0)],
+        "campo que atravessa a quebra": [Paragrafo(runs=[
+            Run(marca=MarcaCampo("inicio", Campo(codigo=("PAGE",)))), antes, q, depois,
+            Run(marca=MarcaCampo("fim"))])],
+        "so' marcas antes da quebra": [Paragrafo(runs=[Run(marca=MarcaCampo("fim")), q, depois])],
+        "quebra no fim": [Paragrafo(runs=[antes, q])],
+        "quebra no comeco": [Paragrafo(runs=[q, depois])],
+    }
+    for nome, blocos in casos.items():
+        doc = normalizar(_modelo_de_colunas(blocos))
+        checa_igual(len(doc.paragrafos), 1, f"contraprova: {nome} nao parte")
+    doc = normalizar(_modelo_de_colunas([Paragrafo(runs=[antes, q, depois, Run(" Mais "), q,
+                                                         Run("fim.")], espaco_antes_tw=240,
+                                                    espaco_depois_tw=240,
+                                                    recuo_primeira_linha_tw=360)]))
+    checa_igual([_texto_de(p) for p in doc.paragrafos], ["Antes. ", "Depois. Mais ", "fim."],
+                "duas quebras no meio: tres paragrafos")
+    checa_igual([(p.espaco_antes_tw, p.espaco_depois_tw, p.recuo_primeira_linha_tw)
+                 for p in doc.paragrafos], [(240, 0, 360), (0, 0, 0), (0, 240, 0)],
+                "espaco antes so' no primeiro, depois so' no ultimo, recuo da 1a linha so' no 1o")
+
+
+def testar_separador_ate_o_fim_do_texto() -> None:
+    secao("w:sep vai ate' o fim da coluna mais longa da folha (nao ate' o pe' do corpo)")
+    from editdoc.interface.vista_paginas import fim_do_texto_da_coluna
+    corpo = (_paragrafos(3) + f"<w:p>{BR_COLUNA}<w:r><w:t>Segunda coluna.</w:t></w:r></w:p>"
+             + _paragrafos(6, 10))
+    janela = _janela(docx_colunas(corpo=corpo, sep=True), 1100, 1400)
+    try:
+        lay = janela.painel.layout_pag
+        e = janela.painel.mapa().escala
+        fim1, fim2 = (fim_do_texto_da_coluna(lay, p) for p in (0, 1))
+        corpo_h = lay.efetiva_da(0).corpo_altura_tw()
+        checa(0 < fim1 < fim2 < corpo_h - 2000, f"a coluna 2 e' a mais longa e nao enche a folha "
+                                                 f"({fim1:.0f}, {fim2:.0f}, corpo {corpo_h})")
+        janela.painel.verticalScrollBar().setValue(0)
+        drenar_eventos()
+        img = janela.painel.viewport().grab().toImage()
+        c1, _c2, vao, topo, pe = _colunas_na_tela(janela, 0)
+        meio = vao + ESPACO_TW * e / 2
+        fim_px = topo + fim2 * e
+        com = _tinta(img, meio - 3, meio + 3, topo + 4, fim_px - 6, passo=1, limite=200)
+        sem = _tinta(img, meio - 3, meio + 3, fim_px + 6, pe, passo=1, limite=200)
+        entre = _tinta(img, meio - 3, meio + 3, topo + fim1 * e + 8, fim_px - 6, passo=1, limite=200)
+        checa(com > 50, f"a linha existe ate' o fim da coluna 2 ({com} pixels)")
+        checa_igual(sem, 0, "e nao passa dali (contraprova: o pe' do corpo fica sem linha)")
+        checa(entre > 20, f"e passa do fim da coluna 1, que e' mais curta ({entre} pixels)")
+    finally:
+        _fechar(janela)
+    # Contraprova: folha cheia, a linha vai ate' o fim do texto, a menos de uma linha do pe'.
+    janela = _janela(docx_colunas(sep=True), 1100, 1400)
+    try:
+        lay = janela.painel.layout_pag
+        corpo_h = lay.efetiva_da(0).corpo_altura_tw()
+        fim = fim_do_texto_da_coluna(lay, 0)
+        checa(corpo_h - 1000 < fim <= corpo_h, f"folha cheia: o fim do texto fica a menos de 1000 "
+                                               f"twips do pe' ({corpo_h - fim:.0f})")
+        e = janela.painel.mapa().escala
+        img = janela.painel.viewport().grab().toImage()
+        _c1, _c2, vao, topo, pe = _colunas_na_tela(janela, 0)
+        meio = vao + ESPACO_TW * e / 2
+        fim_px = topo + fim * e
+        checa(_tinta(img, meio - 3, meio + 3, fim_px - 300 * e, fim_px - 2, passo=1, limite=200) > 10,
+              "folha cheia: a linha desce ate' o fim do texto")
+        checa_igual(_tinta(img, meio - 3, meio + 3, fim_px + 6, pe, passo=1, limite=200), 0,
+                    "e para ali (os ultimos twips do corpo ficam sem linha)")
+    finally:
+        _fechar(janela)
+
+
+def testar_regua_da_coluna() -> None:
+    secao("regua: mostra a coluna do cursor (largura e recuos contam da coluna)")
+    janela = _janela(docx_colunas())
+    try:
+        painel, regua = janela.painel, janela.regua
+        lay = painel.layout_pag
+        c1, c2, vao, _t, _p = _colunas_na_tela(janela, 0)
+        e = painel.mapa().escala
+
+        def pos_em(p):
+            b = _bloco_na_pagina(lay, p)
+            cur = QTextCursor(lay.doc)
+            cur.setPosition(b.position() + 3)
+            painel.setTextCursor(cur)
+            drenar_eventos()
+        pos_em(1)
+        checa(abs(regua._x_de_tw(0) - c2) < 1.0, f"cursor na coluna 2: o zero da regua e' a "
+                                                  f"esquerda dela ({regua._x_de_tw(0):.1f} / {c2:.1f})")
+        checa(abs(regua._largura_do_corpo() - COLUNA_TW) < 1, "a largura mostrada e' a da coluna")
+        regua.resize(painel.width(), 22)
+        img = regua.grab().toImage()
+        cinza = (0xD0, 0xD4, 0xDA)
+
+        def cor(x):
+            c = QColor(img.pixel(int(x), 10))
+            return (c.red(), c.green(), c.blue())
+        checa_igual((cor(c1 + 50), cor(vao + ESPACO_TW * e / 2), cor(c2 + 50)),
+                    ((255, 255, 255), cinza, (255, 255, 255)),
+                    "colunas brancas e o vao cinza, como as margens")
+        pos_em(0)
+        checa(abs(regua._x_de_tw(0) - c1) < 1.0, "contraprova: cursor na coluna 1, o zero e' a margem")
+    finally:
+        _fechar(janela)
+    janela = _janela(fx.docx_com_xml(_paragrafos(10)))
+    try:
+        regua = janela.regua
+        checa_igual(regua._largura_do_corpo(), CORPO_TW, "contraprova: sem colunas, o corpo inteiro")
+        checa(regua._colunas() is None, "e sem colunas na regua")
+    finally:
+        _fechar(janela)
+
+
+def testar_flutuante_relativo_a_coluna() -> None:
+    secao("flutuante numa secao de colunas: 'relativo a' coluna' e' a coluna da ancora")
+    import teste_flutuantes as tf
+    from editdoc.edicao import objetos as ed_objetos
+    forma = tf.forma(1440000, 720000)
+
+    def doc_com(indice: int) -> bytes:
+        ancora = tf.ancora(77, tf.URI_FORMA, forma, 1440000, 720000, h=("column", "align", "left"),
+                           v=("paragraph", "posOffset", 0), quebra="<wp:wrapNone/>")
+        corpo = _paragrafos(70, extra={indice: ancora})
+        base = fx.docx_com_corpo_de_objetos(corpo, (), {}, (), (("png", "image/png"),))
+        return _com_colunas(base)
+    # Um paragrafo da coluna 2 da primeira folha (a quantidade por coluna depende da fonte).
+    janela = _janela(docx_colunas())
+    try:
+        na_coluna_2 = int(_bloco_na_pagina(janela.painel.layout_pag, 1).text().split()[1]) + 1
+    finally:
+        _fechar(janela)
+    for indice, coluna in ((na_coluna_2, 1), (3, 0)):
+        janela = _janela(doc_com(indice))
+        try:
+            lay = janela.painel.layout_pag
+            g = lay.flutuantes
+            lay.atualizar_flutuantes()
+            itens = g.lista()
+            checa_igual(len(itens), 1, "um flutuante")
+            pos = itens[0][0]
+            checa_igual(lay.mapa.coluna_da_pagina(lay.pagina_qt_do_cursor(pos)), coluna,
+                        f"a ancora esta' na coluna {coluna + 1}")
+            _n, ref, _d = g.referencia(pos)
+            esperado = 1440 + coluna * (COLUNA_TW + ESPACO_TW)
+            checa(abs(ref.coluna_x - esperado) < 1 and abs(ref.coluna_w - COLUNA_TW) < 1,
+                  f"coluna {coluna + 1}: x {ref.coluna_x:.0f} (esperado {esperado:.0f}), "
+                  f"largura {ref.coluna_w:.0f}")
+            postos = g.postos(0)
+            checa(len(postos) == 1 and abs(postos[0].rect[0] - esperado) < 1,
+                  f"o objeto 'a esquerda da coluna' fica no x da coluna {coluna + 1}")
+            if coluna == 0:
+                # Arrasto: soltar com o canto na coluna 2 reancora no paragrafo da coluna 2.
+                n = 0
+                ef = lay.efetiva_da(0)
+                x_col2 = ef.margem_esq_tw + COLUNA_TW + ESPACO_TW + 100
+                y = lay.topo_da_pagina(0) + 3000
+                novo = ed_objetos.mover(lay.doc, g, pos, n, x_col2, y, layout=lay)
+                checa(novo is not None and lay.pagina_qt_do_cursor(novo) == 1,
+                      "soltar na coluna 2 reancora num paragrafo da coluna 2")
+                janela.painel.documento_corpo().undo()
+                novo = ed_objetos.mover(lay.doc, g, g.lista()[0][0], n, ef.margem_esq_tw + 100, y,
+                                        layout=lay)
+                checa(novo is not None and lay.pagina_qt_do_cursor(novo) == 0,
+                      "contraprova: soltar na coluna 1 fica na coluna 1")
+        finally:
+            _fechar(janela)
+
+
 def main() -> int:
     testar_mapa_de_folhas()
     testar_quais_secoes_mostram()
@@ -550,6 +788,10 @@ def main() -> int:
     testar_notas_no_pe()
     testar_pdf_e_impressao()
     testar_quebra_de_coluna()
+    testar_quebra_de_coluna_no_meio()
+    testar_separador_ate_o_fim_do_texto()
+    testar_regua_da_coluna()
+    testar_flutuante_relativo_a_coluna()
     return resumir()
 
 
