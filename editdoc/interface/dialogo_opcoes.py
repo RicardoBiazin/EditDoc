@@ -23,7 +23,9 @@ TEMAS = (("sistema", "Igual ao Windows"), ("claro", "Claro"), ("escuro", "Escuro
 
 
 class DialogoOpcoes(QDialog):
-    def __init__(self, valores: dict, pai: QWidget | None = None) -> None:
+    def __init__(self, valores: dict, pai: QWidget | None = None,
+                 idiomas: tuple | list = ()) -> None:
+        """`idiomas`: as etiquetas dos idiomas que o corretor tem (a janela pergunta a ele)."""
         super().__init__(pai)
         self.setWindowTitle(f"Opções - {APP}")
         self.setAccessibleName("Opções do EditDoc")
@@ -106,6 +108,32 @@ class DialogoOpcoes(QDialog):
         f_usuario.addRow("&Nome de usuário:", self.nome_usuario)
         f_usuario.addRow("Inic&iais:", self.iniciais)
 
+        # -- ortografia (0.1.35)
+        from editdoc.interface.ortografia import IDIOMA_AUTOMATICO, nome_do_idioma
+        self.ortografia = QCheckBox("Verificar a ortografia enquanto digito")
+        self.ortografia.setChecked(v["ortografia_ligada"])
+        self.idioma = QComboBox()
+        self.idioma.setAccessibleName("Idioma da verificação ortográfica")
+        self.idioma.setAccessibleDescription(
+            "Automático usa o idioma marcado no documento e, na falta, o português do Brasil. "
+            "Escolher um idioma verifica todo o texto nele.")
+        self.idioma.addItem("Automático (o idioma do documento)", IDIOMA_AUTOMATICO)
+        etiquetas = list(idiomas)
+        atual = v["ortografia_idioma"]
+        for etiqueta in etiquetas:
+            self.idioma.addItem(nome_do_idioma(etiqueta), etiqueta)
+        if atual != IDIOMA_AUTOMATICO and atual not in etiquetas:
+            # O idioma gravado nao esta' instalado (ou o corretor nao respondeu): continua na lista,
+            # para o OK nao trocar a escolha sem o usuario saber.
+            self.idioma.addItem(f"{nome_do_idioma(atual)} (não instalado)", atual)
+        self.idioma.setCurrentIndex(max(0, self.idioma.findData(atual)))
+        self.idioma.setEnabled(v["ortografia_ligada"])
+        self.ortografia.toggled.connect(self.idioma.setEnabled)
+        texto = QGroupBox("Ortografia")
+        f_texto = QFormLayout(texto)
+        f_texto.addRow(self.ortografia)
+        f_texto.addRow("Idio&ma:", self.idioma)
+
         # -- recentes
         self.recentes = QSpinBox()
         self.recentes.setRange(0, configuracao.LIMITE_RECENTES)
@@ -127,7 +155,7 @@ class DialogoOpcoes(QDialog):
         self.botoes = botoes
 
         vertical = QVBoxLayout(self)
-        for grupo in (novo, exibir, usuario, salvar, recentes):
+        for grupo in (novo, exibir, usuario, texto, salvar, recentes):
             vertical.addWidget(grupo)
         vertical.addWidget(botoes)
         self.fonte.setFocus()
@@ -163,5 +191,7 @@ class DialogoOpcoes(QDialog):
             "recentes_maximo": self.recentes.value(),
             "nome_usuario": " ".join(self.nome_usuario.text().split())[:255],
             "iniciais": "".join(self.iniciais.text().split())[:9],
+            "ortografia_ligada": self.ortografia.isChecked(),
+            "ortografia_idioma": self.idioma.currentData(),
             "limpar_recentes": self.limpar_recentes,
         }

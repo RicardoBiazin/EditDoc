@@ -77,7 +77,7 @@ ROTULOS = {
     "mostrar_comentarios": "Mostrar comentários",
     "controlar_alteracoes": "Controlar alterações", "aceitar_revisao": "Aceitar",
     "rejeitar_revisao": "Rejeitar", "revisao_anterior": "Anterior", "revisao_proxima": "Próxima",
-    "painel_revisoes": "Painel de revisões",
+    "painel_revisoes": "Painel de revisões", "ortografia": "Ortografia",
     "inserir_nota_rodape": "Nota de Rodapé", "inserir_nota_fim": "Nota de Fim",
     "proxima_nota": "Próxima", "nota_anterior": "Anterior", "opcoes_notas": "Opções",
     "atualizar_sumario": "Atualizar Sumário",
@@ -613,9 +613,19 @@ class Faixa(QFrame):
                 "comentario_anterior", "comentario_proximo", "mostrar_comentarios")]))
         controle = self._grupo_controle(c)
         alteracoes = self._grupo_alteracoes(c)
-        # Recolhe primeiro o grupo Controle, depois Alteracoes, por ultimo Comentarios.
-        linha = LinhaDeGrupos([comentarios, controle, alteracoes],
-                              [controle, alteracoes, comentarios])
+        # Revisao de texto (0.1.35): o botao Ortografia (F7), como no Word.
+        botao_ortografia = _botao(c, "ortografia")
+        # A segunda linha, vazia, tem a altura de um botao: sem isso o titulo do grupo fica mais
+        # alto que o dos outros.
+        espaco = QWidget()
+        espaco.setFixedSize(1, botao_ortografia.sizeHint().height())
+        texto = GrupoFaixa(
+            "Revisão de texto", _duas_linhas([botao_ortografia], [espaco]),
+            _menu("Texto", [c.acao("ortografia")]))
+        # Recolhe primeiro o grupo Controle, depois Alteracoes, depois Comentarios e, por
+        # ultimo, a Revisao de texto.
+        linha = LinhaDeGrupos([texto, comentarios, controle, alteracoes],
+                              [controle, alteracoes, comentarios, texto])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha
