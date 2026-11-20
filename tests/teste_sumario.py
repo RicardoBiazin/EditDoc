@@ -58,9 +58,24 @@ def testar_modelo() -> None:
                 "sem \\o: titulos 1 a 9; \\n sem intervalo tira todos os numeros")
     checa_igual(mod.opcoes_da_instrucao(' TOC \\o "4-2" ').ultimo, 9, "intervalo invertido: o padrao")
     checa(mod.reconstruivel(mod.INSTRUCAO_PADRAO) == "", "o TOC padrao se reconstroi")
-    for instr in (' TOC \\h \\z \\t "Meu;1" ', " TOC \\f \\h ", ' TOC \\h \\z \\c "Figura" ',
-                  " TOC \\b trecho "):
+    for instr in (" TOC \\f \\h ", " TOC \\l 1-3 \\h ", ' TOC \\h \\z \\a "Figura" '):
         checa(mod.reconstruivel(instr) != "", f"nao reconstroi: {instr.strip()}")
+    # 0.1.37: \t, \b e \c passam a ser reconstruidos.
+    for instr in (' TOC \\h \\z \\t "Meu;1" ', ' TOC \\h \\z \\c "Figura" ', " TOC \\b trecho "):
+        checa(mod.reconstruivel(instr) == "", f"agora reconstroi: {instr.strip()}")
+    o = mod.opcoes_da_instrucao(' TOC \\o "1-2" \\t "Meu estilo;3,Outro;4" \\b trecho \\h ')
+    checa_igual((o.titulos, o.estilos, o.marcador, o.rotulo),
+                (True, (("meu estilo", 3), ("outro", 4)), "trecho", None),
+                "\\o com \\t (separador ; ou ,) e \\b")
+    o = mod.opcoes_da_instrucao(' TOC \\h \\z \\t "Meu;1" ')
+    checa_igual((o.titulos, o.inclui(1), o.nivel_do_estilo("meu")), (False, False, 1),
+                "so' \\t: os titulos nao entram, so' o estilo dele")
+    o = mod.opcoes_da_instrucao(' TOC \\h \\z \\c "Figura" ')
+    checa_igual((o.titulos, o.rotulo, o.inclui(1)), (False, "Figura", False),
+                "\\c \"Figura\": o indice de ilustracoes (sem titulos)")
+    checa_igual(mod.opcoes_da_instrucao(" TOC \\c Tabela ").rotulo, "Tabela", "\\c sem aspas")
+    checa(mod.eh_indice_de_figuras(mod.campo_toc(mod.instrucao_de_figuras("Figura")))
+          and not mod.eh_indice_de_figuras(mod.campo_toc()), "so' o TOC com \\c e' indice de figuras")
     checa_igual(mod.marcador_do_pageref(" PAGEREF _Toc123 \\h "), "_Toc123", "marcador do PAGEREF")
     checa(mod.marcador_do_pageref(" REF _Toc123 \\h ") is None, "REF nao e' PAGEREF")
     usados = {"_Toc100000000"}

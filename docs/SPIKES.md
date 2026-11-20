@@ -2998,3 +2998,93 @@ polilinha e 108 µs em segmentos soltos, medido).
 - "Ignorar tudo" vale até abrir outro documento ou fechar o programa; "Adicionar ao dicionário" grava no
   dicionário pessoal do Windows (vale para os outros programas). A fumaça de teste da API nunca o chama.
 - Não conferido no Word: o aspecto da onda (amplitude, espessura) foi ajustado à vista, não medido.
+
+## 0.1.37: legendas, índice de ilustrações, referência cruzada e o resto do sumário
+
+Aba **Referências**: **Inserir Legenda**, **Índice de Ilustrações**, **Referência Cruzada** e
+**Atualizar Campos** (F9); no sumário, o número de lista do título, `\t`, `\b` e o título "Sumário".
+Código em `modelo/legendas.py` (SEQ, a contagem, REF e PAGEREF, sem Qt), `edicao/legendas.py`,
+`edicao/referencias.py`, `interface/dialogo_legendas.py` e, no sumário, `modelo/sumario.py` e
+`edicao/sumario.py`; testes em `tests/teste_legendas.py` (240 verificações, nas duas passadas).
+
+#### Como ficou
+
+- **Legenda** = parágrafo no estilo "caption" (Legenda, criado com os valores do Word se faltar:
+  9 pt, itálico, cor `44546A`, 10 pt depois) com o rótulo, o campo `SEQ Rótulo \* ARABIC` (o número é
+  o resultado) e o texto (" – texto", sem pontuação no começo). Entra acima ou abaixo da tabela do
+  cursor ou do parágrafo do cursor (a imagem, a equação). O bloco vazio que o Qt exige ao lado da
+  tabela (estrutural) e o bloco vazio que fecha o documento depois da última tabela são ocupados
+  pela legenda; com bloco de texto ali, entra um bloco novo.
+- **Numeração**: `modelo/legendas.numerar` conta por identificador na ordem do documento
+  (`\* ARABIC|roman|ROMAN|alphabetic|ALPHABETIC`, `\c`, `\r n`, `\h`, `\s n`). SEQ com opção que o
+  EditDoc não conhece (formato por extenso, SEQ que cita marcador) fica fora da conta e volta ao
+  arquivo como veio. **Inserir** recontas o rótulo dentro do mesmo bloco de edição (um Ctrl+Z desfaz
+  legenda, estilo e renumeração, como o Word renumera ao inserir). **Apagar e mover** não renumeram
+  sozinhos: **Atualizar Campos** (F9). Só o resultado que difere do contado é reescrito.
+- **Atualizar Campos** (`edicao/referencias.atualizar_campos`): SEQ e REF (texto do marcador, de
+  agora) num passo; PAGEREF de todo o documento (inclusive as linhas dos sumários) depois do layout,
+  num passo anotado (o mesmo `_anotar` do sumário). Sumário e índice não são refeitos por F9 (só os
+  números de página deles).
+- **Índice de ilustrações** = o TOC com `\c "Rótulo"` pelo mesmo caminho do sumário
+  (`edicao/sumario.titulos` junta `\o`, `\t`, `\b` e `\c`): as entradas são os parágrafos com SEQ do
+  rótulo, no estilo "table of figures" (Índice de Ilustrações, criado), com `_Toc` no parágrafo da
+  legenda, hiperlink e PAGEREF. **Atualizar Sumário** só pega TOC sem `\c`, **Atualizar Índice** só
+  os com `\c` (fora de todos, refaz todos num passo só, de baixo para cima).
+- **Referência cruzada**: alvo = título, legenda ou marcador do usuário; o marcador `_Ref` + 9
+  dígitos cobre o trecho citado (título e legenda inteira: o texto do parágrafo; rótulo e número:
+  do começo do parágrafo ao fim do SEQ; só o número: o SEQ) e é reaproveitado quando já existe um
+  igual (`referencias._normal` tira as marcas de marcador das pontas antes de comparar). Campo
+  `REF m \h`, `REF m \r \h` (número de lista, sem o ponto final; "0" sem lista, como o Word) ou
+  `PAGEREF m \h`.
+- **Sumário**: o título numerado por lista leva o número na linha ("1.2", tabulação e texto; a
+  tabulação à esquerda em 440 twips por nível, como o Word); `\t "Estilo;nível;..."` (separador `;`
+  ou `,`, pelo nome, nome na tela ou id do estilo) e `\b marcador` entram nas entradas;
+  **Sumário > Inserir sumário com título** põe o parágrafo "Sumário" no estilo "TOC Heading"
+  (baseado no Título 1 com `outlineLvl 9`: sem o 9 ele herdaria o nível 0 e entraria nas entradas).
+- Interface: `Referências > Legendas` (Inserir Legenda, Referência Cruzada, menu Índice de
+  Ilustrações, Atualizar Campos). Os três diálogos têm nome em todo controle e a ordem de Tab segue a
+  leitura (conferido por `teste_legendas` com o `Capturador` do `teste_acessibilidade`).
+
+#### Provas (`tests/teste_legendas.py`)
+
+Inserir (imagem acima e abaixo, tabela no meio, no começo e no fim do documento, equação, rótulo
+novo, sem rótulo); um Ctrl+Z; mover a figura C (imagem e legenda) para o alto: os números ficam
+velhos (3, 1, 2) e F9 deixa 1, 2, 3, com a contraprova que troca `contar` e mantém tudo velho;
+apagar a legenda do meio; salvar (validador, begin/separate/end, instrText, `xml:space`, estilo no
+styles.xml, conferência pós-gravação) e reabrir (mesmos bytes ao regravar); `.docx` com campos do
+Word (SEQ complexo, `\c`, SEQ com marcador, REF): sem atualizar, o `document.xml` é o do escritor e
+os parágrafos dos campos voltam iguais em c14n (o `w:id` dos marcadores é normalizado: o escritor
+sempre o renumerou); índice com as linhas esperadas, páginas conferidas por outro caminho (origem
+da primeira linha), atualizar o inteiro depois de mover, só os números (contraprova: depois de
+empurrar, o número fica velho), dois índices; referência a todos os tipos com marcador reaproveitado,
+um desfazer, F9 e a contraprova da leitura do marcador.
+
+#### O que ficou de fora
+
+- Legenda de imagem dentro de célula (com o cursor na célula a legenda vai na tabela inteira) e de
+  tabela dentro de tabela; legenda de parágrafo que termina seção.
+- Referência cruzada "acima/abaixo" (`\p`), REF `\n`/`\f`/`\d`/`\t`, SEQ com formato por extenso e
+  SEQ com marcador: ficam como vieram (F9 não os toca).
+- Com o controle de alterações ligado, inserir e atualizar não viram revisão (como o sumário).
+- Nenhum arquivo gerado foi aberto no Word ainda (a estrutura segue a do Word e passa no validador).
+- Entradas TC (`\f`, `\l`) e o índice sem rótulo e número (`\a`) continuam sem reconstrução; o
+  controle de conteúdo "Sumário automático" do Word não é criado (só o campo e o título).
+
+#### Medidas (base = origin/main 0.1.36, e1f8362; ramo = `legendas`)
+
+- Suíte completa, QT_QPA_PLATFORM ausente (`rodar_todos.py`, com a segunda passada `EDITDOC_TRECHOS=0`):
+  5856 verificações, 0 falhas; `teste_legendas` 231 + 240 nas duas passadas (a primeira rodou antes do
+  teste de tabela no começo e no fim, que achou o bloco vazio do fim do documento e fez a legenda
+  ocupá-lo).
+- Oráculo de páginas (22 .docx de Downloads, plataforma `windows`): o JSON da base (origin/main
+  0.1.36) e o do ramo são idênticos byte a byte (páginas, quebras do Word, acerto por parágrafo e
+  por linha), sem erro.
+- Regressão abrir-salvar-reabrir-salvar em c14n dos mesmos 22: JSON idêntico ao da base.
+- Gate nos núcleos P (afinidade FFFF por `ProcessorAffinity`, 3 rodadas intercaladas, p95 total em ms,
+  mediana base / ramo): simples 5,42 / 5,92; plano_terco 9,83 / 10,03; plano_celula 8,28 / 8,78;
+  plano_item 7,76 / 8,14; plano_rev 10,72 / 10,54; capa 9,04 / 8,30; sumario 9,51 / 9,26; corpo
+  7,25 / 7,35; cheia 13,16 / 13,23; revisoes 5,86 / 6,01. O "simples" subiu 0,5 ms em 3 e em 5 rodadas;
+  repetido com 9 rodadas intercaladas deu 5,51 / 5,48 (diferença de -0,03), e uma base contra uma cópia
+  dela mesma varia de -0,25 a +0,05 e -0,53 em outros pontos: ruído de máquina compartilhada (outras suítes
+  rodavam), nenhuma piora consistente de 1,5 ms. O comando não toca no caminho da tecla.
+- Não foi gerado o .exe (`build.bat`) nesta branch: o squash no main e o build ficam com quem publica.

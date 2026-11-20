@@ -229,7 +229,24 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   da página do EditDoc, com o formato e o recomeço da seção, como o campo de número de página.
   Inserir e atualizar são um passo só de desfazer (Ctrl+Z). O sumário vindo do Word não muda
   enquanto você não manda atualizar, e o arquivo salvo tem um sumário que o Word reconhece e
-  atualiza.
+  atualiza. Desde a 0.1.37 o título numerado por lista leva o número na linha ("1.2", uma
+  tabulação e o texto, como o Word), o sumário com estilos extras (`\t "Estilo;nível"`) ou
+  limitado a um marcador (`\b`) é refeito, e **Sumário > Inserir sumário com título** põe o
+  parágrafo "Sumário" (estilo Título do Sumário) em cima.
+- **Legendas, índice de ilustrações e referência cruzada** (0.1.37), como no Word, na aba
+  **Referências**: **Inserir Legenda** põe "Figura 1", "Tabela 1" ou "Equação 1" (o rótulo é
+  livre; um novo vale) acima ou abaixo da imagem, da tabela ou do parágrafo do cursor, no estilo
+  "Legenda" (criado se faltar); o número é um campo `SEQ Figura \* ARABIC` que o EditDoc recalcula
+  contando os campos na ordem do documento, ao inserir e em **Atualizar Campos** (F9). Apagar ou
+  mover uma legenda não renumera sozinho: F9. **Índice de Ilustrações** insere a lista das
+  legendas de um rótulo (`TOC \h \z \c "Figura"`, linhas "Figura 1 – texto ..... página",
+  estilo "Índice de Ilustrações", hiperlinks para marcadores `_Toc` nas legendas), com atualizar o
+  inteiro ou só os números de página. **Referência Cruzada** insere um campo `REF` ou `PAGEREF`
+  para um título (texto, página, número), uma legenda (rótulo e número, só o número, legenda
+  inteira, página) ou um marcador, com hiperlink; o marcador oculto `_Ref` é reaproveitado. F9
+  também atualiza o texto das referências e as páginas citadas. Cada comando é um passo de
+  desfazer, nenhum campo se atualiza sozinho, e o campo `SEQ` que veio do Word volta ao arquivo
+  como veio enquanto você não atualiza.
 - **Listas e numeração** (desde a 0.1.4): marcadores e numeração do Word como o Word mostra:
   vários níveis ("1.", "1.1.", "1.1.1."), títulos numerados pelo estilo (Título 1, 2 e 3 com
   "1", "1.1", "1.1.1"), letras, romanos, números por extenso, o marcador na fonte Symbol ou
@@ -290,7 +307,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.36-win64.zip` da página
+1. Baixe `EditDoc-0.1.37-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -333,6 +350,7 @@ Requer Windows 10 ou 11, 64 bits.
 | Novo comentário | Ctrl+Alt+M |
 | Controlar alterações (ligar e desligar) | Ctrl+Shift+E |
 | Ortografia: ir ao próximo erro e ver as sugestões | F7 |
+| Atualizar campos (legendas, referências cruzadas, páginas citadas) | F9 |
 | Inserir nota de rodapé, nota de fim | Alt+Ctrl+F, Alt+Ctrl+D |
 | Sair da edição da nota | Esc |
 | Abrir o link | Ctrl+clique no link |
@@ -452,11 +470,15 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   aparecem onde o Word os põe, com a largura de linha do Word (na tela, no PDF e na impressão).
   A régua continua sem aceitar recuo negativo ao arrastar. O rodapé (e o cabeçalho) com uma
   tabela seguida de parágrafo vazio tem a altura do Word desde a 0.1.27.
-- O sumário só é refeito quando você manda (Referências > Atualizar Sumário); os outros campos
-  (REF, data, IF...) não são recalculados pelo EditDoc: abra no Word e atualize (F9). O
-  sumário com estilos próprios (`\t`), entradas TC (`\f`, `\l`) ou limitado a um marcador
-  (`\b`), e o índice de ilustrações (`\c`), não são refeitos: só os números de página. A linha
-  não traz o número de lista do título ("1.2"), que o Word põe; o número da página é o da
+- O sumário e o índice de ilustrações só são refeitos quando você manda (Referências > Atualizar
+  Sumário ou Atualizar Índice); os campos SEQ, REF e PAGEREF só em **Atualizar Campos** (F9); os
+  outros (data, IF...) não são recalculados pelo EditDoc: abra no Word e atualize (F9). O sumário
+  com entradas TC (`\f`, `\l`) e o índice sem rótulo e número (`\a`) não são refeitos: só os
+  números de página. O campo SEQ com opção que o EditDoc não conhece (formato por extenso, SEQ
+  que cita marcador) fica como veio. Com o cursor numa célula, a legenda vai na tabela inteira (não
+  na imagem da célula), e a de uma tabela dentro de outra não é inserida; a referência "Número do
+  título" (REF `\r`) usa o número que a lista mostra, sem o ponto final. Inserir legenda ou campo com o controle de alterações
+  ligado não vira revisão. O número da página é o da
   paginação do EditDoc, que pode diferir da do Word num documento longo (o Word recalcula ao
   atualizar). O controle de conteúdo que envolve uma linha ou uma
   célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
@@ -488,7 +510,7 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
   caixa de texto perdem a referência ao salvar (com aviso), porque o EditDoc não os lê dali. A lista numerada dentro da caixa volta (desde a 0.1.4).
 - Fora desta versão: revisão com controle de alterações,
-  índice remissivo e índice de ilustrações, mala direta, editar equações e formas (elas são
+  índice remissivo, mala direta, editar equações e formas (elas são
   preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), seção contínua com colunas e colunas de larguras diferentes na tela (preservadas no arquivo), `.doc`, RTF,
   ODT e macros (nunca).
 - Ortografia (0.1.36): só o corpo do documento é verificado (não o cabeçalho, o rodapé, as notas
@@ -552,7 +574,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.36-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.37-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em
