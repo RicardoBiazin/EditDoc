@@ -38,6 +38,7 @@ from PySide6.QtGui import (QAbstractTextDocumentLayout, QColor, QPainter, QPalet
                            QTransform)
 from PySide6.QtWidgets import QAbstractScrollArea
 
+from editdoc.interface import ortografia as ui_ortografia
 from editdoc.interface.layout_paginado import LayoutPaginado
 from editdoc.modelo.unidades import TWIPS_POR_PX
 from editdoc.modelo.campos import tipo_da_pagina
@@ -274,7 +275,7 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     permitido = QRectF(-cfg.margem_esq_tw, 0, float(cfg.largura_tw), corpo_h)
     if layout.mapa.tem_colunas():
         _desenhar_colunas(painter, layout, n, transf, cfg, permitido, corpo_recorte, selecao,
-                          marcas, comentarios)
+                          marcas, comentarios, tela)
         if postos:
             _desenhar_flutuantes(painter, layout.doc, n, transf, folha, atras=False, tela=tela)
         return
@@ -320,6 +321,9 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     pq_props.desenhar(painter, layout.doc, ctx.clip)
     # Alteracoes controladas (0.1.13): barra na margem e a segunda linha dos movimentos.
     pq_revisoes.desenhar(painter, layout.doc, ctx.clip)
+    if tela:
+        # Corretor ortografico (0.1.36): o sublinhado ondulado so' na tela, pintado por cima.
+        ui_ortografia.desenhar(painter, layout.doc, ctx.clip)
     if layout.secoes_baixas():
         # Tabela partida numa secao mais baixa (0.1.12): a linha de cima fecha onde o texto acaba.
         from editdoc.interface.notas import fechar_linhas_empurradas
@@ -396,7 +400,7 @@ def _base_do_texto_ate(layout: LayoutPaginado, topo: float, pe: float) -> float:
 
 def _desenhar_colunas(painter, layout: LayoutPaginado, n: int, transf: QTransform, cfg,
                       permitido: QRectF, corpo_recorte, selecao, marcas: bool,
-                      comentarios: bool) -> None:
+                      comentarios: bool, tela: bool = False) -> None:
     """Corpo da folha n com colunas (passo 2): cada pagina do Qt da folha e' uma coluna, pintada
     deslocada para o lugar dela. Na horizontal cada coluna recorta ate' o meio do vao (a primeira
     e a ultima ate' a borda da folha, como o corpo de uma coluna so'); na vertical, o corpo."""
@@ -444,6 +448,8 @@ def _desenhar_colunas(painter, layout: LayoutPaginado, n: int, transf: QTransfor
         pq_listas.desenhar_rotulos(painter, layout.doc, ctx.clip)
         pq_props.desenhar(painter, layout.doc, ctx.clip)
         pq_revisoes.desenhar(painter, layout.doc, ctx.clip)
+        if tela:
+            ui_ortografia.desenhar(painter, layout.doc, ctx.clip)
         if layout.secoes_baixas():
             from editdoc.interface.notas import fechar_linhas_empurradas
             fechar_linhas_empurradas(painter, layout.doc, ctx.clip)

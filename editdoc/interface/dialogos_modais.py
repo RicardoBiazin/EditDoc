@@ -398,11 +398,16 @@ def mostrar_previa(dialogo) -> None:
 
 # -- preferencias e recuperacao (M8) -------------------------------------------------
 
-def pedir_opcoes(pai: QWidget | None, valores: dict) -> dict | None:
-    """Arquivo > Opções. As preferencias escolhidas (com "limpar_recentes"), ou None."""
+def pedir_opcoes(pai: QWidget | None, valores: dict,
+                 idiomas: tuple | list | None = None) -> dict | None:
+    """Arquivo > Opções. As preferencias escolhidas (com "limpar_recentes"), ou None.
+    `idiomas` (0.1.36): os que o corretor ortografico tem; sem eles, os do painel da janela."""
     from editdoc.interface.dialogo_opcoes import DialogoOpcoes
 
-    dialogo = DialogoOpcoes(valores, pai)
+    if idiomas is None:
+        corretor = getattr(getattr(pai, "painel", None), "ortografia", None)
+        idiomas = corretor.idiomas_disponiveis() if corretor is not None else ()
+    dialogo = DialogoOpcoes(valores, pai, idiomas)
     if dialogo.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialogo.valores()

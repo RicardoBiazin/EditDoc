@@ -70,6 +70,7 @@ from editdoc.edicao import listas as ed_listas
 from editdoc.edicao import revisoes as ed_revisoes
 from editdoc.edicao import tabelas as ed_tabelas
 from editdoc.interface.cabecalhos import FaixaQt
+from editdoc.interface.ortografia import Ortografia
 from editdoc.interface.vista_paginas import VistaPaginas, origem_da_faixa
 from editdoc.interface.layout_paginado import LayoutPaginado, retangulo_cursor_em
 from editdoc.modelo.campos import tipo_da_pagina
@@ -185,6 +186,12 @@ class PainelDocumento(VistaPaginas):
         self._ligar_desfazer(doc)
         layout.faixas.criada.connect(lambda faixa: self._ligar_desfazer(faixa.doc))
         layout.faixas.alterado.connect(self._faixa_alterada)
+        #: Corretor ortografico (0.1.36): sublinhado, menu e F7 (interface/ortografia.py).
+        self.ortografia = Ortografia(self)
+
+    def verificar_ortografia(self) -> int:
+        """O comando Ortografia (F7): percorre os erros, com o menu de sugestoes."""
+        return self.ortografia.percorrer()
 
     # ----- API do QTextEdit usada pelos comandos -------------------------
     def document(self) -> QTextDocument:
@@ -2150,6 +2157,12 @@ class PainelDocumento(VistaPaginas):
     def contextMenuEvent(self, ev) -> None:  # noqa: N802
         menu = QMenu(self)
         doc = self.document()
+        if self._no_corpo():
+            # Palavra errada (0.1.36): as sugestoes e o Ignorar vem no alto do menu. Com o mouse,
+            # a palavra sob o ponteiro; pelo teclado (tecla de menu), a do caret.
+            pos = self._cursor.position() if ev.reason() == ev.Reason.Keyboard \
+                else self.posicao_em(QPointF(ev.pos()))
+            self.ortografia.montar_menu(menu, pos)
         menu.addAction("Desfazer", self.undo).setEnabled(doc.isUndoAvailable())
         menu.addAction("Refazer", self.redo).setEnabled(doc.isRedoAvailable())
         menu.addSeparator()
@@ -2175,7 +2188,10 @@ class PainelDocumento(VistaPaginas):
             menu.addSeparator()
             for acao in extras:
                 menu.addAction(acao)
-        menu.exec(ev.globalPos())
+        self.exibir_menu(menu, ev.globalPos())
+
+    #: Quem mostra o menu de contexto (modal). Os testes trocam: nunca abrem o menu de verdade.
+    exibir_menu = staticmethod(lambda menu, ponto: menu.exec(ponto))
 
     # ----- hiperlinks (0.1.3) ------------------------------------------------
     #: Quem abre o endereco externo. Os testes trocam por um registro: nunca abrem o navegador.

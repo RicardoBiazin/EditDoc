@@ -112,6 +112,9 @@ def preparar_qt() -> bool:
     0, nao falhar: assim o runner continua util numa maquina sem venv montado.
     """
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # Corretor ortografico (0.1.36): os testes nao dependem do dicionario da maquina. A suite
+    # do corretor injeta o falso; o teste de fumaca da API real a pede com EDITDOC_CORRETOR=auto.
+    os.environ.setdefault("EDITDOC_CORRETOR", "nenhum")
     isolar_appdata()
     try:
         from PySide6.QtWidgets import QApplication
