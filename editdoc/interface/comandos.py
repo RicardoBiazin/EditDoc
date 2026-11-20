@@ -19,6 +19,7 @@ from editdoc.edicao import estilos as ed_estilos
 from editdoc.edicao import formatacao, tabelas
 from editdoc.edicao import listas as ed_listas
 from editdoc.edicao import notas as ed_notas
+from editdoc.edicao import referencias as ed_referencias
 from editdoc.edicao import sumario as ed_sumario
 from editdoc.modelo.folhas import passo_de_zoom
 
@@ -295,6 +296,23 @@ DEFINICOES = (
               dica="Atualizar o sumário inteiro: as entradas e os números de página"),
     Definicao("atualizar_numeros_sumario", "Atualizar só os números de página", (),
               dica="Atualizar só os números de página do sumário, sem mexer nas entradas"),
+    Definicao("inserir_sumario_com_titulo", "Inserir sumário com título", (),
+              dica="Inserir o sumário com o título \"Sumário\" (estilo Título do Sumário) em cima"),
+    # Referencias: legendas, indice de ilustracoes e referencia cruzada (0.1.38).
+    Definicao("inserir_legenda", "Inserir legenda...", (),
+              dica="Inserir uma legenda (Figura 1, Tabela 1, Equação 1) acima ou abaixo da "
+                   "tabela ou do parágrafo do cursor"),
+    Definicao("inserir_indice_ilustracoes", "Inserir índice de ilustrações...", (),
+              dica="Inserir a lista das legendas de um rótulo, com a página de cada uma"),
+    Definicao("atualizar_indice_ilustracoes", "Atualizar índice de ilustrações", (),
+              dica="Atualizar o índice de ilustrações inteiro: as entradas e os números de página"),
+    Definicao("atualizar_numeros_indice_ilustracoes", "Atualizar só os números de página do "
+              "índice", (), dica="Atualizar só os números de página do índice de ilustrações"),
+    Definicao("referencia_cruzada", "Referência cruzada...", (),
+              dica="Inserir uma referência a um título, uma legenda ou um marcador"),
+    Definicao("atualizar_campos", "Atualizar campos", ("F9",),
+              dica="Atualizar os números das legendas, as referências cruzadas e as páginas "
+                   "citadas (F9)"),
 )
 
 #: Estilos que os atalhos aplicam: id da acao -> nome canonico do Word.
@@ -573,6 +591,14 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
     executores["inserir_sumario"] = lambda: ed_sumario.inserir(editor)
     executores["atualizar_sumario"] = lambda: ed_sumario.atualizar(editor)
     executores["atualizar_numeros_sumario"] = lambda: ed_sumario.atualizar(editor, so_numeros=True)
+    executores["inserir_sumario_com_titulo"] = lambda: ed_sumario.inserir(editor, com_titulo=True)
+    executores["inserir_legenda"] = lambda: _chamar(inserir, "legenda")
+    executores["inserir_indice_ilustracoes"] = lambda: _chamar(inserir, "indice_ilustracoes")
+    executores["atualizar_indice_ilustracoes"] = lambda: ed_sumario.atualizar(editor, figuras=True)
+    executores["atualizar_numeros_indice_ilustracoes"] = lambda: ed_sumario.atualizar(
+        editor, so_numeros=True, figuras=True)
+    executores["referencia_cruzada"] = lambda: _chamar(inserir, "referencia_cruzada")
+    executores["atualizar_campos"] = lambda: ed_referencias.atualizar_campos(editor)
     return executores
 
 

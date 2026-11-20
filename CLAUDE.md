@@ -97,6 +97,12 @@ causou defeito.
 - Sumario (branch `sumario`): `modelo/sumario.py` (opcoes do TOC, linhas, sem Qt) e
   `edicao/sumario.py` (achar o campo pelas marcas, titulos pelo nivel do bloco, marcadores `_Toc`,
   inserir, atualizar, numeros pela pagina do PAGE); testes em `tests/teste_sumario.py`.
+- Legendas, indice de ilustracoes e referencia cruzada (0.1.38): `modelo/legendas.py` (SEQ, a contagem
+  `numerar`, REF e PAGEREF, sem Qt), `edicao/legendas.py` (inserir acima/abaixo, `contar`,
+  `renumerar_no_bloco`), `edicao/referencias.py` (referencia cruzada e `atualizar_campos`, F9),
+  `interface/dialogo_legendas.py`; o indice de ilustracoes e' o TOC com `\c` em `edicao/sumario.py`
+  (`titulos` junta `\o`, `\t`, `\b` e `\c`; `sumarios(doc, figuras)` separa os dois); testes em
+  `tests/teste_legendas.py` (nas duas passadas).
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -364,3 +370,10 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | API do Windows por ctypes (0.1.36) | `ISpellChecker.Check` devolve indices em UTF-16: num texto com caractere fora do plano basico (emoji) o indice do Python e' outro (`windows._para_python`). Todo COM so' na thread da interface (a do `CoInitializeEx` do Qt); `fechar()` tem de soltar os ponteiros antes de o Qt encerrar o COM (`atexit` do modulo), e depois de fechado nada usa o ponteiro (levanta `ErroDoCorretor`, nao derruba o processo). A fumaca real nunca chama `adicionar`: iria para o dicionario pessoal do usuario. |
 | teste de janela e o corretor (0.1.36) | Os testes nao dependem do dicionario da maquina: `ajudantes.preparar_qt` poe `EDITDOC_CORRETOR=nenhum`, e a suite do corretor injeta o `CorretorFalso` (`painel.ortografia.definir_corretor`) e roda a varredura a mao (`_fatia`), sem esperar o timer. Quem mede desempenho com a ortografia ligada pede `EDITDOC_CORRETOR=auto` e varre antes de medir (docs/SPIKES.md, "0.1.36"). Menu de contexto em teste: trocar `painel.exibir_menu` (e `ortografia.escolher` no F7), nunca `QMenu.exec`: o menu de verdade e' modal e trava a suite. |
 | idioma do arquivo (0.1.36) | O w:lang do run esta' nos extras (`PROP_RPR_EXTRA`, em c14n: elemento vazio sai como `<w:lang ...></w:lang>`, nao `/>`); o do estilo e do docDefaults vem do `xml_original` do catalogo (`idiomas_de_estilos`), lido ao abrir. Documento em portugues que marca `en-US` no docDefaults mostra quase tudo sublinhado (medido num arquivo real: 63% das palavras): o idioma de Arquivo > Opcoes (que vale para todo o texto) resolve. |
+| bloco ao lado da tabela (0.1.38) | O bloco vazio que o Qt exige antes e depois da tabela (`PROP_ESTRUTURAL`) e' aproveitado pela legenda (o `setBlockFormat` do paragrafo tira a marca); com bloco de texto ali, a legenda entra num bloco novo (`edicao/legendas._preparar_bloco_novo`). Tabela dentro de tabela e paragrafo que termina secao nao recebem legenda. |
+| SEQ e a conta (0.1.38) | `modelo/legendas.numerar` conta por identificador, na ordem do documento; o SEQ que o EditDoc nao entende (`ler_seq` devolve None: opcao desconhecida, SEQ com marcador) fica fora da conta e do arquivo mudado. Inserir legenda recontas o rotulo dentro do mesmo bloco de edicao (um desfazer); apagar ou mover so' se acerta com F9 (nada se atualiza sozinho). Quem troca resultado de campo usa `edicao/sumario.trocar_resultados` (de baixo para cima, com o formato do vizinho sem as marcas). |
+| w:id do marcador (0.1.38) | O escritor renumera o `w:id` dos marcadores a cada gravacao: teste que compara o paragrafo do Word com o salvo em c14n normaliza o id (`teste_legendas._paragrafos_c14n`). |
+| "TOC Heading" (0.1.38) | O estilo e' baseado no Titulo 1 e precisa de `nivel=9` (outlineLvl 9): sem isso herda o nivel 0 e o proprio titulo "Sumario" entra nas entradas na proxima atualizacao. |
+| marcador `_Ref` e as pontas (0.1.38) | Inserir `_Toc` ou outro marcador na mesma posicao empurra o `_Ref` ja' criado um caractere: `referencias._normal` tira as marcas de marcador das duas pontas antes de comparar o trecho, senao cada referencia criaria um marcador novo. |
+| nome acessivel do botao (0.1.38) | `BotaoAcao` usa a dica da acao como nome falado (`Inserir uma legenda ...`), nao o rotulo curto: teste de nome procura por `startswith` da dica. |
+| `python.exe -` com heredoc (0.1.38) | De novo: um patch de teste em `python3 - <<EOF` abriu o REPL e ficou em loop de erro ate' o tempo acabar. Patch e' arquivo .py com a ferramenta Write. |

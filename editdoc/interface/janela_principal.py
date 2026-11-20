@@ -172,6 +172,9 @@ class JanelaPrincipal(QMainWindow):
                                      "abrir_link": self._abrir_link,
                                      "valor_numeracao": self._definir_valor_numeracao,
                                      "opcoes_notas": self.opcoes_notas,
+                                     "legenda": self.inserir_legenda,
+                                     "indice_ilustracoes": self.inserir_indice_ilustracoes,
+                                     "referencia_cruzada": self.referencia_cruzada,
                                  }, ao_exibir={
                                      "criar_estilo": self.criar_estilo,
                                      "modificar_estilo": self.modificar_estilo,
@@ -505,6 +508,67 @@ class JanelaPrincipal(QMainWindow):
                 self.statusBar().showMessage(f"{n} nota(s) convertida(s).", 4000)
             return bool(n)
         return ed_notas.aplicar_propriedades(self.painel, escolha["tipo"], escolha["pr"])
+
+    # -- legendas e referencias cruzadas (0.1.38) ---------------------------------
+
+    def _pedir_legenda(self, rotulos: list, proximos: dict, rotulo: str) -> dict | None:
+        """O dialogo de Inserir Legenda. Os testes trocam este metodo."""
+        from editdoc.interface import dialogo_legendas
+        return dialogo_legendas.pedir_legenda(self, rotulos, proximos, rotulo)
+
+    def _pedir_indice_de_figuras(self, rotulos: list) -> str | None:
+        """O dialogo do indice de ilustracoes. Os testes trocam este metodo."""
+        from editdoc.interface import dialogo_legendas
+        return dialogo_legendas.pedir_indice_de_figuras(self, rotulos)
+
+    def _pedir_referencia(self, doc):
+        """O dialogo da referencia cruzada. Os testes trocam este metodo."""
+        from editdoc.interface import dialogo_legendas
+        return dialogo_legendas.pedir_referencia(self, doc)
+
+    def inserir_legenda(self) -> bool:
+        """Referencias > Inserir Legenda: o rotulo, a posicao e o texto vem do dialogo."""
+        from editdoc.edicao import legendas as ed_legendas
+        doc = self.painel.documento_corpo()
+        rotulos = ed_legendas.rotulos_do_documento(doc)
+        escolha = self._pedir_legenda(rotulos, ed_legendas.proximos(doc), rotulos[0])
+        if escolha is None:
+            self.painel.setFocus()
+            return False
+        feito = ed_legendas.inserir(self.painel, escolha["rotulo"], escolha["posicao"],
+                                    escolha["texto"], escolha["com_rotulo"])
+        self.painel.setFocus()
+        return feito
+
+    def inserir_indice_ilustracoes(self) -> bool:
+        """Referencias > Inserir Indice de Ilustracoes: o rotulo vem do dialogo."""
+        from editdoc.edicao import legendas as ed_legendas
+        from editdoc.edicao import sumario as ed_sumario
+        doc = self.painel.documento_corpo()
+        rotulo = self._pedir_indice_de_figuras(ed_legendas.rotulos_do_documento(doc))
+        if rotulo is None:
+            self.painel.setFocus()
+            return False
+        feito = ed_sumario.inserir(self.painel, rotulo=rotulo)
+        self.painel.setFocus()
+        return feito
+
+    def referencia_cruzada(self) -> bool:
+        """Referencias > Referencia cruzada: o alvo e o que mostrar vem do dialogo."""
+        from editdoc.edicao import referencias as ed_referencias
+        doc = self.painel.documento_corpo()
+        if not ed_referencias.tipos(doc):
+            self.statusBar().showMessage(
+                "O documento não tem título, legenda nem marcador para citar.", 5000)
+            return False
+        escolha = self._pedir_referencia(doc)
+        if escolha is None:
+            self.painel.setFocus()
+            return False
+        alvo, o_que, hiperlink = escolha
+        feito = ed_referencias.inserir(self.painel, alvo, o_que, hiperlink)
+        self.painel.setFocus()
+        return feito
 
     # -- comentarios (0.1.6) ------------------------------------------------
 

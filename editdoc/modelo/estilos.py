@@ -65,6 +65,7 @@ NOMES_PT = {
     "list bullet": "Commarcadores",
     "list number": "Numerada",
     "toc heading": "Título do Sumário",
+    "table of figures": "Índice de Ilustrações",
 }
 for _n in range(1, 10):
     NOMES_PT[f"heading {_n}"] = f"Título {_n}"
@@ -432,6 +433,16 @@ def estilos_latentes() -> list[Estilo]:
                  paragrafo={"espaco_depois_tw": 100,
                             **({"recuo_esquerdo_tw": 220 * (n - 1)} if n > 1 else {})})
           for n in range(1, 10)),
+        # Legendas (0.1.38): o paragrafo da legenda, a linha do indice de ilustracoes e o titulo do
+        # sumario, com os valores do Word (cor tx2 e 9 pt em italico na legenda).
+        Estilo("Caption", "caption", baseado_em="Normal", proximo="Normal", rapido=True,
+               prioridade=35, revelar_ao_usar=True,
+               paragrafo={"espaco_depois_tw": 200, "espacamento_linha_pct": 100},
+               caractere={"italico": True, "cor_hex": "44546A", "tamanho_meio_pt": 18}),
+        Estilo("TableofFigures", "table of figures", baseado_em="Normal", proximo="Normal",
+               prioridade=99, revelar_ao_usar=True, paragrafo={"espaco_depois_tw": 0}),
+        Estilo("TOCHeading", "TOC Heading", baseado_em="Heading1", proximo="Normal", rapido=True,
+               prioridade=39, revelar_ao_usar=True, nivel=9),
     ]
 
 
@@ -464,6 +475,7 @@ def _latentes_word() -> dict:
         "Caption": ("caption", p, "Normal", {"espaco_depois_tw": 200, "espacamento_linha_pct": 100},
                     {"italico": True, "cor_hex": "44546A", "tamanho_meio_pt": 18}),
         "TOCHeading": ("TOC Heading", p, "Heading1", {}, {}),
+        "TableofFigures": ("table of figures", p, "Normal", {"espaco_depois_tw": 0}, {}),
         "Mention": ("Mention", c, None, {}, {"cor_hex": "2B579A"}),
         "UnresolvedMention": ("Unresolved Mention", c, None, {}, {"cor_hex": "605E5C"}),
         "BalloonText": ("Balloon Text", p, "Normal",

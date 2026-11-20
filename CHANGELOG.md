@@ -1,3 +1,36 @@
+## 0.1.38 - 2026-11-20
+
+Legendas, índice de ilustrações e referência cruzada, como no Word, na aba **Referências**, e o sumário
+completo onde a 0.1.33 deixou limites. Até a 0.1.36 o EditDoc só preservava campos `SEQ` e `REF` ("índice
+de ilustrações" estava em "Fora desta versão").
+
+- **Inserir Legenda**: "Figura 1", "Tabela 1" ou "Equação 1" (o rótulo é livre) acima ou abaixo da imagem,
+  da tabela ou do parágrafo do cursor, no estilo "Legenda" (criado se faltar, com os valores do Word).
+  O número é um campo `SEQ Figura \* ARABIC`. Inserir recontas os campos do rótulo na ordem do documento,
+  no mesmo passo de desfazer.
+- **Atualizar Campos (F9)**: recontas todos os `SEQ` (ao apagar ou mover uma legenda, nada renumera
+  sozinho), refaz o texto dos `REF` e a página dos `PAGEREF` (inclusive nas linhas dos sumários). O
+  campo `SEQ` do Word volta ao arquivo como veio enquanto você não atualiza; o `SEQ` com opção que o
+  EditDoc não conhece (formato por extenso, `SEQ` que cita marcador) nunca é tocado.
+- **Índice de Ilustrações**: o campo `TOC \h \z \c "Figura"` com as linhas "Figura 1 – texto ..... página"
+  no estilo "Índice de Ilustrações", hiperlinks para marcadores `_Toc` nas legendas, atualizar o inteiro
+  ou só os números de página (mesmo mecanismo do sumário, mesmo desfazer em um passo).
+- **Referência Cruzada**: `REF`/`PAGEREF` com `\h` para um título (texto, página, número), uma legenda
+  (rótulo e número, só o número, legenda inteira, página) ou um marcador; o marcador oculto `_Ref` é
+  reaproveitado quando já cobre o mesmo trecho.
+- **Sumário**: o título numerado por lista leva o número na linha ("1.2", tabulação e texto, como o
+  Word); `\t` (estilos extras) e `\b` (trecho de um marcador) passam a ser refeitos; **Inserir sumário
+  com título** põe o parágrafo "Sumário" (estilo "Título do Sumário", `outlineLvl 9`).
+- Cada comando é um passo de desfazer, nenhum campo se atualiza sozinho, arquivo sem esses recursos não
+  muda ao salvar, e o pacote passa no validador e na conferência pós-gravação.
+
+Limites (README, "Limites conhecidos"): legenda de imagem dentro de célula (vai na tabela) e de tabela
+dentro de tabela; referência "acima/abaixo", `REF \n \f \d \t` e entradas TC (`\f`, `\l`) e `\a` não são
+recalculados; com o controle de alterações ligado, inserir e atualizar não viram revisão; nenhum
+arquivo gerado foi aberto no Word ainda.
+
+Prova: `tests/teste_legendas.py` (240 verificações, nas duas passadas, com contraprova da contagem e da leitura do marcador; `.docx` com campos do Word preservado em c14n), suíte completa nas duas passadas (5856 verificações, 0 falhas), oráculo de páginas e regressão c14n nos 22 `.docx` de referência iguais à base (0.1.36, e1f8362), gate de desempenho nos núcleos P sem piora (docs/SPIKES.md, 0.1.38).
+
 ## 0.1.36 - 2026-11-17
 
 Corretor ortográfico, como no Word: sublinhado ondulado vermelho nas palavras desconhecidas (só na
