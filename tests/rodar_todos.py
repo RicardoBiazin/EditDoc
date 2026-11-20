@@ -20,7 +20,9 @@ RAIZ = os.path.dirname(AQUI)
 LIMITE_POR_SUITE_S = 180
 #: Suites que medem tempo de proposito passam do teto comum: com o layout por trechos (0.1.31) a
 #: de desempenho leva ~170 s nos nucleos P e o dobro se o Windows a poe nos nucleos E.
-LIMITE_ESPECIAL_S = {"teste_desempenho.py": 480}
+LIMITE_ESPECIAL_S = {"teste_desempenho.py": 480,
+                     # 0.1.38: varre a tabela que atravessa a pagina em 14 posicoes, 3 vezes
+                     "teste_paginacao_word.py": 420}
 
 SUITES = [
     ("teste_base.py",

@@ -792,6 +792,192 @@ def testar_cabecalho_e_primeira_linha(j, cap: int) -> None:
         lay.doc.setModified(False)
 
 
+def _linhas_geo(lay, tab) -> list[tuple[int, float, float]]:
+    """(pagina, topo, altura) de cada linha da tabela, em twips."""
+    from editdoc.interface.paginacao import _celulas_da_linha
+    cp = lay.paginacao
+    saida = []
+    for r in range(tab.rows()):
+        cels = _celulas_da_linha(tab, r)
+        topo = cp._topo_da_linha(cels)
+        saida.append((lay.mapa.pagina_de_y(topo + 1.0), topo, cp._altura_natural(tab, cels)))
+    return saida
+
+
+def testar_margem_que_atravessa(j, cap: int) -> None:
+    secao("margem de cima da tabela que atravessa a pagina (0.1.38): o Qt a reserva no pe' e a repete")
+    import editdoc.interface.paginacao as ip
+    S_TW = 240.0  # o espaco depois do paragrafo de cima, em twips (a margem da tabela)
+    sem = ConjuntoDePaginacao.PARTES - {"margem"}
+
+    def montar(k, n=70, cab=1, linhas=1, cant=False):
+        return docx(fillers(cap - 8 - k) + p("Antes", ppr=f'<w:spacing w:after="{int(S_TW)}"/>')
+                    + _tabela_inteira(n, linhas, cant=cant, cab=cab) + p("Fim"))
+
+    # (1) o Qt: reserva no pe' e repete no alto o valor da margem (contraprova: sem a parte nova)
+    reservas = continuacoes = 0
+    erros = []
+    for k in range(0, 14):
+        lay = abrir(j, montar(k), partes=sem)
+        tab = _quadro_tabela(lay)
+        geo = _linhas_geo(lay, tab)
+        n0 = sum(1 for g in geo if g[0] == 0 or g[0] == geo[0][0])
+        primeira_pag = geo[0][0]
+        pag_seg = primeira_pag + 1
+        seg = next(i for i, g in enumerate(geo) if g[0] == pag_seg)
+        cab_h = geo[0][2]
+        desvio = geo[seg][1] - lay.mapa.topo(pag_seg) - cab_h
+        continuacoes += abs(desvio - S_TW) < 3.0
+        # a linha que cabe no pe' do Word (sem a reserva) e o Qt leva para a pagina seguinte
+        ult = geo[seg - 1]
+        cabe_no_word = ult[1] + ult[2] + geo[seg][2] <= lay.mapa.fim(primeira_pag) + 1.0
+        reservas += cabe_no_word
+        lay.doc.setModified(False)
+    checa(continuacoes == 14, f"o Qt recomeca a tabela a {S_TW:.0f} twips do alto, depois do cabecalho "
+          f"({continuacoes} de 14)")
+    checa(reservas >= 1, f"o Qt reserva a margem no pe': ha' linha que cabe no Word e ele leva embora "
+          f"({reservas} de 14)")
+
+    # (2) com a parte nova: a metade; cabem no pe' as mesmas linhas do Word; a pagina seguinte comeca
+    # a metade abaixo do alto
+    iguais = diferentes_na_base = marcadas = continuacao_ok = 0
+    for k in range(0, 14):
+        lay = abrir(j, montar(k), partes=sem)
+        tab = _quadro_tabela(lay)
+        geo = _linhas_geo(lay, tab)
+        p0 = geo[0][0]
+        n_qt = sum(1 for g in geo if g[0] == p0)
+        seg = n_qt
+        ult = geo[seg - 1]
+        n_word = n_qt + (1 if ult[1] + ult[2] + geo[seg][2] <= lay.mapa.fim(p0) + 1.0 else 0)
+        lay = abrir(j, montar(k))
+        tab = _quadro_tabela(lay)
+        geo = _linhas_geo(lay, tab)
+        n_novo = sum(1 for g in geo if g[0] == geo[0][0])
+        iguais += n_novo == n_word
+        diferentes_na_base += n_qt != n_word
+        tf = tab.format()
+        marcadas += pq.reduzida(tf) and abs(tf.topMargin() * 15.0 - S_TW / 2) < 1.0
+        seg = next(i for i, g in enumerate(geo) if g[0] == geo[0][0] + 1)
+        continuacao_ok += abs(geo[seg][1] - lay.mapa.topo(geo[0][0] + 1) - geo[0][2] - S_TW / 2) < 3.0
+        lay.doc.setModified(False)
+    checa_igual(iguais, 14, "com a parte nova cabem no pe' as linhas que cabem no Word (14 de 14)")
+    checa(diferentes_na_base >= 1, f"contraprova: sem a parte nova o Qt leva linhas a mais embora "
+          f"({diferentes_na_base} dos 14)")
+    checa_igual(marcadas, 14, "a margem do quadro fica na metade, com a marca")
+    checa_igual(continuacao_ok, 14, "a pagina seguinte recomeca a metade da margem abaixo do alto")
+
+    # (3) contraprova do fator: com 1,0 a conta e' a do Qt
+    guardado = ip.FATOR_MARGEM_QUE_ATRAVESSA
+    ip.FATOR_MARGEM_QUE_ATRAVESSA = 1.0
+    try:
+        achei = None
+        for k in range(0, 14):
+            lay = abrir(j, montar(k), partes=sem)
+            tab = _quadro_tabela(lay)
+            geo = _linhas_geo(lay, tab)
+            n_base = sum(1 for g in geo if g[0] == geo[0][0])
+            lay = abrir(j, montar(k))
+            geo = _linhas_geo(lay, _quadro_tabela(lay))
+            if sum(1 for g in geo if g[0] == geo[0][0]) != n_base:
+                achei = k
+        checa(achei is None, "contraprova: com o fator 1,0 nenhuma tabela muda de linhas na pagina")
+    finally:
+        ip.FATOR_MARGEM_QUE_ATRAVESSA = guardado
+
+    # (4) tabela que nao atravessa: a margem e' a inteira, sem marca
+    lay = abrir(j, docx(p("Antes", ppr=f'<w:spacing w:after="{int(S_TW)}"/>')
+                        + _tabela_inteira(3, 1, cant=False, cab=1) + p("Fim")))
+    tf = _quadro_tabela(lay).format()
+    checa(not pq.reduzida(tf) and abs(tf.topMargin() * 15.0 - S_TW) < 1.0,
+          "tabela dentro de uma pagina: margem inteira, sem marca")
+
+    # (5) o Qt parte uma linha no meio da tabela: a margem fica como esta' (a conta da pagina
+    # seguinte tem uma altura que falta, SPIKES 0.1.38)
+    meio = ultima = 0
+    for k in range(0, 14):
+        dados = docx(fillers(cap - 6 - k) + p("Antes", ppr=f'<w:spacing w:after="{int(S_TW)}"/>')
+                     + _tabela_inteira(8, 4, cant=False, cab=0) + p("Fim"))
+        lay = abrir(j, dados, partes=sem)
+        tab = _quadro_tabela(lay)
+        partidas = _partidas(lay, tab)
+        lay = abrir(j, dados)
+        tab = _quadro_tabela(lay)
+        if partidas and partidas[0] < tab.rows() - 1:
+            meio += 1
+            checa(not pq.reduzida(tab.format()) and _partidas(lay, tab) == partidas,
+                  f"k={k}: linha partida no meio ({partidas}): fica como o Qt a faz")
+        lay.doc.setModified(False)
+    checa(meio >= 1, f"ha' k com linha partida no meio ({meio})")
+
+    # (6) so' a ultima linha partida (a tabela de duas linhas de 4): a margem reduz; onde a linha
+    # cabe no Word (a reserva e' que a partia) ela fica inteira na pagina
+    inteira = 0
+    for k in range(0, 6):
+        dados = docx(fillers(cap - 8 - k) + p("Antes", ppr=f'<w:spacing w:after="{int(S_TW)}"/>')
+                     + _tabela_inteira(2, 4, cant=False, cab=0) + p("Fim"))
+        lay = abrir(j, dados, partes=sem)
+        tab = _quadro_tabela(lay)
+        partidas = _partidas(lay, tab)
+        lay = abrir(j, dados)
+        tab = _quadro_tabela(lay)
+        if partidas == [1]:
+            ultima += 1
+            checa(pq.reduzida(tab.format()), f"k={k}: so' a ultima linha partida: a margem reduz")
+            if not _partidas(lay, tab):
+                inteira += 1
+                checa_igual(len(_paginas_da_linha(lay, tab, 1)), 1, f"k={k}: a ultima linha numa pagina so'")
+        lay.doc.setModified(False)
+    checa(ultima >= 2, f"ha' k com so' a ultima linha partida ({ultima})")
+    checa(inteira >= 1, f"e em ao menos um a linha fica inteira ({inteira})")
+
+    # (7) estavel: conferir de novo nao mexe; e o arquivo gravado e' o mesmo com e sem a parte
+    k0 = next(k for k in range(0, 14)
+              if abs(_quadro_tabela(abrir(j, montar(k))).format().topMargin() * 15.0 - S_TW / 2) < 1.0)
+    lay = abrir(j, montar(k0))
+    tab = _quadro_tabela(lay)
+    antes = (tab.format().topMargin(), lay.paginacao.ajustes)
+    for _ in range(3):
+        lay.atualizar_secoes(forcar=True)
+    checa_igual((tab.format().topMargin(), lay.paginacao.ajustes), antes,
+                "conferir de novo (3 vezes) nao muda margem nem faz ajuste")
+    com = escrever(j._modelo_atual())
+    abrir(j, montar(k0), ligado=False)
+    sem_parte = escrever(j._modelo_atual())
+    checa_igual(fx.partes_de(com)["word/document.xml"], fx.partes_de(sem_parte)["word/document.xml"],
+                "o document.xml e' o mesmo com e sem a margem reduzida na tela")
+    abrir(j, montar(k0), partes=sem)
+    sem_margem = escrever(j._modelo_atual())
+    checa_igual(fx.partes_de(com)["word/document.xml"], fx.partes_de(sem_margem)["word/document.xml"],
+                "e sem so' a margem tambem")
+
+    # (8) editar acima: a tabela deixa de atravessar e a margem volta inteira; o desfazer a reduz
+    lay = abrir(j, montar(k0, n=0 + 60))
+    tab = _quadro_tabela(lay)
+    geo = _linhas_geo(lay, tab)
+    n_pag = sum(1 for g in geo if g[0] == geo[0][0])
+    lay = abrir(j, montar(k0, n=n_pag + 2))
+    tab = _quadro_tabela(lay)
+    checa(pq.reduzida(tab.format()), f"tabela com 2 linhas na pagina seguinte: reduzida (n={n_pag + 2})")
+    painel = j.painel
+    cur = QTextCursor(lay.doc)
+    cur.setPosition(bloco_com(lay, "F002").position())
+    cur.setPosition(bloco_com(lay, "F010").position(), QTextCursor.MoveMode.KeepAnchor)
+    painel.setTextCursor(cur)
+    painel.setFocus()
+    QTest.keyClick(painel, Qt.Key.Key_Delete)
+    drenar_eventos()
+    lay.atualizar_secoes()
+    tf = tab.format()
+    checa(not pq.reduzida(tf) and abs(tf.topMargin() * 15.0 - S_TW) < 1.0,
+          "8 paragrafos a menos acima: a tabela cabe numa pagina e a margem volta inteira")
+    QTest.keyClick(painel, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    drenar_eventos()
+    lay.atualizar_secoes()
+    checa(pq.reduzida(tab.format()), "desfeito: a tabela atravessa de novo e a margem e' reduzida")
+    lay.doc.setModified(False)
+
+
 TEXTO_LONGO = " ".join(f"palavra{i}" for i in range(80))
 #: Tabela com w:tblInd negativo (a celula fica antes da margem no Word).
 TABELA_NEGATIVA = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblInd w:w="-300" '
@@ -1289,6 +1475,7 @@ def main() -> int:
         testar_altura_da_linha(j)
         testar_linha_inteira(j, cap)
         testar_cabecalho_e_primeira_linha(j, cap)
+        testar_margem_que_atravessa(j, cap)
         testar_recuo_negativo(j)
         testar_rodape_com_tabela(j)
         testar_imagem_na_linha(j)

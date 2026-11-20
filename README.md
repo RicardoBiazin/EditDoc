@@ -203,6 +203,12 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
   comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
   e o total de páginas, como antes, e o sumário quando você manda atualizar, abaixo).
+- **Tabela que atravessa a página** (0.1.38): o Qt reserva no pé de cada página da tabela, e
+  repete no alto da página em que ela continua, a margem de cima do quadro (o espaço depois do
+  parágrafo de cima); o Word não. A tabela que atravessa a página (sem linha partida no meio)
+  fica com a metade dessa margem, e cabem no pé as mesmas linhas do Word. O arquivo gravado
+  não muda. Quando o Qt parte uma linha no meio da tabela, nada muda (limite na seção
+  "Paginação 2" de `docs/SPIKES.md`).
 - **Linha de tabela que não parte** (0.1.34): a linha com `w:cantSplit` desce inteira para a
   página seguinte, e o cabeçalho repetido (`w:tblHeader`) entra na conta; na tela, no PDF e na
   impressão. O arquivo gravado não muda.
@@ -276,7 +282,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.35-win64.zip` da página
+1. Baixe `EditDoc-0.1.38-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -531,7 +537,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.35-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.38-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

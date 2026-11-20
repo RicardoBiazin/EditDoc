@@ -2878,7 +2878,7 @@ já falhavam na base 0.1.34 nela e não são de nenhuma mudança desta versão).
   ambas e 208,212,218 no vão); a linha do `w:sep` termina na base da coluna 2 (a mais longa), bem acima
   do pé do corpo, passando do fim da coluna 1.
 
-## Paginação 2 (branch `paginacao2`, sobre a 0.1.34): a margem de cima da tabela e as quebras do doc_19 (diagnóstico; nada mudou no código, sem versão nova)
+## 0.1.38: a margem de cima da tabela que atravessa a página (branch `paginacao2`, "Paginação 2", medido sobre a 0.1.34 e a 0.1.35)
 
 Oráculo `w:lastRenderedPageBreak` dos 22 `.docx` de Downloads (rótulos doc_NN pela ordem de `sorted(Path)`
 do oráculo; plataforma `windows`), medido em 17/11/2026. Scripts no scratchpad, fora do repositório
@@ -2949,12 +2949,39 @@ duas marcas dá de 13 206 a 14 254 de 14 286 twips), isto é, nenhuma delas é a
    twips nas células junto com a margem zerada, o doc_19 chega a 7/7 (q3, q7 a q10 certas) mas o doc_21
    piora (2/2 → 1/1) e o espaço antes das tabelas continua perdido: não é correção.
 
-### Por que nada entrou
+### O que entrou, e por que só em parte
 
 A compensação (1) tem causa medida e melhora 7 quebras do doc_19 (5/5 → 7/7; a distância das quebras
-q7 a q12 ao Word cai de 1 a 5 blocos para 0 a 1), mas a regra da versão era não piorar nenhuma quebra de
-nenhum arquivo, e ela piora três no mesmo arquivo (um bloco ou uma linha de tabela cada) por revelar
-uma diferença de altura da página 4 que ainda não tem causa demonstrada (seguinte).
+q7 a q12 ao Word cai de 1 a 5 blocos para 0 a 1), mas aplicada a toda tabela que atravessa a página
+ela piora três quebras do mesmo arquivo (q4, q5, q6: um bloco ou uma linha de tabela cada) por
+revelar uma diferença de altura da página 4 que não tem causa demonstrada (seguinte).
+
+A quebra q3 (a linha 3 da tabela 101, que cabe no Word e o Qt parte) é a que revela a q4: puxar o
+pedaço da linha de volta para a página 3 dá à página 4 mais 85 twips que o Word não tem. Medido por
+tabela (a margem menor só na tabela indicada): a 225 sozinha dá q7 a q10 certas e q11 e q12 a 1
+bloco, sem piorar nada; a 150 sozinha não muda nada; a 101 sozinha dá q3 certa, q4 a q6 piores. Entrou
+a variante que não reduz a tabela em que o Qt parte uma linha no MEIO dela (a última pode ser a
+partida): ela fica como na 0.1.34, o limite já registrado ali. Nesta variante:
+
+| arquivo | base 0.1.35 | 0.1.38 |
+|---|---|---|
+| doc_19 | 14 \| 5/5 de 13 | 14 \| **9/9** (q7 a q10 certas; q11 e q12 a 1 bloco de 3 e 5) |
+| doc_08 (o modelo de tarefas semanais) | 2 páginas | **1** (a do Word: a última linha da tabela, partida pela reserva, volta inteira) |
+| doc_17, 18, 20, 21, 22 e os 14 sem marcas | iguais | iguais, quebra por quebra |
+| 25 arquivos do Word de outras pastas (ext_NN), 66 quebras exatas | | as 66 no mesmo lugar; ext_11, 3 quebras melhores (94 → 95, 132 → 135, 163 → 164, do Word 105, 147, 171); **ext_22 igual** (a tabela de 60 linhas tem linha partida no meio: fica como estava) |
+
+Nos dois modos de layout (por trechos e `EDITDOC_TRECHOS=0`) o resultado é o mesmo: nenhuma quebra
+de nenhum arquivo ficou pior.
+
+O que a variante acrescenta ao experimento (1): a decisão fica nas regras de quebra (`_margem_que_atravessa`,
+com o layout em dia; a tecla na tabela não a decide, só a mantém), com uma marca no formato da tabela
+(`PROP_WORD_REDUZIDA`) e histerese para voltar (a tabela reduzida que deixa de atravessar só volta à margem
+inteira se coubesse mesmo com ela); e a regra do `w:cantSplit` compara a altura com o y do Word (`_deslocamento_da_margem`:
+na primeira página da tabela o Qt fica acima do Word pelo que a margem perdeu, nas seguintes abaixo
+dela). Primeiro tentativa: a reducao se decidia pela diferenca entre a margem aplicada e a recalculada, e o
+mesmo documento deu 2 páginas aberto depois de outro e 1 aberto sozinho (a compensação do espaço mede a linha
+do vazio escondido de um jeito diferente conforme o estado das fontes: 233 contra 239 twips): a marca no
+formato tirou a dependência de ordem.
 
 ### A altura que falta na página 4 do doc_19 (segunda rodada)
 
