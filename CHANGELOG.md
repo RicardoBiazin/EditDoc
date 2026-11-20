@@ -1,3 +1,35 @@
+## 0.1.35 - 2026-11-17
+
+Colunas: o que a 0.1.29 deixou de fora e dava para fazer sem trocar o layout do Qt. Documento sem
+colunas fica exatamente como na 0.1.34.
+
+- **Quebra de coluna no meio do parágrafo**: nas seções cujas colunas a tela mostra, o parágrafo com
+  `w:br w:type="column"` no meio do texto parte em dois ao abrir (como a quebra de página no meio do
+  texto): a quebra vira o primeiro item do parágrafo de depois, que já ia para a coluna seguinte. O
+  arquivo salvo traz a `w:br` no mesmo ponto do texto, com uma marca de parágrafo a mais (espaço antes
+  só no primeiro pedaço, espaço depois e `w:sectPr` só no último, recuo da primeira linha só no
+  primeiro). Item de lista, campo que atravessa a quebra e quebra sem texto antes ou depois não
+  partem. A conferência pós-gravação aceita o arquivo.
+- **`w:sep`**: a linha entre as colunas desce até o fim da coluna mais longa da folha (e até o pé do
+  corpo quando a folha tem nota de rodapé), em vez de ir sempre até o pé.
+- **Régua**: mostra a coluna do cursor (a largura dela; os recuos contam da esquerda da coluna) e o vão
+  entre as colunas em cinza, como as margens.
+- **Flutuantes**: "relativo à coluna" usa a coluna da âncora (antes, a margem da folha); soltar o
+  objeto na coluna 2 reancora num parágrafo da coluna 2 (antes, sempre na 1).
+- **Colunas iguais declaradas como desiguais** (`equalWidth="0"` com `w:col` de mesma largura) já
+  contavam como iguais; `Secao.desiguais` passa a dizer quando não são.
+- **Ficou de fora, com o motivo** (docs/SPIKES.md, "0.1.35"): seção contínua com colunas no meio da
+  folha e o equilíbrio de colunas (o Word só equilibra antes de uma quebra contínua), colunas de larguras
+  diferentes e `nextColumn`. O Qt corta as linhas numa altura de página só, o espaçador do EditDoc só
+  empurra blocos inteiros e cada bloco tem uma largura só: sem layout próprio o resultado seria pior
+  que o aviso COLUNAS. O aviso continua para esses casos.
+
+Prova: `tests/teste_colunas.py` (115 verificações, cada recurso com contraprova; as novas também na
+plataforma `windows`), suíte completa nas duas passadas (5210 verificações, 0 falhas), oráculo e
+regressão c14n nos 22 arquivos iguais à 0.1.34 nos dois modos, gate de desempenho nos núcleos P sem
+piora consistente (docs/SPIKES.md, "0.1.35": a única mediana de 3 rodadas acima de 1,5 ms, o plano 1/3,
+era um pico isolado e deu +0,55 ms em 5 rodadas). Nenhum arquivo foi conferido no Word.
+
 ## 0.1.34 - 2026-11-17
 
 Linha de tabela que não parte entre páginas (`w:cantSplit`) e cabeçalho repetido (`w:tblHeader`), na

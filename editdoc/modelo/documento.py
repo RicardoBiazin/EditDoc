@@ -605,6 +605,89 @@ def _normalizar_blocos(blocos: list[Bloco], em_celula: bool) -> None:
         blocos.append(Paragrafo())
 
 
+def _tem_conteudo(r: Run) -> bool:
+    """O run ocupa lugar no texto (letra, objeto, imagem ou campo simples), nao e' so' marca."""
+    return r.marca is None and bool(r.texto or r.eh_objeto() or r.campo is not None)
+
+
+def _equilibrado(runs: list[Run]) -> bool:
+    """Os campos, controles de conteudo e movimentos abertos nos `runs` tambem fecham neles."""
+    abertos = 0
+    for r in runs:
+        m = r.marca
+        if isinstance(m, (MarcaCampo, MarcaConteudo)):
+            abertos += 1 if m.tipo == "inicio" else -1
+        elif isinstance(m, MarcaMovimento):
+            abertos += -1 if m.fim else 1
+    return abertos == 0
+
+
+def _partir_na_quebra_de_coluna(p: Paragrafo, doc: Documento) -> list[Paragrafo]:
+    """Parte `p` em cada quebra de coluna no MEIO do texto (0.1.35): a quebra passa a ser o
+    primeiro run do paragrafo de depois, que a tela ja' leva para a coluna seguinte (quebra no
+    comeco do paragrafo). Mesma ideia da quebra de pagina no meio do texto (`leitor._paragrafos`):
+    o arquivo salvo traz a w:br no mesmo ponto do texto, com a marca de paragrafo a mais. Nao parte
+    item de lista (o de baixo ganharia numero), nem onde um campo ou controle atravessa a quebra."""
+    from editdoc.modelo.numeracao import lista_efetiva
+    if p.lista or lista_efetiva(p.lista, p.lista_nivel, p.estilo, doc.estilos,
+                                doc.numeracao) is not None:
+        return [p]
+    runs = p.runs
+    cortes = []
+    for k, r in enumerate(runs):
+        if isinstance(r.marca, MarcaQuebra) and 0 < k < len(runs) - 1 \
+                and any(_tem_conteudo(x) for x in runs[:k]) \
+                and any(_tem_conteudo(x) for x in runs[k + 1:]) and _equilibrado(runs[:k]):
+            cortes.append(k)
+    if not cortes:
+        return [p]
+    limites = [0] + cortes + [len(runs)]
+    saida = []
+    for i, (a, b) in enumerate(zip(limites, limites[1:])):
+        ultimo = i == len(limites) - 2
+        pedaco = copy.copy(p)
+        pedaco.runs = runs[a:b]
+        if i > 0:
+            pedaco.quebra_antes = False
+            pedaco.espaco_antes_tw = 0
+            if (p.recuo_primeira_linha_tw or 0) > 0:
+                pedaco.recuo_primeira_linha_tw = 0
+        if not ultimo:
+            # O que e' da marca de paragrafo e da secao fica no ultimo pedaco; o espaco depois so'
+            # vale no fim do paragrafo (a quebra de coluna esta' no meio dele).
+            pedaco.secao = None
+            pedaco.marca_insercao = pedaco.marca_exclusao = None
+            pedaco.espaco_depois_tw = 0
+        saida.append(pedaco)
+    return saida
+
+
+def _partir_quebras_de_coluna(doc: Documento) -> None:
+    """Quebra de coluna no meio do paragrafo, nas secoes cujas colunas a tela mostra (0.1.35).
+    Sem secao de colunas na tela nada muda (o documento volta como estava)."""
+    from editdoc.modelo import secoes as mod_secoes
+    secoes = mod_secoes.secoes_de(doc)
+    if not any(s.colunas[0] >= 2 for s in secoes):
+        return
+    mostra = mod_secoes.colunas_na_tela(
+        [(s.tipo, s.pagina, None if s.desiguais else tuple(s.colunas[:2])) for s in secoes])
+    if not any(mostra):
+        return
+    saida: list = []
+    i = 0
+    for bloco in doc.paragrafos:
+        if isinstance(bloco, Tabela):
+            saida.append(bloco)
+            continue
+        if mostra[min(i, len(mostra) - 1)]:
+            saida.extend(_partir_na_quebra_de_coluna(bloco, doc))
+        else:
+            saida.append(bloco)
+        if bloco.secao is not None:
+            i += 1
+    doc.paragrafos[:] = saida
+
+
 def normalizar(documento: Documento) -> Documento:
     """Copia do documento com runs vizinhos fundidos, runs vazios descartados e as
     tabelas na forma canonica (celula e corpo terminam em paragrafo)."""
@@ -613,6 +696,7 @@ def normalizar(documento: Documento) -> Documento:
     from editdoc.modelo.numeracao import materializar
     materializar(saida)
     _normalizar_blocos(saida.paragrafos, em_celula=False)
+    _partir_quebras_de_coluna(saida)
     # Cabecalho e rodape terminam em paragrafo, como a celula (o Word exige ao menos um).
     for faixas in (saida.cabecalhos, saida.rodapes):
         for blocos in faixas.values():

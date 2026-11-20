@@ -176,6 +176,18 @@ class Contexto:
         mapa = self.mapa
         return mapa if mapa is not None and mapa.tem_colunas() and self.hb else None
 
+    def coluna_do_y(self, y_doc: float) -> tuple[float, float] | None:
+        """(deslocamento, largura) da coluna da pagina do Qt do ponto y (0.1.35), ou None sem
+        colunas nessa pagina."""
+        mapa = self._colunas()
+        if mapa is None:
+            return None
+        p = max(0, mapa.pagina_de_y(y_doc))
+        g = mapa.grupo_da_pagina(p)
+        if g is None:
+            return None
+        return mapa.deslocamento(p), g.largura
+
     def pe_do_y(self, y_doc: float) -> float:
         """Onde o corpo da pagina do Qt do ponto y termina (com colunas, a da coluna)."""
         mapa = self._colunas()
@@ -416,6 +428,11 @@ class Gerente:
             ef = ctx.efetiva_da(n)
             coluna_x = float(ef.margem_esq_tw + ef.desvio_tw)
             coluna_w = ctx.corpo_largura(n) - ef.desvio_tw
+            col = ctx.coluna_do_y(topo)
+            if col is not None:
+                # Secao de colunas (0.1.35): "relativo a' coluna" e' a coluna da ancora.
+                coluna_x += col[0]
+                coluna_w = col[1]
         ref = mf.Referencia(pagina=ctx.pagina_da(n), indice=n, paragrafo_y=topo + dy,
                             linha_y=linha_y if linha_y is not None else topo + dy,
                             coluna_x=coluna_x, coluna_w=coluna_w, caractere_x=car_x)

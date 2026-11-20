@@ -322,7 +322,8 @@ def ler(sect, coletor, final: bool = False) -> tuple[Secao, dict]:
             coletor.somar("FORMATACAO")
             limpo.remove(el_tipo)
     secao = Secao(pagina=pagina, tipo=tipo, extras=extras_de(limpo),
-                  original=canonico(limpo), colunas=colunas_de(limpo))
+                  original=canonico(limpo), colunas=colunas_de(limpo),
+                  desiguais=colunas_iguais_de(limpo) is None)
     # O aviso COLUNAS sai depois de todas as secoes lidas (`avisar_colunas`): a tela mostra as
     # colunas iguais da secao que comeca e termina em folha nova (passo 2 das colunas).
     return secao, refs
