@@ -186,7 +186,7 @@ class PainelDocumento(VistaPaginas):
         self._ligar_desfazer(doc)
         layout.faixas.criada.connect(lambda faixa: self._ligar_desfazer(faixa.doc))
         layout.faixas.alterado.connect(self._faixa_alterada)
-        #: Corretor ortografico (0.1.35): sublinhado, menu e F7 (interface/ortografia.py).
+        #: Corretor ortografico (0.1.36): sublinhado, menu e F7 (interface/ortografia.py).
         self.ortografia = Ortografia(self)
 
     def verificar_ortografia(self) -> int:
@@ -2158,7 +2158,7 @@ class PainelDocumento(VistaPaginas):
         menu = QMenu(self)
         doc = self.document()
         if self._no_corpo():
-            # Palavra errada (0.1.35): as sugestoes e o Ignorar vem no alto do menu. Com o mouse,
+            # Palavra errada (0.1.36): as sugestoes e o Ignorar vem no alto do menu. Com o mouse,
             # a palavra sob o ponteiro; pelo teclado (tecla de menu), a do caret.
             pos = self._cursor.position() if ev.reason() == ev.Reason.Keyboard \
                 else self.posicao_em(QPointF(ev.pos()))

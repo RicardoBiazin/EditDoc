@@ -1,4 +1,4 @@
-"""O texto de um bloco do QTextDocument, repartido em trechos para o corretor (0.1.35).
+"""O texto de um bloco do QTextDocument, repartido em trechos para o corretor (0.1.36).
 
 Cada trecho e' um pedaco do bloco que o corretor verifica de uma vez: o mesmo idioma e a mesma
 decisao de verificar. O idioma de cada pedaco, do mais forte para o mais fraco:

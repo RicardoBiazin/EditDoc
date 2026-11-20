@@ -108,7 +108,7 @@ class DialogoOpcoes(QDialog):
         f_usuario.addRow("&Nome de usuário:", self.nome_usuario)
         f_usuario.addRow("Inic&iais:", self.iniciais)
 
-        # -- ortografia (0.1.35)
+        # -- ortografia (0.1.36)
         from editdoc.interface.ortografia import IDIOMA_AUTOMATICO, nome_do_idioma
         self.ortografia = QCheckBox("Verificar a ortografia enquanto digito")
         self.ortografia.setChecked(v["ortografia_ligada"])

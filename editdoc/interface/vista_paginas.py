@@ -322,7 +322,7 @@ def desenhar_folha(painter, layout: LayoutPaginado, n: int, transf: QTransform,
     # Alteracoes controladas (0.1.13): barra na margem e a segunda linha dos movimentos.
     pq_revisoes.desenhar(painter, layout.doc, ctx.clip)
     if tela:
-        # Corretor ortografico (0.1.35): o sublinhado ondulado so' na tela, pintado por cima.
+        # Corretor ortografico (0.1.36): o sublinhado ondulado so' na tela, pintado por cima.
         ui_ortografia.desenhar(painter, layout.doc, ctx.clip)
     if layout.secoes_baixas():
         # Tabela partida numa secao mais baixa (0.1.12): a linha de cima fecha onde o texto acaba.

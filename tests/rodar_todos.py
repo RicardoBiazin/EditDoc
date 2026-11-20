@@ -152,7 +152,7 @@ SUITES = [
     ("teste_acessibilidade.py",
      "acessibilidade: nomes de todo controle, ordem de Tab, Alt/F10 e dicas, documento, contraste"),
     ("teste_ortografia.py",
-     "0.1.35: corretor ortografico: w:lang/noProof, varredura incremental, sublinhado so' na tela, menu, F7, API do Windows"),
+     "0.1.36: corretor ortografico: w:lang/noProof, varredura incremental, sublinhado so' na tela, menu, F7, API do Windows"),
 ]
 
 

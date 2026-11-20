@@ -1,4 +1,4 @@
-"""Idioma e "nao verificar" do texto, lidos do XML do arquivo (0.1.35). Sem Qt.
+"""Idioma e "nao verificar" do texto, lidos do XML do arquivo (0.1.36). Sem Qt.
 
 So' a tela usa: o corretor ortografico precisa saber, para cada trecho, em que idioma ele esta
 (w:lang) e se o autor mandou nao verificar (w:noProof). Nada daqui volta ao arquivo, e nada e'

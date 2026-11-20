@@ -1092,6 +1092,35 @@ comentário ou de uma caixa de texto só são preservadas; mover texto (recortar
 controle ligado vira exclusão e inserção, não movimento; o comentário na margem do PDF não é um
 balão (texto pequeno ao lado do trecho, um embaixo do outro).
 
+## Corretor ortográfico (0.1.36)
+
+Quem corrige é a API de verificação ortográfica do Windows (`ISpellCheckerFactory`, por `ctypes`,
+Windows 8 ou mais novo): nada de dicionário nem de dependência no pacote (regra 5), os idiomas são
+os que o usuário instalou e o dicionário pessoal é o dele. O texto não sai do computador.
+
+- **Camadas**: `editdoc/ortografia` (sem Qt) tem a interface `Corretor` (idiomas, suporta, verificar,
+  sugerir, adicionar), `CorretorWindows` e `CorretorFalso`; `formato_docx/idioma_texto.py` lê o
+  `w:lang` e o `w:noProof` (run, estilos e docDefaults); `ponte_qt/ortografia.py` reparte o bloco em
+  trechos por idioma, com o mapa de posições; `interface/ortografia.py` tem a `Ortografia` (uma por
+  painel) e a pintura.
+- **O sublinhado é pintado**, na função única da folha, depois do realce das revisões e só com
+  `tela=True` (impressão e PDF não o passam). Nada entra no `QTextDocument`: nem formato, nem desfazer,
+  nem "alterado"; o arquivo salvo não muda.
+- **Incremental e fora da tecla**: `contentsChange` só reinicia um `QTimer` ocioso. Parado, uma
+  varredura começa no bloco do alto da tela e anda em fatias de 6 ms; o resultado é guardado pelo texto
+  do bloco, então só o bloco mudado é verificado de novo. O bloco sem resultado pinta pelas palavras já
+  marcadas, e a palavra em que o caret digita não é sublinhada até ele sair.
+- **Idioma**: preferência `ortografia_idioma` ("auto" ou uma etiqueta). Automático: o `w:lang` do
+  trecho, depois dos estilos, do docDefaults e pt-BR; uma etiqueta vale para todo o texto. Idioma do
+  documento sem dicionário no Windows, API ausente ou corretor que falha: a verificação se desliga com
+  um aviso na barra de status.
+- **Menu e F7**: o botão direito numa palavra errada mostra as sugestões (a melhor em negrito),
+  Ignorar (uma vez), Ignorar tudo (no documento aberto) e Adicionar ao dicionário (o do Windows);
+  **Revisão > Ortografia** (F7) vai ao próximo erro, o seleciona e abre o mesmo menu, até o menu ser
+  fechado. Trocar uma palavra é um passo de desfazer (`edicao/busca._trocar`).
+
+Medidas, limites e o que ficou de fora: docs/SPIKES.md, "0.1.36".
+
 ## Paginação como a do Word (0.1.17)
 
 Medida contra o próprio Word: cada `w:lastRenderedPageBreak` que o Word grava diz onde ele começou
@@ -1197,6 +1226,7 @@ Reavaliar só se o ribbon próprio estourar o marco de faixa.
 | Notas | 0.1.10 (feito) | footnotes.xml e endnotes.xml, numeração, área de notas na página, edição no lugar, aba Referências, PDF |
 | Seções | 0.1.12 (feito) | sectPr de cada seção sem perda, papel e cabeçalhos por folha, numeração por seção, quebras de seção, Vincular ao anterior |
 | Controle de alterações | 0.1.13 (feito) | w:ins, w:del, movimentos, formatação, marca de parágrafo, tabela e seção sem perda; quatro modos de exibição; edição rastreada; aceitar e rejeitar; painel; imprimir marcações |
+| Ortografia | 0.1.36 (feito) | corretor do Windows (ISpellCheckerFactory por ctypes), sublinhado só na tela, menu de sugestões, F7, idioma por w:lang e Opções |
 
 Caminho crítico: M1, M2 e M3. Antes do M3, um spike de página valida o controle
 de texto próprio; se a tecla morta ou a IME falharem, o plano B é uma visão em
@@ -1206,8 +1236,8 @@ modo contínuo, com paginação só na impressão.
 
 Revisão (comentários desde a 0.1.6; notas de rodapé desde a 0.1.10; controle de alterações desde a 0.1.13), gerar e atualizar
 índices e sumários (preservados como campo desde a 0.1.3), mala direta, edição de equações e formas (preservadas sem
-edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas na tela (preservadas desde a 0.1.12; as seções se editam desde a 0.1.12), ortografia (prevista para a
-0.2 pela API do Windows), `.doc`, RTF, ODT e macros (nunca).
+edição desde a 0.1.2; o texto das caixas se edita desde a 0.1.5), colunas na tela (preservadas desde a 0.1.12; as seções se editam desde a 0.1.12), ortografia (feita na 0.1.36 pela API do Windows; só o corpo,
+sem gramática), `.doc`, RTF, ODT e macros (nunca).
 
 ## Riscos abertos
 

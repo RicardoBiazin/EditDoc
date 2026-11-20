@@ -57,7 +57,7 @@ def padrao() -> dict:
         # (edicao/comentarios.autor_das_preferencias).
         "nome_usuario": "",
         "iniciais": "",
-        # Corretor ortografico (0.1.35): verificar enquanto digita e o idioma. "auto" = o idioma
+        # Corretor ortografico (0.1.36): verificar enquanto digita e o idioma. "auto" = o idioma
         # que o arquivo marca (w:lang) e, na falta, pt-BR; senao, a etiqueta do idioma ("en-US").
         "ortografia_ligada": True,
         "ortografia_idioma": "auto",

@@ -229,7 +229,7 @@ DEFINICOES = (
     Definicao("zoom_pagina", "Uma Página", (), dica="A página inteira na janela"),
     Definicao("zoom_varias", "Várias Páginas", (), dica="Duas páginas lado a lado"),
     Definicao("zoom_largura", "Largura da Página", (), dica="A largura da página na janela"),
-    # Revisao: corretor ortografico (0.1.35).
+    # Revisao: corretor ortografico (0.1.36).
     Definicao("ortografia", "Ortografia", ("F7",),
               dica="Verificar a ortografia: ir ao próximo erro e ver as sugestões"),
     # Revisao: comentarios (0.1.6).
@@ -568,7 +568,7 @@ def _executores(editor: QTextEdit, ao_localizar: Callable[[], None],
     executores["proxima_nota"] = lambda: ed_notas.proxima(editor)
     executores["nota_anterior"] = lambda: ed_notas.proxima(editor, anterior=True)
     executores["opcoes_notas"] = lambda: _chamar(inserir, "opcoes_notas")
-    # Corretor ortografico (0.1.35): o painel percorre os erros e mostra as sugestoes.
+    # Corretor ortografico (0.1.36): o painel percorre os erros e mostra as sugestoes.
     executores["ortografia"] = lambda: getattr(editor, "verificar_ortografia", _nada)()
     executores["inserir_sumario"] = lambda: ed_sumario.inserir(editor)
     executores["atualizar_sumario"] = lambda: ed_sumario.atualizar(editor)

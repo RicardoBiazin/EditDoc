@@ -401,7 +401,7 @@ def mostrar_previa(dialogo) -> None:
 def pedir_opcoes(pai: QWidget | None, valores: dict,
                  idiomas: tuple | list | None = None) -> dict | None:
     """Arquivo > Opções. As preferencias escolhidas (com "limpar_recentes"), ou None.
-    `idiomas` (0.1.35): os que o corretor ortografico tem; sem eles, os do painel da janela."""
+    `idiomas` (0.1.36): os que o corretor ortografico tem; sem eles, os do painel da janela."""
     from editdoc.interface.dialogo_opcoes import DialogoOpcoes
 
     if idiomas is None:

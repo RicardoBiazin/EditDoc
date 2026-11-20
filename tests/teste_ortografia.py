@@ -1,4 +1,4 @@
-"""Corretor ortografico (0.1.35): idioma e w:noProof do arquivo, varredura incremental,
+"""Corretor ortografico (0.1.36): idioma e w:noProof do arquivo, varredura incremental,
 sublinhado so' na tela, menu de sugestoes, F7, opcoes e a API real do Windows.
 
 Os testes NAO dependem do dicionario da maquina: o corretor e' o `CorretorFalso` (palavras dadas,

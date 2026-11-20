@@ -1,3 +1,43 @@
+## 0.1.36 - 2026-11-17
+
+Corretor ortográfico, como no Word: sublinhado ondulado vermelho nas palavras desconhecidas (só na
+tela), menu do botão direito com sugestões, **Ignorar**, **Ignorar tudo** e **Adicionar ao
+dicionário**, **Revisão > Ortografia** (**F7**) que percorre os erros, e em **Arquivo > Opções** ligar
+e desligar a verificação enquanto digita e escolher o idioma. Até a 0.1.34 o EditDoc não corrigia
+nada ("ortografia" estava em "Fora desta versão").
+
+- **Quem corrige**: a API de verificação ortográfica do próprio Windows (`ISpellCheckerFactory`, por
+  `ctypes`, Windows 8 ou mais novo). Não há dicionário nem dependência nova no pacote (nada GPL/AGPL,
+  regra 5): os idiomas são os que o usuário instalou e o dicionário pessoal é o do Windows. O texto
+  não sai do computador. Sem a API, com o idioma do documento não instalado ou se o corretor falhar, a
+  verificação se desliga com um aviso discreto na barra de status (sem erro).
+- **Interface do corretor** (`editdoc/ortografia`): `Corretor` (idiomas, suporta, verificar,
+  sugerir, adicionar), `CorretorWindows` e `CorretorFalso` (em memória, para os testes, que por isso
+  não dependem do dicionário da máquina: `EDITDOC_CORRETOR=nenhum` é o padrão da suíte).
+- **Idioma**: o `w:lang` de cada trecho (rPr do run, estilo de caractere, estilo de parágrafo e as
+  bases, `docDefaults`) e, na falta, pt-BR; o `w:noProof` vale; o texto excluído por alteração
+  controlada não é verificado; marcador, âncora de comentário e fim de campo no meio de uma palavra não
+  a partem. O idioma escolhido em Opções vale para todo o texto.
+- **Sublinhado só na tela**: pintado por cima (`interface/ortografia.desenhar`, na função única da
+  folha, só com `tela=True`). Nada entra no `QTextDocument`: nem formato, nem desfazer, nem "alterado".
+  O arquivo salvo não muda (nenhuma marca de erro; o `w:proofErr` do arquivo continua como estava).
+- **Verificação incremental, fora do caminho da tecla**: a tecla só reinicia um `QTimer` ocioso
+  (350 ms); parado, uma varredura começa no bloco do alto da tela e anda em fatias de 6 ms. O
+  resultado é guardado pelo texto do bloco: só o bloco mudado é verificado de novo. Enquanto o bloco
+  digitado não tem resultado, o sublinhado das outras palavras fica, e a palavra em que o caret acaba
+  de digitar só é sublinhada quando ele sai.
+- **Limites**: só o corpo (não cabeçalho, rodapé, notas nem caixas de texto); só ortografia (sem
+  gramática); parágrafo com mais de 30 mil caracteres não é verificado; documento marcado com o
+  idioma errado (docDefaults `en-US` num texto em português) mostra quase tudo sublinhado, como o Word
+  sem detecção de idioma: o idioma de Opções resolve. Medidas em docs/SPIKES.md, "0.1.36".
+
+Prova: `tests/teste_ortografia.py` (161 verificações, corretor falso, cada regra com contraprova;
+fumaça da API real só quando o Windows a oferece), suíte completa nas duas passadas (5287
+verificações, 0 falhas), oráculo de paginação nos 22 arquivos e regressão (abrir, salvar, reabrir,
+salvar; páginas e partes) idênticos à 0.1.34, também com o corretor real ligado e a varredura feita,
+e gate de desempenho nos núcleos P: sem o corretor nenhum ponto passa de +0,57 ms; com ele e o
+sublinhado na tela, +0,6 a +1,3 ms nos pontos com palavras sublinhadas (docs/SPIKES.md, "0.1.36").
+
 ## 0.1.35 - 2026-11-17
 
 Colunas: o que a 0.1.29 deixou de fora e dava para fazer sem trocar o layout do Qt. Documento sem

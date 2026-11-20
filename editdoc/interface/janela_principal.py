@@ -335,7 +335,7 @@ class JanelaPrincipal(QMainWindow):
         # O autor das alteracoes controladas (0.1.13) e' o dos comentarios.
         from editdoc.edicao.comentarios import autor_das_preferencias
         self.revisoes.definir_autor(autor_das_preferencias(cfg)[0])
-        # Corretor ortografico (0.1.35): ligar e desligar e o idioma valem na hora.
+        # Corretor ortografico (0.1.36): ligar e desligar e o idioma valem na hora.
         self.painel.ortografia.aplicar_preferencias(cfg)
 
     def opcoes(self) -> bool:
@@ -930,7 +930,7 @@ class JanelaPrincipal(QMainWindow):
             self.dock_comentarios.show()
         # Alteracoes controladas (0.1.13): o modo da janela e o painel de revisoes.
         self.revisoes.ao_carregar()
-        # Corretor ortografico (0.1.35): o idioma e os estilos do arquivo novo.
+        # Corretor ortografico (0.1.36): o idioma e os estilos do arquivo novo.
         self.painel.ortografia.ao_carregar()
         self._sintonizar()
         self.recuperacao.alteracoes = 0

@@ -1,4 +1,4 @@
-"""Corretor ortografico (0.1.35). Sem Qt.
+"""Corretor ortografico (0.1.36). Sem Qt.
 
 O EditDoc nao embute dicionario nem biblioteca de correcao (nada GPL/AGPL no pacote, regra 5 do
 CLAUDE.md): quem corrige e' a API de verificacao ortografica do proprio Windows

@@ -613,7 +613,7 @@ class Faixa(QFrame):
                 "comentario_anterior", "comentario_proximo", "mostrar_comentarios")]))
         controle = self._grupo_controle(c)
         alteracoes = self._grupo_alteracoes(c)
-        # Revisao de texto (0.1.35): o botao Ortografia (F7), como no Word.
+        # Revisao de texto (0.1.36): o botao Ortografia (F7), como no Word.
         botao_ortografia = _botao(c, "ortografia")
         # A segunda linha, vazia, tem a altura de um botao: sem isso o titulo do grupo fica mais
         # alto que o dos outros.

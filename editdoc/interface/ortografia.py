@@ -1,4 +1,4 @@
-"""Corretor ortografico na tela (0.1.35): sublinhado ondulado, menu de sugestoes e F7.
+"""Corretor ortografico na tela (0.1.36): sublinhado ondulado, menu de sugestoes e F7.
 
 COMO FUNCIONA
 

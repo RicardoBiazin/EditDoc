@@ -1,4 +1,4 @@
-"""Corretor pela API de verificacao ortografica do Windows (0.1.35): ISpellCheckerFactory.
+"""Corretor pela API de verificacao ortografica do Windows (0.1.36): ISpellCheckerFactory.
 
 Por ctypes puro, sem comtypes nem dicionario proprio: o Windows 8 ou mais novo traz a API, os
 idiomas que o usuario instalou (Configuracoes > Hora e idioma) e o dicionario pessoal dele

@@ -12,6 +12,12 @@ dependência nova.
 | lxml | 6.1.3 | BSD-3-Clause | Leitura e escrita de XML. |
 | Qt SVG e plugin TIFF (dentro do PySide6) | 6.12 | LGPL-3.0; libtiff (licença libtiff, estilo BSD) dentro do `qtiff` | Desde a 0.1.5 o módulo `QtSvg` (`Qt6Svg.dll`, plugin `qsvg`) e o plugin `imageformats/qtiff` mostram as imagens SVG e TIFF do documento. Já vinham no PySide6-Essentials; o `.spec` passa a incluir o `QtSvg`. EMF e WMF usam o GDI do Windows (sistema), sem componente novo. |
 
+## Do sistema operacional (não distribuídos)
+
+| Componente | Versão | Licença | Observação |
+|---|---|---|---|
+| API de verificação ortográfica do Windows (`ISpellCheckerFactory`, `ISpellChecker`) | Windows 8 ou mais novo | Componente do Windows (não é redistribuído) | Desde a 0.1.36 o corretor ortográfico a chama por `ctypes` (módulo da biblioteca padrão do Python): nenhum dicionário, biblioteca de correção ou dependência nova entra no pacote. Os idiomas e o dicionário pessoal são os do usuário no Windows; o texto verificado não sai do computador. |
+
 ## Só para desenvolvimento e testes
 
 | Componente | Versão | Licença | Observação |
