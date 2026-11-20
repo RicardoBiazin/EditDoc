@@ -32,9 +32,9 @@ nada ("ortografia" estava em "Fora desta versão").
   sem detecção de idioma: o idioma de Opções resolve. Medidas em docs/SPIKES.md, "0.1.36".
 
 Prova: `tests/teste_ortografia.py` (161 verificações, corretor falso, cada regra com contraprova;
-fumaça da API real só quando o Windows a oferece), suíte completa nas duas passadas (5287
+fumaça da API real só quando o Windows a oferece), suíte completa nas duas passadas (5371
 verificações, 0 falhas), oráculo de paginação nos 22 arquivos e regressão (abrir, salvar, reabrir,
-salvar; páginas e partes) idênticos à 0.1.34, também com o corretor real ligado e a varredura feita,
+salvar; páginas e partes) idênticos à 0.1.35, também com o corretor real ligado e a varredura feita,
 e gate de desempenho nos núcleos P: sem o corretor nenhum ponto passa de +0,57 ms; com ele e o
 sublinhado na tela, +0,6 a +1,3 ms nos pontos com palavras sublinhadas (docs/SPIKES.md, "0.1.36").
 

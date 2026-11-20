@@ -2929,14 +2929,16 @@ em Arquivo > Opções resolve (o idioma escolhido vale para todo o texto).
 
 ### Regressão, oráculo e suíte
 
-- Oráculo de paginação (`w:lastRenderedPageBreak`, 22 arquivos, plataforma `windows`, base 0.1.34
-  08e5fe9 x branch, mesma hora, com e sem `EDITDOC_TRECHOS`): idêntico, quebra por quebra, nos dois modos.
+- Oráculo de paginação (`w:lastRenderedPageBreak`, 22 arquivos, plataforma `windows`, base 0.1.35
+  c1cd6d1 x branch rebaseada, mesma hora, com e sem `EDITDOC_TRECHOS`; antes do rebase, contra a 0.1.34
+  08e5fe9, igual): idêntico, quebra por quebra, nos dois modos.
 - Abrir, salvar, reabrir, salvar nos 22: páginas e hash de cada parte (c14n; nas partes que o lxml não
   canoniza, os bytes) idênticos aos da base, nas duas variantes do ramo: padrão e com o corretor real
   ligado e a varredura feita e pintada antes de gravar (18 dos 22 arquivos tinham palavras sublinhadas).
   O arquivo gravado não muda e nenhum `w:proofErr` é criado.
-- Suíte completa (`rodar_todos.py`, segunda passada com `EDITDOC_TRECHOS=0` incluída): 5287
-  verificações, 0 falhas (a 0.1.34 deu 5126; `teste_ortografia` tem 161).
+- Suíte completa (`rodar_todos.py`, segunda passada com `EDITDOC_TRECHOS=0` incluída), sobre a
+  branch rebaseada no main 0.1.35: 5371 verificações, 0 falhas (antes do rebase, sobre a 0.1.34: 5287;
+  `teste_ortografia` tem 161).
 
 ### Gate de desempenho (p95 em ms, 80 teclas com pintura, `start /affinity 00FF`, núcleos P)
 
@@ -2971,6 +2973,11 @@ revisões (+2,86), que não se repete numa medida no mesmo processo (A/B de 6 ro
 ligado e desligado: -0,29 ms); nos pontos com sublinhado de verdade a mesma medida deu +0,6 (simples), +1,0 a
 +1,25 (manual corpo) e +0,25 (plano 1/3). Um registro anterior (3 rodadas, antes de as otimizações abaixo
 entrarem) tinha +1,8 no simples e +2,4 no corpo.
+
+Repetido depois do rebase sobre o main 0.1.35 (colunas, c1cd6d1), 3 rodadas intercaladas, mesmos
+núcleos: ramo-base de -2,37 a +1,13 ms (maior: plano 1/3 +1,13, dispersão de 3 ms entre rodadas) e
+ort-base de -4,64 a +1,08 (simples +1,08, manual corpo +1,00, capa cheia +0,48, janela doc_14 de -0,62 a
++0,43). Nenhum ponto com piora consistente de 1,5 ms.
 
 Otimizações feitas por causa dessa medida (perfil com `cProfile`, que infla de 3 a 5 vezes): `desenhar`
 só prepara o painter quando há onda a pintar (a faixa que a tecla repinta quase nunca tem); só as linhas
