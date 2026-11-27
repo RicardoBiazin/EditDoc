@@ -3280,7 +3280,7 @@ Nenhum sistemático além do da margem de cima da tabela. Medidos e descartados:
 escondido depois da tabela no doc_19 tem entrelinha simples (não perde os 15% de 1,15); as caixas de
 uma célula do doc_19 não têm borda em cima nem embaixo; doc_17, doc_18 e doc_22 batem quebra por
 quebra.
-## 0.1.39: endurecimento contra .docx hostil ou corrompido (branch `endurecimento`, sobre a 0.1.37)
+## 0.1.39: endurecimento contra .docx hostil ou corrompido (branch `endurecimento`, sobre a 0.1.37, mesclada com a 0.1.38)
 
 Um editor público abre arquivo de terceiros: esta versão procura, por código, o que um `.docx` hostil ou
 danificado faz com o EditDoc, e corrige o que achar. Regras do projeto que guiaram tudo: o documento
@@ -3452,3 +3452,10 @@ completo e os resultados brutos ficaram fora do repositório, no scratchpad).
   (200 mil parágrafos, medido antes do limite de parágrafos, que agora o recusa em 0,5 s). Os tempos variam
   até 2 vezes com a carga da máquina (outros processos de teste rodavam).
 - Não foi gerado o .exe (`build.bat`) nesta branch: o squash no main e o build ficam com quem publica.
+- **Reconferido depois de mesclar com a 0.1.38** (origin/main 725e761, que muda a paginação da tabela): suíte
+  completa 6039 verificações, 0 falhas; oráculo de páginas e regressão c14n (os dois modos) dos 22 documentos
+  idênticos aos da 0.1.38 (4 rodadas do oráculo, JSON idêntico byte a byte); gate nos núcleos P, 3 rodadas
+  intercaladas, mediana base / ramo: simples 5,71 / 5,84; plano_terco 9,81 / 9,37; plano_celula 8,47 / 8,91;
+  plano_item 7,87 / 7,73; plano_rev 10,67 / 10,64; capa 8,27 / 8,31; sumario 9,62 / 9,40; corpo 7,14 / 7,16;
+  cheia 12,87 / 12,69; revisoes 6,13 / 6,24; doc_14: terco 3,58 / 3,83, celula 3,47 / 3,49, item 3,65 / 3,73
+  (nenhuma diferença acima de 0,5 ms).
