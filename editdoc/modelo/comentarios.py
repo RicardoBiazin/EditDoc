@@ -31,7 +31,7 @@ from dataclasses import dataclass, field, replace
 #: Limites contra arquivo hostil (o leitor aplica). Acima deles os comentarios nao sao lidos
 #: (aviso COMENTARIO, com perda).
 LIMITES = {
-    "comentarios": 5000,
+    "comentarios": 2000,  # 0.1.39: eram 5000 (85 s para abrir); 1000 levam 12 s
     #: bytes do w:comment de um comentario (o conteudo)
     "comentario_bytes": 1024 * 1024,
     #: bytes do comments.xml inteiro

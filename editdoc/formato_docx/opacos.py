@@ -46,6 +46,9 @@ from editdoc.modelo.documento import ObjetoOpaco, ParteOpaca
 LIMITES = {
     #: objetos opacos por documento (corpo, cabecalhos e rodapes)
     "opacos": 2000,
+    #: objetos flutuantes (ancorados na pagina) por documento (0.1.39): o plano de flutuantes
+    #: percorre todos a cada layout (400 = 9 s, 1 000 = 27 s, 2 000 = 105 s para abrir)
+    "flutuantes": 500,
     #: XML de um objeto (a caixa de texto com o texto dentro)
     "opaco_bytes": 4 * 1024 * 1024,
     #: XML de todos os objetos somados
@@ -319,6 +322,7 @@ class Capturador:
         self.parse = parse
         self.cache = cache  # nome -> bytes (o mesmo das imagens do leitor)
         self.contagem = 0
+        self.flutuantes = 0
         self.bytes_total = 0
         self._rels: dict[str, dict] = {}
         #: numIds do numbering.xml lido (0.1.4); None = sem numeracao (o numPr da caixa sai)
@@ -364,6 +368,8 @@ class Capturador:
     def capturar(self, item, rpr, relacoes_host: dict, ignoraveis: tuple) -> ObjetoOpaco | None:
         """O objeto preservado, ou None se ele nao puder voltar ao arquivo inteiro."""
         if self.contagem >= self.lim["opacos"]:
+            return None
+        if self.flutuantes >= self.lim["flutuantes"] and item.tag not in ITENS_DE_PARAGRAFO                 and medidas(item)[2]:
             return None
         if item.tag in ITENS_DE_PARAGRAFO:
             el = etree.fromstring(etree.tostring(item), parser_seguro())
@@ -443,6 +449,7 @@ class Capturador:
                         texto = ("vinculada a " + nome)[:_RESUMO_MAXIMO]
                         break
         self.contagem += 1
+        self.flutuantes += 1 if flutuante else 0
         self.bytes_total += len(xml)
         return ObjetoOpaco(xml=xml, tipo=tipo_obj, resumo=texto, flutuante=flutuante,
                            largura_emu=largura, altura_emu=altura, relacoes=tuple(relacoes),

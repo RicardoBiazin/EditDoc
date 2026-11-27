@@ -53,6 +53,22 @@ ALTERACOES_PARA_GRAVAR = 300
 TAMANHO_MAXIMO_BYTES = 512 * 1024 * 1024
 
 
+#: Caracteres que mudam a ordem de exibicao do texto (bidi): num nome de arquivo forjado, escondem a
+#: extensao ou trocam o que o usuario le no dialogo.
+_BIDI = dict.fromkeys(list(range(0x202A, 0x202F)) + list(range(0x2066, 0x206A))
+                      + [0x200E, 0x200F, 0x061C], None)
+#: Maior texto de metadado exibido (nome, caminho, aviso): a copia pode ser forjada (0.1.39).
+TEXTO_MAXIMO = 500
+
+
+def texto_limpo(valor, maximo: int = TEXTO_MAXIMO) -> str:
+    """Texto de metadado para a tela: sem controle nem bidi, e do tamanho que cabe num dialogo."""
+    if not isinstance(valor, str):
+        return ""
+    limpo = "".join(c for c in valor.translate(_BIDI) if c.isprintable())
+    return limpo[:maximo] + ("..." if len(limpo) > maximo else "")
+
+
 def pasta() -> pathlib.Path:
     """A pasta das copias, criada se preciso."""
     escolhida = os.environ.get(VARIAVEL_PASTA)
@@ -172,13 +188,13 @@ class Copia:
 
     @property
     def nome(self) -> str:
-        nome = self.meta.get("nome")
-        return nome if isinstance(nome, str) and nome else "Documento em branco"
+        nome = texto_limpo(self.meta.get("nome"), 200)
+        return nome or "Documento em branco"
 
     @property
     def caminho_original(self) -> str | None:
-        c = self.meta.get("caminho_original")
-        return c if isinstance(c, str) and c else None
+        c = texto_limpo(self.meta.get("caminho_original"), 1000)
+        return c or None
 
     @property
     def hora(self) -> str:
@@ -200,10 +216,13 @@ class Copia:
         validos = []
         for a in avisos:
             if (isinstance(a, dict) and isinstance(a.get("codigo"), str)
-                    and isinstance(a.get("texto"), str) and isinstance(a.get("contagem"), int)):
-                validos.append({"codigo": a["codigo"], "texto": a["texto"],
-                                "contagem": a["contagem"], "perde_ao_salvar": True})
-        return validos
+                    and isinstance(a.get("texto"), str) and isinstance(a.get("contagem"), int)
+                    and not isinstance(a.get("contagem"), bool)):
+                validos.append({"codigo": texto_limpo(a["codigo"], 40),
+                                "texto": texto_limpo(a["texto"]),
+                                "contagem": max(0, min(a["contagem"], 10 ** 9)),
+                                "perde_ao_salvar": True})
+        return validos[:50]
 
     def ler(self) -> bytes:
         tamanho = self.docx.stat().st_size

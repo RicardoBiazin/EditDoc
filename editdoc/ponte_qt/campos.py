@@ -49,6 +49,8 @@ PROP_CAMPO_RESULTADO = _USUARIO + 34
 _TWIPS_POR_PONTO = 20
 #: No corpo, a largura do campo e' a do maior valor entre as primeiras paginas.
 _PAGINAS_PARA_LARGURA = 300
+#: Acima disto, `refazer_campos` faz uma marca so' para a faixa inteira (0.1.39).
+_CAMPOS_POR_MARCA = 16
 #: Propriedades do formato do campo que nao podem passar para o texto digitado depois dele.
 PROPS_DE_CAMPO = (QTextFormat.Property.ObjectType, PROP_CAMPO, PROP_CAMPO_RESULTADO)
 
@@ -207,5 +209,12 @@ def posicoes_de_campos(doc: QTextDocument, limite: int = 100000) -> list[int]:
 
 def refazer_campos(doc: QTextDocument, posicoes: list[int] | None = None) -> None:
     """Pede ao Qt para medir de novo os campos (o valor mudou). Nao mexe no desfazer."""
-    for pos in (posicoes if posicoes is not None else posicoes_de_campos(doc)):
+    lista = list(posicoes if posicoes is not None else posicoes_de_campos(doc))
+    if len(lista) > _CAMPOS_POR_MARCA:
+        # Uma marca so' para a faixa inteira (0.1.39). Cada markContentsDirty mede de novo os
+        # campos do trecho que o Qt reflui: uma marca por campo e' quadratico (2 000 campos =
+        # 15 s ao abrir; 25 000, acesso invalido no Qt).
+        doc.markContentsDirty(min(lista), max(lista) - min(lista) + 1)
+        return
+    for pos in lista:
         doc.markContentsDirty(pos, 1)

@@ -49,7 +49,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF
-from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument
+from PySide6.QtGui import QFont, QImage, QTextCursor, QTextDocument, QTextLine
 
 from editdoc.interface.cabecalhos import ConjuntoDeFaixas
 from editdoc.modelo.campos import tipo_da_pagina
@@ -88,7 +88,9 @@ def retangulo_cursor_em(doc: QTextDocument, pos: int) -> QRectF:
     lay = bloco.layout()
     linha = lay.lineForTextPosition(rel)
     if not linha.isValid():
-        linha = lay.lineAt(lay.lineCount() - 1)
+        # Bloco sem linhas (alem do QFIXED_MAX, ~500 paginas, o Qt para de montar o layout):
+        # lineAt(-1) devolve uma linha "valida" e o cursorToX derruba o processo (0.1.39).
+        linha = lay.lineAt(lay.lineCount() - 1) if lay.lineCount() > 0 else QTextLine()
     if not linha.isValid():
         o = doc.documentLayout().blockBoundingRect(bloco).topLeft()
         return QRectF(o.x(), o.y(), 1.0, 1.0)

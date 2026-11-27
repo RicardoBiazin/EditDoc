@@ -1052,9 +1052,12 @@ class JanelaPrincipal(QMainWindow):
             modelo = self._modelo_atual()
             dados, avisos_gravacao = escrever_com_avisos(modelo)
         except ErroDocx as erro:
-            log.error("montagem do .docx falhou: %s", erro.codigo)
-            dialogos_modais.avisar(self, "Salvar", "Não foi possível montar o arquivo. "
-                                   "O original NÃO foi alterado.")
+            log.error("montagem do .docx falhou: %s: %s", erro.codigo, erro.mensagem[:300])
+            dialogos_modais.avisar(self, "Salvar", "Não foi possível montar o arquivo: o "
+                                   "documento tem uma estrutura que o EditDoc não consegue "
+                                   "gravar. O original NÃO foi alterado. Para não perder o "
+                                   "que foi digitado, use Arquivo > Exportar > Texto sem "
+                                   "formatação, ou Exportar > PDF.")
             return False
 
         perdas = [a for a in (*self._avisos, *avisos_gravacao) if a.perde_ao_salvar]
@@ -1085,7 +1088,7 @@ class JanelaPrincipal(QMainWindow):
         except ErroDocx as erro:
             log.error("arquivo gravado nao pode ser lido: %s", erro.codigo)
             return self._falha_na_conferencia(alvo, dados)
-        except gravacao.SemEspaco as erro:
+        except (gravacao.SemEspaco, gravacao.DestinoInvalido) as erro:
             dialogos_modais.avisar(self, "Salvar", str(erro))
             return False
         except gravacao.FalhaNaTroca as erro:
@@ -1199,7 +1202,7 @@ class JanelaPrincipal(QMainWindow):
         except impressao.Cancelado:
             self.statusBar().showMessage("Exportação cancelada. Nenhum arquivo foi gravado.", 6000)
             return False
-        except (gravacao.SemEspaco, gravacao.FalhaNaTroca) as erro:
+        except (gravacao.SemEspaco, gravacao.FalhaNaTroca, gravacao.DestinoInvalido) as erro:
             dialogos_modais.avisar(self, "Exportar PDF", str(erro))
             return False
         except (OSError, impressao.PdfInvalido, impressao.FalhaNaImpressao) as erro:
@@ -1229,7 +1232,7 @@ class JanelaPrincipal(QMainWindow):
                                    getattr(self.painel.documento_corpo(), "_numeros_notas", None))
         try:
             gravacao.gravar_bytes(alvo, texto.encode("utf-8"))
-        except (gravacao.SemEspaco, gravacao.FalhaNaTroca) as erro:
+        except (gravacao.SemEspaco, gravacao.FalhaNaTroca, gravacao.DestinoInvalido) as erro:
             dialogos_modais.avisar(self, "Exportar texto", str(erro))
             return False
         except OSError as erro:

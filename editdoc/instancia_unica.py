@@ -53,6 +53,9 @@ ESPERA_MS = 700
 #: módulo existe para evitar.
 TENTATIVAS = 3
 
+#: Conexões simultâneas aceitas pelo servidor (pedidos incompletos em andamento).
+CONEXOES_MAXIMAS = 16
+
 #: Variável de ambiente que TROCA o nome do canal.
 #:
 #: Existe para os TESTES. Sem ela a suíte usaria o canal de produção -- o mesmo
@@ -229,6 +232,12 @@ class Servidor(QObject):
             soquete = self._servidor.nextPendingConnection()
             if soquete is None:
                 continue
+            if len(self._parciais) >= CONEXOES_MAXIMAS:
+                # Conexoes abertas e caladas (0.1.39): sem teto, cada uma guardaria ate' 1 MB.
+                log.warning("conexoes demais no canal; a nova foi recusada")
+                soquete.close()
+                soquete.deleteLater()
+                continue
             self._parciais[soquete] = bytearray()
             soquete.readyRead.connect(lambda s=soquete: self._ao_ler(s))
             soquete.disconnected.connect(lambda s=soquete: self._descartar(s))
@@ -270,5 +279,8 @@ class Servidor(QObject):
 
     def _descartar(self, soquete: QLocalSocket) -> None:
         self._parciais.pop(soquete, None)
-        soquete.close()
-        soquete.deleteLater()
+        try:
+            soquete.close()
+            soquete.deleteLater()
+        except RuntimeError:
+            pass  # o objeto C++ ja' foi apagado (o sinal `disconnected` chega depois do deleteLater)

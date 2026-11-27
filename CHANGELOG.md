@@ -1,3 +1,56 @@
+## 0.1.39 - 2026-11-27
+
+Endurecimento contra arquivo hostil ou danificado, a superfície de ataque real de um editor que abre
+arquivo de terceiros. Nenhuma função nova: um corpus de 491 `.docx` hostis (gerados por código) e um
+fuzz de 10 000 mutações da árvore XML, rodados em subprocesso com limite de memória e de tempo, acharam
+os defeitos abaixo; todos têm teste de regressão e contraprova em `tests/teste_endurecimento.py`. A tabela
+completa (caso, antes, depois) está em `docs/SPIKES.md`, seção 0.1.39.
+
+- **Derrubava o processo**: documento de mais de ~500 páginas (o Qt para de montar o layout acima de
+  `QFIXED_MAX`) ou com 25 000 campos caía com acesso inválido ao abrir (`lineAt(-1)` num bloco sem linhas
+  devolve uma linha "válida" e o `cursorToX` derruba tudo). Agora abre (a tela só mostra o que o Qt montou).
+- **Travava a tela por minutos** (custo N ao quadrado ao abrir): parágrafo com 2 000 runs levava 35 s e com
+  5 000 mais de 2 min; 500 controles de conteúdo ou 500 marcadores no mesmo parágrafo, de 11 a 21 s; 2 000
+  campos, 68 s; tabela de 300 linhas, 13 s. Os runs de cada parágrafo entram agora num bloco de edição só e
+  os campos levam uma marca só: 2 000 runs abrem em 1,7 s (20 000 em 15 s), 3 000 controles em 4 s, 2 000
+  campos em 4 s. A tabela de 150 linhas ou mais também (300 linhas: 0,5 s); as menores ficam como sempre
+  foram (a paginação dos 22 documentos de prova não muda).
+- **Atributos e elementos**: uma tag com 100 mil atributos custava 83 s de CPU num arquivo de 1 MB (tempo
+  quadrático do libxml2); acima de 500 atributos seguidos o arquivo é recusado em 0,7 s. Acima de 2 milhões
+  de elementos ou de 60 mil parágrafos por parte (50 mil abrem em 55 s, 200 mil passavam de 150 s) é
+  recusado antes do parse, com mensagem.
+- **Arquivo e pacote**: parte do zip danificada (CRC, fluxo quebrado, deslocamento fora do arquivo,
+  tamanho declarado que mente) dava "Erro inesperado"; agora `ZIP_CORROMPIDO`, com mensagem. Arquivo acima de
+  512 MB é recusado antes de ler; `CON`, `NUL`, `\\.\PhysicalDrive0` ou pasta no lugar do arquivo não
+  são mais lidos (ler o console travava).
+- **Gravação**: o temporário `arquivo.docx.ewnew` era aberto com "wb": um link físico, atalho de pasta ou
+  link simbólico plantado ao lado fazia o EditDoc truncar outro arquivo. Agora é criado com exclusividade
+  (sobra comum de uma queda é apagada; o resto fica onde está e o temporário ganha nome único). Destino que
+  é dispositivo do Windows (`CON`, `nul.docx`, `aux.`), fluxo alternativo (`arquivo.docx:oculto`), caractere
+  de controle ou pasta é recusado antes de escrever (mensagem em português; vale também para PDF e texto);
+  destino somente leitura diz isso, em vez de "aberto em outro programa".
+- **Abrir e não conseguir salvar**: seção com filhos fora de ordem ou repetidos, nota que cita nota, nota
+  de rodapé ou de fim com XML inválido e numeração com nível inválido abriam e nunca mais gravavam. Agora o
+  que o EditDoc não sabe gravar sai do XML de origem (com aviso) e o resto volta. O que ainda assim não puder
+  ser gravado diz o que fazer (exportar o texto ou o PDF).
+- **Limites novos**: 500 objetos flutuantes por documento (o plano deles é quadrático: 2 000 levavam de 49 a 105 s) e
+  2 000 comentários (eram 5 000: de 36 a 85 s para abrir).
+- **Recuperação e instância única**: metadados forjados da cópia (nome, caminho, avisos) são limpos de
+  controle e bidi e limitados; pedido forjado no canal: no máximo 16 arquivos, caminho válido (sem NUL nem
+  dispositivo), 16 conexões abertas e 60 janelas.
+- **Corretor**: caractere solto de substituto UTF-16 (vindo da área de transferência) desligava a
+  verificação do documento inteiro; agora vira espaço.
+
+SAST (raptor-win, 241 arquivos) e dependências (OSV, 13 pacotes fixados e instalados): nenhum achado real; os
+6 do SAST são falsos positivos registrados em `docs/SPIKES.md`.
+
+Limites que ficaram (README, "Limites conhecidos"): acima de ~500 páginas a tela só mostra o começo; cerca de
+0,7% das mutações aleatórias de partes preservadas (estilos, cabeçalhos, tabelas dentro de cabeçalho) ainda
+abrem e não salvam; título e autor do `core.xml` sem teto de tamanho.
+
+Prova: `tests/teste_endurecimento.py` (com contraprova de cada defeito, mini-fuzz de semente fixa), oráculo
+de páginas e regressão c14n dos 22 documentos de prova idênticos à base, suíte completa e gate de desempenho
+em `docs/SPIKES.md`.
 ## 0.1.38 - 2026-11-27
 
 Paginação: a margem de cima da tabela que atravessa a página. O Qt tem uma só margem de cima por

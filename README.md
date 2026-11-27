@@ -313,7 +313,7 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 
 ## Instalação
 
-1. Baixe `EditDoc-0.1.38-win64.zip` da página
+1. Baixe `EditDoc-0.1.39-win64.zip` da página
    [Releases](https://github.com/RicardoBiazin/EditDoc/releases) do projeto.
 2. Extraia o ZIP onde quiser (por exemplo em `C:\Programas`). Ele traz a pasta
    `EditDoc\`.
@@ -400,19 +400,35 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   notas de rodapé e de fim, com as propriedades e as notas separadoras (desde a 0.1.10); as
   seções, com papel, margens, cabeçalhos, numeração, colunas e o resto (desde a 0.1.12); as
   alterações controladas, com autores e datas (desde a 0.1.13).
-  Comentário ainda avisa só quando não pode ser lido (danificado, acima de 5000, ancorado
+  Comentário ainda avisa só quando não pode ser lido (danificado, acima de 2000, ancorado
   só no cabeçalho, no rodapé ou numa caixa de texto) ou quando a edição apagou a marca de
   referência dele sem levá-lo junto. Desde a 0.1.13 a impressão e o PDF levam os comentários
   na margem quando "Imprimir marcações" está ligado.
   Os estilos que o EditDoc não altera e o tema voltam como vieram. Ainda avisam, com
   confirmação, só o que não pode voltar inteiro: objeto, link ou campo com referência
-  quebrada no arquivo, ou acima dos limites (2000 objetos; 20.000 campos, links ou
+  quebrada no arquivo, ou acima dos limites (2000 objetos, no máximo 500 deles flutuantes; 20.000 campos, links ou
   marcadores; instrução de campo com mais de 4096 caracteres; 8 campos um dentro do
   outro; 2000 definições de lista ou 10.000 listas, texto de número com mais de 256
   caracteres), item de lista que cita numeração que não existe ou nível fora de 1 a 9, parte do arquivo com conteúdo inválido, as macros, a assinatura digital (que
   deixaria de valer) e o campo que perdeu o começo ou o fim na edição. A miniatura de
   pré-visualização do arquivo não é mantida (mostraria o conteúdo antigo), com aviso sem
   confirmação.
+- **Segurança com arquivo de terceiros** (0.1.39): o documento aberto é dado, nunca código (nada
+  é executado, nenhuma macro, nenhum campo roda programa). Ao abrir, o EditDoc **não lê arquivo
+  local nem usa a rede** por causa do conteúdo: link e imagem vinculada a arquivo ou endereço de
+  fora ficam como texto, e um `.docx` com DTD ou entidade XML é recusado. São recusados, com
+  mensagem em português e sem travar: arquivo acima de 512 MB, parte do pacote acima de
+  128 MB, parte de 10 MB ou mais que se descompacta mais de 200 vezes, mais de 5000 partes, nome de parte com `..`,
+  barra invertida ou caminho absoluto, parte repetida, criptografada ou com compactação
+  desconhecida, parte danificada (CRC ou fluxo quebrado), XML acima de 256 níveis, mais de
+  2 milhões de elementos, 60 mil parágrafos ou mais de 500 atributos seguidos numa tag, e dispositivo do
+  Windows (`CON`, `NUL`...) no lugar do arquivo. Ao gravar, o destino que é dispositivo, fluxo
+  alternativo (`arquivo.docx:oculto`) ou pasta é recusado antes de escrever, e o arquivo
+  temporário nunca segue um link plantado ao lado do documento. Limite que ficou: acima de
+  cerca de 500 páginas o Qt deixa de montar o layout (o documento abre e salva, mas a tela só
+  mostra o começo); e um documento com estrutura que o EditDoc lê mas não sabe gravar (parte
+  preservada com XML inválido) abre e **não salva**: a mensagem manda exportar o texto ou o
+  PDF. A tabela de casos hostis testados está em `docs/SPIKES.md`, seção 0.1.39.
 - Notas de rodapé e de fim (0.1.10): a nota que não pode ser lida (sem marca no texto, marca
   no cabeçalho, no rodapé ou numa caixa de texto, danificada, acima de 5000 notas ou de
   1 MB) sai do arquivo ao salvar, com aviso e confirmação. Na tela, quando a área de notas
@@ -580,7 +596,7 @@ build.bat
 O `build.bat` roda os testes, empacota com PyInstaller, confere que o `.exe` passa na
 autoverificação (`EditDoc.exe --autoverificacao`: módulos, `.docx`, PDF, impressão e
 recuperação automática numa pasta temporária), confere que ele abre a janela e gera
-`dist\EditDoc-0.1.38-win64.zip`. Se qualquer etapa falhar, nada é entregue.
+`dist\EditDoc-0.1.39-win64.zip`. Se qualquer etapa falhar, nada é entregue.
 
 O plano e as decisões estão em [docs/ARQUITETURA.md](docs/ARQUITETURA.md), as medições em
 [docs/SPIKES.md](docs/SPIKES.md), e o guia para quem quer contribuir em

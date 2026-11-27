@@ -56,7 +56,9 @@ import io
 import os
 import posixpath
 import re
+import stat
 import zipfile
+import zlib
 from dataclasses import replace
 
 from lxml import etree
@@ -96,6 +98,8 @@ from editdoc.modelo.unidades import EMU_POR_PX, EMU_POR_TWIP
 
 LIMITES_PADRAO = {
     "entradas": 5000,
+    #: tamanho do arquivo .docx em disco (0.1.39); acima disto e' recusado antes de ler
+    "arquivo_bytes": 512 * 1024 * 1024,
     "parte_bytes": 128 * 1024 * 1024,
     "total_bytes": 512 * 1024 * 1024,
     "razao_min_bytes": 10 * 1024 * 1024,  # so checa a razao acima deste tamanho
@@ -212,9 +216,34 @@ def _validar_nome(nome: str) -> None:
         raise ErroDocx("ZIP_NOME_INVALIDO", repr(nome)[:80])
 
 
+#: Forma do XML (0.1.39). O libxml2 gasta tempo QUADRATICO no numero de atributos de uma tag (100 mil
+#: atributos = 83 s de CPU, num arquivo de 1 MB), e a memoria do lxml cresce com o numero de
+#: elementos (200 mil paragrafos = 670 MB): dois arquivos pequenos que travam a maquina. Os dois
+#: sao medidos nos BYTES, antes do parse. Um documento do Word de verdade tem, no maximo, algumas
+#: dezenas de atributos por tag (a maior tag medida em documentos reais: 3 KB) e centenas de
+#: milhares de elementos.
+ELEMENTOS_MAXIMOS = 2_000_000
+ATRIBUTOS_SEGUIDOS_MAXIMOS = 500
+#: Paragrafos por parte (qualquer prefixo de namespace). O Qt para de montar o layout acima de ~500
+#: paginas (cerca de 15 mil paragrafos de uma linha; `QFIXED_MAX`), e abrir 50 mil leva 55 s, 100 mil
+#: mais de 110 s e 200 mil passa de 150 s: acima disto o arquivo e' recusado, com a mensagem.
+PARAGRAFOS_MAXIMOS = 60_000
+_ABRE_PARAGRAFO = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?p[\s>/]")
+_MUITOS_ATRIBUTOS = re.compile(
+    rb"""(?:\s+[^\s=<>/"']+\s*=\s*(?:"[^"<]*"|'[^'<]*')){%d}""" % ATRIBUTOS_SEGUIDOS_MAXIMOS)
+
+
 def _parse(dados: bytes, nome: str, profundidade: int):
     if _DOCTYPE.search(dados):
         raise ErroDocx("XML_DOCTYPE_PROIBIDO", nome)
+    # Cada elemento abre com um '<' (e fecha com outro, salvo o vazio): acima do dobro do limite
+    # nao ha' como caber. A contagem e' feita pelo C do Python, em milissegundos.
+    if dados.count(b"<") > 2 * ELEMENTOS_MAXIMOS:
+        raise ErroDocx("XML_ELEMENTOS_EXCEDIDOS", nome)
+    if len(dados) > 4096 and _MUITOS_ATRIBUTOS.search(dados):
+        raise ErroDocx("XML_ATRIBUTOS_EXCEDIDOS", nome)
+    if len(dados) > 200_000 and sum(1 for _ in _ABRE_PARAGRAFO.finditer(dados)) > PARAGRAFOS_MAXIMOS:
+        raise ErroDocx("XML_PARAGRAFOS_EXCEDIDOS", nome)
     if b"\x00" in dados[:4]:
         raise ErroDocx("XML_CODIFICACAO_NAO_SUPORTADA", f"{nome}: sem UTF-8")
     m = _ENCODING.search(dados[:200])
@@ -2023,6 +2052,8 @@ def _original_da_nota(el, relacoes: tuple, marcadores_lidos: int) -> tuple[bytes
     links e imagens; sem ancora de comentario (o comentario na nota nao e' lido, e a ancora
     ficaria pendurada); com todos os marcadores lidos (nome repetido sairia do modelo e ficaria
     no XML)."""
+    if not fx_notas.nota_valida(el):
+        return None, ()
     por_id = {r[0]: r for r in relacoes}
     usadas = []
     for rid in fx_notas.r_ids(el):
@@ -2080,6 +2111,7 @@ def _ler_notas(relacoes: dict, ctx: _Contexto, ler_parte, relacoes_de, tamanho_d
         ctx.historia = "nota"
         ctx.nota_tipo = tipo
         itens: list = []
+        alterada = False
         especiais: list = []
         try:
             for el in elementos:
@@ -2090,12 +2122,26 @@ def _ler_notas(relacoes: dict, ctx: _Contexto, ler_parte, relacoes_de, tamanho_d
                     ctx.coletor.somar("NOTA")
                     continue
                 if tipo_nota in mod_notas.ESPECIAIS:
+                    if not fx_notas.nota_valida(el):
+                        ctx.coletor.somar("NOTA")
+                        alterada = True
+                        continue
                     especiais.append(mod_notas.Especial(tipo_nota, ident, etree.tostring(el)))
                     continue
                 if tipo_nota != "normal" or len(etree.tostring(el)) > lim["nota_bytes"] \
                         or len(el.findall(".//" + q("p"))) > lim["nota_paragrafos"]:
                     ctx.coletor.somar("NOTA")
                     continue
+                aninhadas = list(el.iter(q("footnoteReference"), q("endnoteReference")))
+                if aninhadas:
+                    # Nota que cita nota (0.1.39): o Word nao a mostra e o validador do escritor
+                    # a recusa; o XML de origem voltaria assim e o documento nunca mais poderia
+                    # ser salvo. A referencia sai (o texto da nota fica), com o aviso NOTA.
+                    el = copy.deepcopy(el)
+                    for ref in list(el.iter(q("footnoteReference"), q("endnoteReference"))):
+                        ref.getparent().remove(ref)
+                    ctx.coletor.somar("NOTA", len(aninhadas))
+                    alterada = True
                 antes = len(ctx.marcadores_nomes)
                 blocos: list[Bloco] = []
                 _blocos(el, blocos, ctx)
@@ -2117,7 +2163,7 @@ def _ler_notas(relacoes: dict, ctx: _Contexto, ler_parte, relacoes_de, tamanho_d
         # a sem referencia): a parte so' volta com os bytes de origem se o catalogo for este.
         cat.originais += tuple((tipo, _inteiro(_atr(el, "id"))) for el in elementos
                                if (_atr(el, "type") or "normal") == "normal")
-        cat.xml[tipo] = dados if integra else None
+        cat.xml[tipo] = dados if integra and not alterada and fx_notas.parte_integra(raiz, tipo) else None
         cat.raizes[tipo] = fx_notas.raiz_vazia(dados)
         cat.relacoes_parte[tipo] = relacoes_parte
         cat.tipos_rel[tipo] = tipos[tipo]
@@ -2208,8 +2254,14 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
             nonlocal consumido
             if nome not in nomes:
                 raise ErroDocx("ZIP_PARTE_AUSENTE", nome)
-            with z.open(z.getinfo(nome)) as fh:
-                conteudo = fh.read(lim["parte_bytes"] + 1)  # limite real, mesmo com cabecalho mentiroso
+            try:
+                with z.open(z.getinfo(nome)) as fh:
+                    conteudo = fh.read(lim["parte_bytes"] + 1)  # limite real, mesmo com cabecalho mentiroso
+            except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError,
+                    NotImplementedError, RuntimeError, OverflowError):
+                # CRC que nao bate, fluxo deflate quebrado, deslocamento fora do arquivo,
+                # tamanho declarado que mente (0.1.39): arquivo danificado, nao erro nosso.
+                raise ErroDocx("ZIP_CORROMPIDO", nome[:80]) from None
             if len(conteudo) > lim["parte_bytes"]:
                 raise ErroDocx("ZIP_TAMANHO_EXCEDIDO", f"{nome} descompactado")
             consumido += len(conteudo)
@@ -2446,15 +2498,28 @@ def _ler(dados: bytes, lim: dict) -> tuple[Documento, list[Aviso]]:
     return doc, coletor.avisos()
 
 
-def _bytes_de(origem) -> bytes:
+def _bytes_de(origem, lim: dict | None = None) -> bytes:
+    maximo = (lim or LIMITES_PADRAO)["arquivo_bytes"]
     if isinstance(origem, (bytes, bytearray, memoryview)):
+        if len(origem) > maximo:
+            raise ErroDocx("ARQUIVO_GRANDE")
         return bytes(origem)
     if isinstance(origem, (str, os.PathLike)):
         try:
+            # So' arquivo comum (0.1.39): dispositivo (CON, NUL, \\.\PhysicalDrive0) ou pipe nao
+            # e' documento, e ler um deles trava ou nunca termina.
+            situacao = os.stat(origem)
+            if not stat.S_ISREG(situacao.st_mode):
+                raise ErroDocx("ARQUIVO_ILEGIVEL")
+            if situacao.st_size > maximo:
+                raise ErroDocx("ARQUIVO_GRANDE")
             with open(origem, "rb") as fh:
-                return fh.read()
+                dados = fh.read(maximo + 1)  # o tamanho pode crescer entre o stat e a leitura
         except OSError:
             raise ErroDocx("ARQUIVO_ILEGIVEL") from None
+        if len(dados) > maximo:
+            raise ErroDocx("ARQUIVO_GRANDE")
+        return dados
     raise ErroDocx("ENTRADA_INVALIDA", type(origem).__name__)
 
 
@@ -2465,7 +2530,7 @@ def ler(origem, limites: dict | None = None) -> tuple[Documento, list[Aviso]]:
     """
     lim = {**LIMITES_PADRAO, **(limites or {})}
     try:
-        return _ler(_bytes_de(origem), lim)
+        return _ler(_bytes_de(origem, lim), lim)
     except ErroDocx:
         raise
     except Exception:  # fronteira: quem chama nunca ve traceback

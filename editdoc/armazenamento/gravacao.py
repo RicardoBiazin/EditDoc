@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import os
 import pathlib
+import secrets
 import shutil
+import stat
 import time
 from collections.abc import Callable
 
 from editdoc import log_interno
+from editdoc.cli import DISPOSITIVOS
 
 log = log_interno.obter(__name__)
 
@@ -47,6 +50,47 @@ class SemEspaco(OSError):
 
 class FalhaNaTroca(OSError):
     """O temporário foi escrito, mas não substituiu o destino."""
+
+
+class DestinoInvalido(OSError):
+    """O destino não é um arquivo comum que se possa gravar (0.1.39)."""
+
+
+def validar_destino(caminho) -> None:
+    """Recusa, ANTES de escrever, o destino que não é um arquivo comum.
+
+    - dispositivo do Windows (`CON`, `NUL`, `COM1`, `LPT1`...), com ou sem extensão, com ponto
+      ou espaço no fim (o Windows os ignora: `nul.` e `nul ` são o `NUL`), e o prefixo de
+      dispositivos e pipes (barra invertida dupla, ponto, barra invertida): gravar nele não
+      grava arquivo, e reler o temporário trava;
+    - fluxo alternativo de dados (`arquivo.docx:oculto`): o conteúdo iria para um fluxo
+      escondido, e o arquivo visível ficaria como estava;
+    - caractere de controle no nome;
+    - destino que já existe e é uma pasta ou outro tipo de objeto.
+    """
+    texto = os.fspath(caminho)
+    if not isinstance(texto, str) or not texto.strip():
+        raise DestinoInvalido("O nome do arquivo está vazio.")
+    if any(ord(c) < 32 for c in texto):
+        raise DestinoInvalido("O nome do arquivo tem caracteres inválidos.")
+    normal = texto.replace(chr(92), "/")
+    if normal.startswith("//./"):
+        raise DestinoInvalido("Este destino é um dispositivo do Windows, e não um arquivo.")
+    sem_prefixo = normal[4:] if normal.startswith("//?/") else normal
+    _unidade, resto = os.path.splitdrive(sem_prefixo)
+    if ":" in resto:
+        raise DestinoInvalido("O nome do arquivo não pode ter dois-pontos (fluxo alternativo "
+                              "de dados do Windows).")
+    nome = sem_prefixo.rstrip("/").rsplit("/", 1)[-1]
+    if nome.rstrip(" .").split(".")[0].strip().lower() in DISPOSITIVOS:
+        raise DestinoInvalido("Este nome é reservado pelo Windows (dispositivo): escolha outro.")
+    try:
+        existente = os.stat(texto)
+    except OSError:
+        return  # nao existe (ou nao da' para ver): a gravacao acusa o que for
+    if not stat.S_ISREG(existente.st_mode):
+        raise DestinoInvalido("O destino existe, mas não é um arquivo comum (é uma pasta ou "
+                              "um dispositivo).")
 
 
 def espaco_livre(caminho) -> int:
@@ -89,11 +133,12 @@ def gravar_bytes(caminho, dados: bytes,
 
     Qualquer falha antes da troca remove o temporário e re-levanta.
     """
+    validar_destino(caminho)
     alvo = pathlib.Path(caminho)
     conferir_espaco(alvo, len(dados))
-    temporario = alvo.with_name(alvo.name + SUFIXO)
+    temporario, saida = _criar_temporario(alvo)
     try:
-        with open(temporario, "wb") as saida:
+        with saida:
             saida.write(dados)
             saida.flush()
             # fsync ANTES da troca: sem ele, um desligamento entre o write e o
@@ -106,6 +151,46 @@ def gravar_bytes(caminho, dados: bytes,
         _remover(temporario)
     log.info("gravado %s (%d bytes, conteúdo pronto)", alvo, len(dados))
     return len(dados)
+
+
+def _criar_temporario(alvo: pathlib.Path):
+    """(caminho, arquivo aberto) do temporário, criado com exclusividade (0.1.39).
+
+    Aberto com "xb": se o nome já existe, NÃO se escreve nele. Um `documento.docx.ewnew`
+    plantado na pasta (link físico para outro arquivo, atalho de pasta, link simbólico) seria
+    seguido pelo "wb" e truncaria o arquivo da vítima. Sobra de uma queda do próprio programa
+    (arquivo comum, um só nome, sem ponto de reanálise) é apagada e o nome é reusado; o resto
+    fica onde está e o temporário ganha um nome único.
+    """
+    base = alvo.name + SUFIXO
+    for tentativa in range(20):
+        nome = base if tentativa == 0 else f"{alvo.name}.{secrets.token_hex(4)}{SUFIXO}"
+        caminho = alvo.with_name(nome)
+        try:
+            return caminho, open(caminho, "xb")
+        except FileExistsError:
+            if tentativa == 0 and _sobra_nossa(caminho):
+                _remover(caminho)
+                try:
+                    return caminho, open(caminho, "xb")
+                except FileExistsError:
+                    pass
+        except PermissionError:
+            if not caminho.exists():
+                raise  # pasta sem permissao de escrita: a retentativa nao muda nada
+    raise FileExistsError("Não foi possível criar o arquivo temporário ao lado do destino.")
+
+
+def _sobra_nossa(caminho: pathlib.Path) -> bool:
+    """O temporário que existe é uma sobra comum nossa: arquivo regular, de um só nome."""
+    try:
+        info = os.lstat(caminho)
+    except OSError:
+        return False
+    ponto_de_reanalise = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    atributos = getattr(info, "st_file_attributes", 0)
+    return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+            and not atributos & ponto_de_reanalise)
 
 
 def _remover(caminho: pathlib.Path) -> None:
@@ -137,7 +222,20 @@ def _trocar(temporario: pathlib.Path, destino: pathlib.Path) -> None:
     raise FalhaNaTroca(_mensagem_da_falha(destino, ultimo)) from ultimo
 
 
+def _somente_leitura(destino: pathlib.Path) -> bool:
+    """O destino tem a marca de somente leitura (a falha da troca nao e' 'aberto em outro
+    programa', e a mensagem certa muda o que o usuario faz)."""
+    try:
+        return not os.access(destino, os.W_OK)
+    except OSError:
+        return False
+
+
 def _mensagem_da_falha(destino: pathlib.Path, ultimo: OSError | None) -> str:
+    if isinstance(ultimo, PermissionError) and _somente_leitura(destino):
+        return (f"{destino.name} é um arquivo somente leitura. Tire a marca de somente leitura "
+                "nas propriedades do arquivo, ou salve com outro nome. "
+                "O arquivo original NÃO foi alterado.")
     if isinstance(ultimo, PermissionError):
         return (f"Não foi possível substituir {destino.name}. "
                 "O arquivo parece estar aberto em outro programa. "

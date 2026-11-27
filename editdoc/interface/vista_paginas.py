@@ -220,6 +220,8 @@ def _marcas_do_bloco(painter, bloco, r: QRectF, fontes: dict) -> None:
         painter.drawText(QPointF(x, base), marca)
     if texto_sem is None:
         return  # a quebra de secao e' a marca do paragrafo
+    if lay.lineCount() == 0:
+        return  # bloco sem linhas (alem do QFIXED_MAX): nada a marcar
     linha = lay.lineAt(lay.lineCount() - 1)
     x, _ = linha.cursorToX(len(texto))
     cf = bloco.charFormat() if not texto else _formato_em(bloco, len(texto) - 1)

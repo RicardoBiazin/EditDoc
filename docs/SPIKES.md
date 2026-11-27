@@ -3280,3 +3280,182 @@ Nenhum sistemático além do da margem de cima da tabela. Medidos e descartados:
 escondido depois da tabela no doc_19 tem entrelinha simples (não perde os 15% de 1,15); as caixas de
 uma célula do doc_19 não têm borda em cima nem embaixo; doc_17, doc_18 e doc_22 batem quebra por
 quebra.
+## 0.1.39: endurecimento contra .docx hostil ou corrompido (branch `endurecimento`, sobre a 0.1.37, mesclada com a 0.1.38)
+
+Um editor público abre arquivo de terceiros: esta versão procura, por código, o que um `.docx` hostil ou
+danificado faz com o EditDoc, e corrige o que achar. Regras do projeto que guiaram tudo: o documento
+aberto é dado, nunca código; nada de ler arquivo local nem usar a rede por causa do conteúdo; gravação
+atômica; nenhum documento real no repositório (as fixtures são geradas por código nos testes; o gerador
+completo e os resultados brutos ficaram fora do repositório, no scratchpad).
+
+### Método
+
+- **Corpus**: 491 `.docx` hostis gerados por código, em 14 famílias: zip (truncado, vazio, lixo no começo e no
+  fim, entrada duplicada, nomes com `..`, caminho absoluto, `\`, NUL, 60 mil caracteres, fluxo `:`, nome
+  reservado, bomba de descompressão de 12 a 300 MB, 4 990 a 65 000 entradas, 2 000 entradas sobre o mesmo
+  dado, tamanho declarado falso, CRC, deflate e deslocamento corrompidos, criptografado, bzip2, lzma), pacote
+  (`[Content_Types]`, relações com tipo errado, ciclo, alvo externo `file:`, UNC, `http:`), codificação
+  (UTF-16, UTF-7, Latin-1, BOM, NUL, controle, referência numérica inválida, bidi), XML (DTD, entidades
+  recursivas, XXE `file://` e `http://` em nove partes, parâmetro, XInclude, `xml:base`), profundidade (sdt,
+  tabela, hyperlink, fldSimple, ins, smartTag, customXml, VML, math, caixa de texto em caixa de texto),
+  volume (1 milhão de parágrafos, 2 milhões de runs, atributo de 10 MB, 100 mil atributos, 50 mil
+  namespaces, 100 mil seções, 200 mil marcadores), números absurdos (16 valores em `w:ind`, `w:spacing`,
+  `w:sz`, `w:pgSz`, `w:tab`, tabela, desenho: 112 casos), tabelas, listas e numeração (ciclos, `ilvl` inválido,
+  100 mil definições), estilos (ciclos de `basedOn`, `link`, `next`, cadeia de 5 000, 100 mil estilos),
+  campos (instrução de 10 MB, 1 000 aninhados, `INCLUDETEXT`, `INCLUDEPICTURE`, `DDEAUTO`, `HYPERLINK
+  file:`, `REF` em ciclo), comentários, revisões, notas (auto-referência, ciclo), cabeçalhos, 91 imagens
+  (PNG, JPEG, GIF, BMP, TIFF, WebP, ICO, SVG com entidades, `<image href=file:>`, `use` em ciclo, EMF e WMF
+  com registros de tamanho zero) e partes preservadas (macro, OLE com `MZ`, cadeia de 1 200 partes).
+- **Execução**: cada caso num subprocesso, num Job Object do Windows com limite de memória (1,2 GB no modo
+  `ler`, 2,5 GB no modo `janela`) e tempo máximo (90 e 150 s). Modo `ler`: `leitor.ler`. Modo `janela`: ler,
+  `JanelaPrincipal.carregar`, pintar, `_modelo_atual`, escrever e ler de novo (offscreen).
+- **Fuzz mutacional** na árvore XML: 10 000 sementes sobre 14 `.docx` válidos (completo, objetos, notas,
+  seções, campos, links, estilos do Word, pacote do Word, tabela e imagem, cabeçalhos, revisões, listas,
+  colunas, comentários), 1 a 3 mutações cada (apagar, duplicar, trocar, mover, atributo com valor ruim,
+  texto ruim, trocar o nome do elemento, embrulhar, esvaziar), ler, escrever e reler.
+- **Auditoria**: 97 dos casos que citam arquivo local, rede, programa ou imagem de fora (links, imagens
+  vinculadas, SVG, XXE, EMF, WMF, TIFF, partes preservadas) rodaram com `sys.addaudithook` (abertura de
+  arquivo suspeito, soquete, resolução de nome, processo, DLL) e um servidor TCP em `127.0.0.1:1`: **nenhum
+  evento e nenhuma conexão** (controle: o mesmo gancho acusa `open(win.ini)` e `connect` ao servidor).
+
+### O que o fuzz achou (antes), e a correção
+
+| # | Defeito | Prova de antes | Correção |
+|---|---|---|---|
+| 1 | Documento com mais de ~500 páginas ou 25 000 campos derrubava o processo (acesso inválido) | `retangulo_cursor_em` num bloco sem linhas: `lineAt(-1)` devolve linha "válida" e `cursorToX` cai; 14 mil parágrafos de uma linha, 3 000 de 8 linhas e 25 000 campos caíam | `lineCount() > 0` antes de `lineAt` (3 pontos); acima de `QFIXED_MAX` o Qt não monta o resto e a tela mostra o começo |
+| 2 | Custo quadrático ao abrir parágrafo com muitos runs | 1 000 runs 8 s, 2 000 runs 35 s, 5 000 mais de 120 s; 500 controles 21 s, 500 marcadores 11 s, 2 000 campos 68 s | `beginEditBlock` por parágrafo em `_escrever_paragrafo`; `markContentsDirty` único acima de 16 campos |
+| 3 | Custo quadrático ao abrir tabela grande | 200 linhas 7 s, 300 linhas 13 s, 500 linhas 39 s, 2 000 linhas mais de 120 s | tabela de 150 linhas ou mais num bloco de edição (a menor muda a paginação de 5 dos 22 documentos de prova: ficou como era) |
+| 4 | 100 mil atributos numa tag | 62 a 83 s de CPU (libxml2, tempo quadrático) em 1 MB | recusa antes do parse: 500 atributos seguidos (`XML_ATRIBUTOS_EXCEDIDOS`, 0,6 s) |
+| 5 | Sem teto de elementos nem de parágrafos | 200 mil parágrafos: 670 MB só no leitor e mais de 150 s para abrir; 50 mil: 55 s | `ELEMENTOS_MAXIMOS` 2 milhões e `PARAGRAFOS_MAXIMOS` 60 mil por parte, contados nos bytes |
+| 6 | Parte do zip danificada | CRC, deflate, deslocamento e tamanho comprimido zero: "Erro inesperado" (`ERRO_INTERNO`) | `ZIP_CORROMPIDO`, com mensagem em português |
+| 7 | Arquivo lido por inteiro e sem conferir o tipo | `ler("CON")` ficava lendo o console (travava); arquivo de 10 GB entrava na memória | `os.stat` regular, `arquivo_bytes` 512 MB (`ARQUIVO_ILEGIVEL`, `ARQUIVO_GRANDE`) |
+| 8 | Temporário da gravação aberto com "wb" | link físico `doc.docx.ewnew` para outro arquivo: o outro arquivo era truncado | `"xb"`; sobra comum apagada; resto: nome único |
+| 9 | Destino que não é arquivo comum | `CON.ewnew` dava `OSError` genérico; `nul.docx`, `a.docx:oculto`, pasta, `\\.\NUL` não eram vistos | `validar_destino` (`DestinoInvalido`), antes de escrever, também para PDF e texto |
+| 10 | Abria e nunca mais gravava | `sectPr` com filho repetido ou fora de ordem; nota que cita nota; nota sem parágrafo, com id repetido ou tipo desconhecido; `lvl` sem `ilvl` | filho repetido sai e o resto é ordenado; a nota (ou a parte) inválida volta do modelo, não do XML de origem; `lvl` inválido sai também do XML de origem. 60 de 3 000 sementes caíam aqui; 20 ainda caem |
+| 11 | 5 000 comentários | 36 a 85 s para abrir | limite de 2 000 |
+| 12 | 2 000 objetos flutuantes | 49 a 105 s para abrir (o plano é quadrático) | limite de 500 flutuantes (`flutuantes`) |
+| 13 | Metadados de recuperação forjados | nome, caminho e avisos com bidi, controle e 5 000 caracteres iam inteiros ao diálogo | `texto_limpo` (500 caracteres), 50 avisos |
+| 14 | Pedido forjado na instância única | 500 caminhos abriam 500 janelas; caminho com NUL levantava; conexões abertas e caladas guardavam 1 MB cada | 16 arquivos, `caminho_aceitavel`, 16 conexões, 60 janelas |
+| 15 | Corretor | caractere solto de substituto UTF-16 levantava `UnicodeEncodeError` e desligava a verificação | `_seguro` troca por espaço |
+| 16 | Destino somente leitura | dizia "aberto em outro programa" | diz que é somente leitura |
+
+### Tabela de casos hostis (caso, antes e depois; 491 casos, modo `ler`; "janela" quando só ali aparece)
+
+| Família (casos) | Antes | Depois |
+|---|---|---|
+| zip truncado, vazio, zeros, lixo no fim (4) | `ZIP_INVALIDO` | igual |
+| zip com lixo no começo, comentário de 60 KB, `.docx` dentro de `.docx` (3) | abre | igual |
+| entrada duplicada (1) / só a caixa muda (1) | `ZIP_NOME_DUPLICADO` / abre | igual |
+| nome de parte com `..`, `/`, `C:\`, `\\srv`, `\`, NUL, 60 mil caracteres, `..` no meio (8) | `ZIP_NOME_INVALIDO` | igual |
+| nome com `:`, `CON.xml`, ponto no fim, RLO, pasta (5) | abre (o pacote é lido em memória, nada vira arquivo) | igual |
+| bomba de espaços de 12, 100 e 120 MB; 300 MB declarados (4) | `ZIP_RAZAO_ABSURDA` (3), `ZIP_TAMANHO_EXCEDIDO` | igual |
+| 2 000 entradas sobre o mesmo dado de 60 MB (1) | `ZIP_RAZAO_ABSURDA` | igual |
+| 4 990 entradas (1) / 5 100 e 65 000 (2) | abre / `ZIP_MUITAS_ENTRADAS` | igual |
+| tamanho declarado gigante (1) | `ZIP_TAMANHO_EXCEDIDO` | igual |
+| CRC, deflate, deslocamento, tamanho comprimido zero, tamanho declarado menor (5) | `ERRO_INTERNO` | `ZIP_CORROMPIDO` |
+| criptografado, bzip2, lzma, compressão 99 (4) | `ZIP_CRIPTOGRAFADO`, `ZIP_COMPRESSAO_NAO_SUPORTADA` | igual |
+| `[Content_Types]` ausente, vazio, malformado, tipo errado, 200 mil `Override` (5) | abre (3), `XML_MALFORMADO` (2) | igual |
+| relações: ausentes, apontando para si, `..`, `C:\`, UNC, 150 mil, id repetido (9) | recusa ou abre sem ler fora do pacote | igual |
+| relação do tipo errado (estilo para PNG, cabeçalho para PNG, numeração para `[Content_Types]`) (4) | `XML_MALFORMADO` ou abre | igual |
+| link para `file:`, UNC, `http:`, `javascript:`, `cmd`, `ms-msdt:`, 2 MB, NUL, `..` (9) | abre, o link fica texto | igual (auditoria: nenhum acesso) |
+| imagem vinculada a `file:`, UNC, `http:` (3) | quadro com o nome | igual (auditoria: nenhum acesso) |
+| codificação: UTF-16 (3), UTF-7, Latin-1, declaração falsa | `XML_CODIFICACAO_NAO_SUPORTADA` | igual |
+| controle, NUL, `&#0;`, `&#xFFFE;`, substituto, `&#x110000;`, UTF-8 inválido (7) | `XML_MALFORMADO` | igual |
+| BOM UTF-8, bidi no texto (2) | abre | igual |
+| DTD/XXE em 9 partes com `file:` e `http:` (18), parâmetro, DTD externa, `doctype` minúsculo, UTF-16 (21) | `XML_DOCTYPE_PROIBIDO` | igual |
+| DTD só em `docProps/app.xml` (2) | abre (parte regenerada) | igual |
+| XInclude, `xml:base`, instrução de processamento, `<!DOCTYPE` no texto escapado (4) | abre (nada é resolvido) | igual |
+| profundidade: 50 `sdt` abre; 200 e mais, tabela, math, caixa em caixa (13) | `XML_PROFUNDIDADE_EXCEDIDA` | igual |
+| hyperlink, fldSimple, ins, smartTag, customXml, VML a 100 e 250 níveis (13) | abre | igual |
+| 5 milhões de `&amp;`, texto de 20 e 60 MB, 1 milhão de parágrafos, 2 milhões de runs (5) | `ZIP_RAZAO_ABSURDA` | igual |
+| 100 mil atributos (1), 50 mil namespaces (1) | abre em 83 s (1) e 0,4 s (1) | `XML_ATRIBUTOS_EXCEDIDOS` em 0,2 s |
+| 200 mil parágrafos, 100 mil linhas ou colunas de tabela, 100 mil seções (4) | abre; no modo janela, 44 a 142 s e o processo morria (acesso inválido) | `XML_PARAGRAFOS_EXCEDIDOS` em 0,5 s |
+| 50 mil parágrafos, 50 mil quebras de página (2) | janela: o processo morria (acima de ~500 páginas) | janela: abre em 55 e 40 s |
+| 112 casos de número absurdo (`w:ind`, `w:spacing`, `w:sz`, `w:pgSz`, `w:tab`, tabela, desenho) | abre | igual (os 16 do `sectPr` não gravavam: ver abaixo) |
+| `sectPr` com filho repetido ou fora de ordem (16 de `w:pgSz`...) | abre e **não grava** (`ESCRITA_INVALIDA`) | abre e grava |
+| nota que cita a si ou a outra nota (2) | abre e não grava | abre e grava, com aviso `NOTA` |
+| tabela sem células, sem linhas, grade zero, `gridSpan` de 1 bilhão, `vMerge` de 20 mil (8) | abre | igual |
+| listas: `numId`, `ilvl` inválidos, ciclos, 100 mil definições, `lvlText` de 10 MB (16) | abre ou `ZIP_RAZAO_ABSURDA` | igual |
+| estilos: ciclos, cadeia de 5 000, 100 mil estilos (15) | abre; 100 mil em 16 a 35 s | igual |
+| campos: instrução de 10 MB, 1 000 aninhados, 25 000, perigosos (8) | abre; 25 000 caía (janela) | abre (25 000 em 46 s) |
+| comentários: 5 000, bidi e controle no autor, ciclo de respostas (7) | abre; 5 000 em 36 a 85 s | abre; limite de 2 000 |
+| revisões: 200 mil, autor de 3 MB, mover sem par (8) | abre | igual |
+| notas: 20 mil, auto-referência (7) | abre; auto-referência não gravava | abre e grava |
+| cabeçalho: 5 MB, 10 mil campos, 30 mil linhas, ciclo de relações (7) | abre; 10 mil campos travava (mais de 150 s) ou caía | abre em 17 s |
+| imagens (91): dimensões de 2 bilhões a 0, PNG com IDAT de 1,2 GB, JPEG 65535, GIF, BMP, TIFF, WebP, ICO, SVG com entidades, `use` em ciclo, caminho local, EMF e WMF com registros zerados | abre (quadro cinza quando a prévia é recusada) | igual (nenhuma leitura local, nenhuma conexão) |
+| partes preservadas: macro, OLE com `MZ`, cadeia de 1 200, ciclo de relações, customXml com DTD (6) | abre; a parte inválida não volta | igual |
+| dispositivo no lugar do arquivo: `CON`, `NUL`, `COM1`, pasta (4, teste) | `ler("CON")` travava | `ARQUIVO_ILEGIVEL` |
+| gravar em `CON`, `nul.docx`, `aux.`, `a.docx:x`, `\\.\NUL`, pasta (10, teste) | `OSError` genérico ou gravava no lugar errado | `DestinoInvalido` |
+| fuzz mutacional (10 000 sementes) | nenhuma exceção fora de `ErroDocx`, nenhum travamento; 2% (60 de 3 000) abriam e não gravavam | igual; 0,7% (20 de 3 000) ainda não gravam |
+
+### SAST e dependências
+
+- **raptor-win** (Semgrep + regras RAPTOR + p/python + p/secrets, `--sca --secrets`, 241 arquivos da árvore
+  inteira, `V:\DEV\raptor-win` na versão do dia): credenciais, 0; SCA, 0 (6 dependências no
+  `requirements*.txt`, 15 com o `.venv`: 13 fixadas, checadas no OSV.dev); SAST, 6 achados, **todos falsos
+  positivos**, nenhum no pacote `editdoc/`:
+  - `path-join-traversal` (CRITICAL) em `spikes/pagina/testes_pagina.py:42, 1110, 1112`: o caminho de saída
+    do spike vem da variável `SPIKE_SAIDA` do desenvolvedor, não de arquivo aberto; o spike nem é
+    empacotado;
+  - `dangerous-subprocess-use-tainted-env-args` (ERROR) em `tests/teste_associacao.py:168`: o `subprocess.run`
+    leva o PowerShell, `-File` e um caminho do próprio repositório, sem `shell=True`;
+  - `python` (HIGH, "dados em cabeçalho de resposta HTTP") em `app.py:272` e `tests/teste_formulario.py:201`:
+    atribuição a `os.environ` (a pasta temporária da autoverificação e a variável de ambiente de um teste),
+    sem HTTP em lugar nenhum.
+- **pip-audit**: não instalado nesta máquina; o equivalente é o OSV.dev do raptor-win (mesma base de dados do
+  pip-audit): PySide6-Essentials 6.12.0, lxml 6.1.3, python-docx 1.2.0 e pyinstaller 6.22.3 (e o resto do
+  `.venv`) sem vulnerabilidade conhecida.
+
+### Limites que ficaram
+
+- Acima de ~500 páginas (`QFIXED_MAX`, 8,4 milhões de twips) o Qt não monta o layout do resto: o documento
+  abre e salva (nada se perde), mas a tela e a paginação só cobrem o começo.
+- Cerca de 0,7% das mutações aleatórias de partes preservadas (estilos, cabeçalhos, tabela dentro de
+  cabeçalho, movimento de revisão sem par, `w:id` repetido entre revisões) ainda abrem e não gravam; a
+  mensagem diz para exportar o texto ou o PDF. A causa comum é o XML de origem preservado que o validador do
+  escritor recusa; cada caso novo se resolve como os de nota e de numeração (a parte volta do modelo).
+- A abertura de 50 mil parágrafos leva ~1 min e de 60 mil perto de 70 s, com a janela parada: o leitor roda
+  na thread da interface.
+- Título e autor de `docProps/core.xml` não têm teto de tamanho (5 MB passam e vão para os metadados do PDF).
+- Caixa de texto dentro de caixa de texto com o mesmo `wp:docPr id` abre e não grava.
+- Os testes de contraprova do link físico plantado precisam de `os.link` (o ambiente de teste tem); o link
+  simbólico não foi testado (o Windows exige privilégio que esta conta não tem), mas `"xb"` recusa nome
+  existente de qualquer tipo, link incluído.
+- Nenhum arquivo gerado foi aberto no Word.
+
+### Medidas (base = origin/main 0.1.37, a8d7909; ramo = `endurecimento`)
+
+- Suíte completa, QT_QPA_PLATFORM ausente (`rodar_todos.py`, com a segunda passada `EDITDOC_TRECHOS=0`):
+  5977 verificações, 0 falhas, 81 execuções (67 suítes e 14 na segunda passada); `teste_endurecimento`: 112.
+- Contraprova: o mesmo `teste_endurecimento.py` copiado para a base (origin/main 0.1.37, a8d7909) falha em
+  todos os grupos que testam um defeito (zip corrompido, 20 mil atributos, elementos, dispositivo, `sectPr` fora
+  de ordem, nota que cita nota, campos, bloco sem linhas, destino, temporário plantado, somente leitura,
+  flutuantes, recuperação, pedido, conexões, corretor, abrir sem custo quadratico: 3 000 runs em 96 s, tabela de
+  400 linhas em 26 s, 800 campos em 35 s, contra 0,3 a 0,7 s); `ler("CON")` fica pendurado (o teste da base
+  estoura o tempo). Os dois grupos que não acusam defeito na base (mini-fuzz, painéis com texto hostil) são
+  guardas de regressão.
+- Oráculo de páginas (22 .docx de Downloads, plataforma `windows`): 4 rodadas intercaladas (base, ramo, base,
+  ramo); os 4 JSON são idênticos byte a byte (páginas, quebras do Word, acerto por parágrafo e por linha). A
+  primeira versão do bloco de edição na tabela mudou 5 documentos (doc_08, 13, 14, 17, 18) e foi limitada às
+  tabelas de 150 linhas ou mais por causa disso.
+- Regressão abrir-salvar-reabrir-salvar em c14n dos mesmos 22, nos dois modos (padrão e `EDITDOC_TRECHOS=0`):
+  JSON idêntico ao da base, sem erro, salvo1 = salvo2 e páginas abertas = reabertas em 22.
+- Gate nos núcleos P (afinidade FFFF por `ProcessorAffinity`, 3 rodadas intercaladas, p95 total em ms, mediana
+  base / ramo): simples 6,35 / 5,69; plano_terco 9,17 / 10,60; plano_celula 8,40 / 9,17; plano_item 8,83 / 7,77;
+  plano_rev 10,89 / 10,74; capa 8,33 / 8,29; sumario 9,46 / 9,49; corpo 7,13 / 7,22; cheia 12,71 / 13,07;
+  revisoes 6,38 / 6,22; no doc_14: terco 4,08 / 4,22, celula 3,51 / 3,65, item 3,69 / 3,62. O plano_terco
+  subiu 1,43 ms em 3 rodadas; repetido com 9 rodadas intercaladas (plano_terco, plano_celula, simples) deu
+  9,50 / 9,42, 8,26 / 8,63 e 5,72 / 5,74: ruído de máquina compartilhada, nenhuma piora de 1,5 ms. Nada do
+  que muda toca no caminho da tecla (só abrir, gravar e os limites).
+- Corpus no modo janela (ramo, 373 casos que passam do `ler`): 369 abrem, pintam, gravam e reabrem; 3
+  recusados (os 2 de atributos e a caixa de texto em caixa de texto, que não grava); 1 estourou os 150 s
+  (200 mil parágrafos, medido antes do limite de parágrafos, que agora o recusa em 0,5 s). Os tempos variam
+  até 2 vezes com a carga da máquina (outros processos de teste rodavam).
+- Não foi gerado o .exe (`build.bat`) nesta branch: o squash no main e o build ficam com quem publica.
+- **Reconferido depois de mesclar com a 0.1.38** (origin/main 725e761, que muda a paginação da tabela): suíte
+  completa 6039 verificações, 0 falhas; oráculo de páginas e regressão c14n (os dois modos) dos 22 documentos
+  idênticos aos da 0.1.38 (4 rodadas do oráculo, JSON idêntico byte a byte); gate nos núcleos P, 3 rodadas
+  intercaladas, mediana base / ramo: simples 5,71 / 5,84; plano_terco 9,81 / 9,37; plano_celula 8,47 / 8,91;
+  plano_item 7,87 / 7,73; plano_rev 10,67 / 10,64; capa 8,27 / 8,31; sumario 9,62 / 9,40; corpo 7,14 / 7,16;
+  cheia 12,87 / 12,69; revisoes 6,13 / 6,24; doc_14: terco 3,58 / 3,83, celula 3,47 / 3,49, item 3,65 / 3,73
+  (nenhuma diferença acima de 0,5 ms).
