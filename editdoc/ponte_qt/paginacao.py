@@ -53,6 +53,10 @@ PROP_WORD_ALTURA = _USUARIO + 50
 #: Celula (0.1.32, cantSplit): quanto (px96) o acolchoamento de baixo tem a mais para a linha de
 #: BAIXO, que nao se parte, comecar na pagina seguinte (`interface/paginacao`, "linha inteira").
 PROP_WORD_INTEIRA = _USUARIO + 60
+#: Tabela (0.1.38): a margem de cima do quadro esta' reduzida porque a tabela atravessa a pagina
+#: (`interface/paginacao._margem_que_atravessa`). So' marca: a compensacao do espaco (`compensar`)
+#: a mantem reduzida e quem a decide e' a conferencia das regras, com o layout em dia.
+PROP_WORD_REDUZIDA = _USUARIO + 61
 #: Todas as propriedades da compensacao (o copiar e a rejeicao de formatacao as conhecem).
 PROPS_DE_PAGINACAO = (PROP_WORD_ANTES, PROP_WORD_DEPOIS, PROP_WORD_LINHA, PROP_QUEBRA_REGRA,
                       PROP_WORD_VISIVEL)
@@ -320,7 +324,20 @@ def sem_compensacao(fmt):
                 real, _c = _margem(novo, prop_word, prop_qt)
                 novo.setProperty(prop_qt, float(real or 0.0))
                 novo.clearProperty(prop_word)
+        novo.clearProperty(PROP_WORD_REDUZIDA)
     return novo
+
+
+def reduzida(fmt) -> bool:
+    """A margem de cima do quadro da tabela esta' reduzida (0.1.38)."""
+    return bool(fmt.hasProperty(PROP_WORD_REDUZIDA))
+
+
+def definir_reduzida(fmt, valor: bool) -> None:
+    if valor:
+        fmt.setProperty(PROP_WORD_REDUZIDA, True)
+    else:
+        fmt.clearProperty(PROP_WORD_REDUZIDA)
 
 
 def esquecer(fmt, antes: bool = False, depois: bool = False, linha: bool = False) -> None:

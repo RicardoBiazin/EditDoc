@@ -1,3 +1,38 @@
+## 0.1.38 - 2026-11-27
+
+Paginação: a margem de cima da tabela que atravessa a página. O Qt tem uma só margem de cima por
+tabela (o espaço depois do parágrafo de cima, que ele ignora no bloco) e a usa três vezes: abaixo do
+parágrafo (certo), reservada no pé de cada página da tabela e repetida no alto da página em que ela
+continua (as duas, do Qt; o Word só tem a margem no começo). Documento sem tabela que atravessa a
+página fica exatamente como na 0.1.37.
+
+- **Como**: a tabela que atravessa a página e em que o Qt não parte nenhuma linha no meio (a última
+  pode) fica com a metade da margem de cima do quadro, decidido nas regras de quebra (com o layout em
+  dia, com histerese para voltar), e marcada no formato (`PROP_WORD_REDUZIDA`); a compensação do espaço
+  a mantém, e a regra da linha que não parte (`w:cantSplit`) compara com o y do Word (a linha da
+  primeira página fica acima dele, as das seguintes abaixo). Com a metade, o que cabe no pé do Word
+  cabe no do Qt. A tabela que o Qt parte no meio, por causa da reserva, fica como estava (ver abaixo).
+  O arquivo gravado não muda.
+- **Oráculo** (`w:lastRenderedPageBreak`, 22 arquivos de referência e 25 do Word de outras pastas,
+  base 0.1.37, nos dois modos de layout; páginas | quebras certas por bloco/linha): doc_19 14 | 5/5 →
+  **9/9** de 13 (as quebras 7 a 10 passam a cair no bloco e na linha do Word, e as 11 e 12 ficam a 1
+  bloco, de 3 e 5); doc_08 (o modelo de tarefas semanais) 2 → **1** página, a do Word; doc_17, 18, 20,
+  21 e 22 e os outros iguais. Nos 25 arquivos extra, 66 quebras exatas no mesmo lugar e 3 melhores
+  (ext_11), nenhuma pior. **Nenhuma quebra de nenhum arquivo ficou pior.**
+- **Limites**: a quebra 3 do doc_19 (o Qt parte a linha 3 da tabela, que cabe no Word) segue como
+  estava: puxar o pedaço de volta mostra 85 a 180 twips que faltam na página seguinte e piora a quebra
+  4, 5 e 6, que hoje estão certas. A quebra 3 e a causa dessa altura estão em `docs/SPIKES.md`
+  ("Paginação 2"): duas hipóteses fecham os 85 twips (60 por caixa de uma célula, ou 40 a 80 por
+  parágrafo vazio escondido depois de tabela), nenhuma com regra do Word, e não entraram. O doc_21
+  não melhora. Nenhum arquivo foi conferido no Word depois desta mudança.
+
+Prova: `tests/teste_paginacao_word.py` (`testar_margem_que_atravessa`, fixtures em código: o Qt
+reserva e repete a margem; com a parte nova cabem no pé as linhas do Word; contraprova com o fator
+1,0; a linha partida no meio fica como o Qt a faz; só a última partida reduz; estável; arquivo
+gravado igual; editar acima e desfazer), suíte completa nas duas passadas (5927 verificações,
+0 falhas), oráculo e regressão c14n iguais à 0.1.37 nas partes gravadas, gate de desempenho nos
+núcleos P (docs/SPIKES.md, "Paginação 2").
+
 ## 0.1.37 - 2026-11-20
 
 Legendas, índice de ilustrações e referência cruzada, como no Word, na aba **Referências**, e o sumário

@@ -3088,3 +3088,195 @@ um desfazer, F9 e a contraprova da leitura do marcador.
   dela mesma varia de -0,25 a +0,05 e -0,53 em outros pontos: ruído de máquina compartilhada (outras suítes
   rodavam), nenhuma piora consistente de 1,5 ms. O comando não toca no caminho da tecla.
 - Não foi gerado o .exe (`build.bat`) nesta branch: o squash no main e o build ficam com quem publica.
+
+## 0.1.38: a margem de cima da tabela que atravessa a página (branch `paginacao2`, "Paginação 2", medido sobre a 0.1.34 e a 0.1.35; reconferido sobre a 0.1.37)
+
+Oráculo `w:lastRenderedPageBreak` dos 22 `.docx` de Downloads (rótulos doc_NN pela ordem de `sorted(Path)`
+do oráculo; plataforma `windows`), medido em 17/11/2026. Scripts no scratchpad, fora do repositório
+(`oraculo.py`, `comparar.py`, `estrutura.py`, `folga.py`, `sonda_cruza.py`, experimentos por
+monkeypatch em `oraculo_exp.py`). Referência (main 0.1.34), páginas | par/lin: doc_17 3 | 2/2 de 2; doc_18
+4 | 3/3 de 3; doc_19 14 | 5/5 de 13; doc_20 26 | sem marcas; doc_21 26 | 2/2 de 23; doc_22 2 | 1/1 de 1.
+
+### (a) doc_19: o Qt perde a margem de cima da tabela em cada página que a tabela atravessa
+
+Medido com uma fixture em código (parágrafo, tabela de duas colunas com cabeçalho repetido, 100
+linhas; margem de cima da tabela m = 240 twips, o espaço depois do parágrafo de cima):
+
+- a tabela começa m abaixo do parágrafo de cima (certo: é o espaço depois dele, que o Qt ignora no
+  bloco);
+- na página seguinte a tabela recomeça em `topo da página + m` (a primeira linha depois do cabeçalho
+  repetido fica em 286 + 240 = 526 do topo; o Word a põe em 286);
+- no pé da página o Qt reserva m: com 440 twips livres depois da linha 2, a linha 3 (286) não cabe
+  (286 + 240 > 440); o Word a põe.
+
+Os três números do Qt são a mesma grandeza (`effectiveTopMargin`); o Word tem m só no começo. No doc_19:
+as tabelas 150 e 225 (margens de 120 e 100 twips) recomeçam a página a 120 e 100 twips do topo
+(o bloco da primeira linha depois do cabeçalho fica em cabeçalho + m + 55, onde 55 = 50 de `tcMar` + 5
+de meia borda); a tabela 101 (q3) tem a linha 3 que cabe no Word, com 108 twips sobrando, e o Qt a
+parte (reserva de 120).
+
+A primeira quebra afetada por isso é a q7 do doc_19: o EditDoc começa a página 8 no bloco 275 e o Word
+no 276. Na página 7 (que começa na linha 3 da tabela 225) o EditDoc perde os 100 twips do alto, e o
+bloco 275 (845 twips, 3 linhas) deixa de caber por poucos twips. As quebras q8 a q12 herdam essa
+diferença (o EditDoc está 3, 2, 3, 3 e 5 blocos antes do Word): medido na altura contínua (layout sem
+paginar, clone do documento), todas as páginas do Word cabem numa página do EditDoc (o conteúdo entre
+duas marcas dá de 13 206 a 14 254 de 14 286 twips), isto é, nenhuma delas é altura demais do corpo:
+é o carregamento da diferença da q7 de página em página.
+
+### Experimentos (aplicados por cima da 0.1.34, desfeitos; nenhum entrou)
+
+1. **Tabela que atravessa a página com margem de cima menor** (m × f, em `_linha_inteira`, quando a
+   tabela tem linhas em duas páginas; f = 0,25, 0,5 e 0,75; f = 0 piora o doc_17):
+
+   | arquivo | base | f = 0,25 / 0,5 / 0,75 |
+   |---|---|---|
+   | doc_19 | 14 \| 5/5 | 14 \| **7/7** (os três iguais) |
+   | doc_17, 18, 21, 22 | 3 \| 2/2, 4 \| 3/3, 26 \| 2/2, 2 \| 1/1 | iguais, quebra por quebra |
+   | doc_20 (sem marcas) e doc_01 a 16 | | iguais em páginas, exceto doc_08 com f = 0,5: 2 → 1 página (a contagem do Word; ver adiante) |
+
+   Quebra a quebra do doc_19, f = 0,5 (bloco, linha, linha da tabela; W = Word): q3 (109, 0, r4) certa
+   (a base partia a linha 3); q7 (276) certa; q8 (328) certa; q9 (411) certa; q10 (432) certa; q11
+   (459, W 460); q12 (521, W 522). Pioram: q4 (137, W 136, a base estava certa), q5 (r11, W r10) e q6
+   (r4, W r3), as duas últimas por herança da q4.
+
+   A q4 piora porque a página 4 do EditDoc (que agora começa na linha 4 da tabela 101, como a do Word)
+   deixa o bloco 136 caber com 85 twips sobrando e o Word não o deixa: falta ao EditDoc pelo menos 85
+   twips de altura nessa página, e a base escondia isso porque a página começava com uma linha
+   partida da tabela (uma linha de texto e o espaço dela a mais). Essa altura que falta (as candidatas: espaço depois do último
+   parágrafo da célula, 20 twips nas 362 células, 60 nas caixas de uma célula; a altura do parágrafo
+   vazio escondido depois da tabela) não está isolada: ver o experimento 2.
+
+2. **Espaço depois do último parágrafo da célula** (o Qt o ignora; o Word, em princípio, o soma): +20
+   twips em todas as células e depois o valor real do último parágrafo (20, e 60 nas caixas): doc_19
+   5/5 → 2/2 nos dois; com a margem de cima reduzida da (1): 2/2 e 4/4. As quebras vêm todas antes do
+   Word. A página 3 refuta: o Word põe a linha 3 da tabela 101 inteira na página 3 e a conta do
+   EditDoc deixa 108 twips sobrando depois dela, e as 17 linhas de tabela dessa página somariam 340
+   twips. Como na 0.1.26 e na
+   0.1.28, a regra do Word não foi negada, mas o oráculo não a aceita enquanto a altura das linhas não
+   for a do Word.
+
+3. **Margem de cima zerada em todas as tabelas** (diagnóstico): q3 e q7 a q12 certas ou a um bloco,
+   mas q4 a q6 pioram e o espaço antes de cada tabela some (o doc_17 vai de 2/2 a 0/0). Somando +20
+   twips nas células junto com a margem zerada, o doc_19 chega a 7/7 (q3, q7 a q10 certas) mas o doc_21
+   piora (2/2 → 1/1) e o espaço antes das tabelas continua perdido: não é correção.
+
+### O que entrou, e por que só em parte
+
+A compensação (1) tem causa medida e melhora 7 quebras do doc_19 (5/5 → 7/7; a distância das quebras
+q7 a q12 ao Word cai de 1 a 5 blocos para 0 a 1), mas aplicada a toda tabela que atravessa a página
+ela piora três quebras do mesmo arquivo (q4, q5, q6: um bloco ou uma linha de tabela cada) por
+revelar uma diferença de altura da página 4 que não tem causa demonstrada (seguinte).
+
+A quebra q3 (a linha 3 da tabela 101, que cabe no Word e o Qt parte) é a que revela a q4: puxar o
+pedaço da linha de volta para a página 3 dá à página 4 mais 85 twips que o Word não tem. Medido por
+tabela (a margem menor só na tabela indicada): a 225 sozinha dá q7 a q10 certas e q11 e q12 a 1
+bloco, sem piorar nada; a 150 sozinha não muda nada; a 101 sozinha dá q3 certa, q4 a q6 piores. Entrou
+a variante que não reduz a tabela em que o Qt parte uma linha no MEIO dela (a última pode ser a
+partida): ela fica como na 0.1.34, o limite já registrado ali. Nesta variante:
+
+| arquivo | base 0.1.35 e 0.1.37 (iguais) | 0.1.38 |
+|---|---|---|
+| doc_19 | 14 \| 5/5 de 13 | 14 \| **9/9** (q7 a q10 certas; q11 e q12 a 1 bloco de 3 e 5) |
+| doc_08 (o modelo de tarefas semanais) | 2 páginas | **1** (a do Word: a última linha da tabela, partida pela reserva, volta inteira) |
+| doc_17, 18, 20, 21, 22 e os 14 sem marcas | iguais | iguais, quebra por quebra |
+| 25 arquivos do Word de outras pastas (ext_NN), 66 quebras exatas | | as 66 no mesmo lugar; ext_11, 3 quebras melhores (94 → 95, 132 → 135, 163 → 164, do Word 105, 147, 171); **ext_22 igual** (a tabela de 60 linhas tem linha partida no meio: fica como estava) |
+
+Nos dois modos de layout (por trechos e `EDITDOC_TRECHOS=0`) o resultado é o mesmo: nenhuma quebra
+de nenhum arquivo ficou pior.
+
+O que a variante acrescenta ao experimento (1): a decisão fica nas regras de quebra (`_margem_que_atravessa`,
+com o layout em dia; a tecla na tabela não a decide, só a mantém), com uma marca no formato da tabela
+(`PROP_WORD_REDUZIDA`) e histerese para voltar (a tabela reduzida que deixa de atravessar só volta à margem
+inteira se coubesse mesmo com ela); e a regra do `w:cantSplit` compara a altura com o y do Word (`_deslocamento_da_margem`:
+na primeira página da tabela o Qt fica acima do Word pelo que a margem perdeu, nas seguintes abaixo
+dela). Primeira tentativa: a reducao se decidia pela diferenca entre a margem aplicada e a recalculada, e o
+mesmo documento deu 2 páginas aberto depois de outro e 1 aberto sozinho (a compensação do espaço mede a linha
+do vazio escondido de um jeito diferente conforme o estado das fontes: 233 contra 239 twips): a marca no
+formato tirou a dependência de ordem.
+
+### Verificação final da 0.1.38 (27/11/2026, branch sobre o main em 0.1.37)
+
+- **Oráculo** (22 de Downloads e 25 ext_NN, plataforma `windows`, base = a árvore da 0.1.37, ramo = a
+  0.1.38, por trechos e `EDITDOC_TRECHOS=0`): os dois modos dão o mesmo resultado e o mesmo da medida
+  sobre a 0.1.35. Exatas por bloco e linha: Downloads 13 → 17 (todas as 4 a mais no doc_19: 5 → 9 de 13), ext 66 → 66; 6 quebras melhores no doc_19 (q7 a q12), 3 no ext_11, **nenhuma pior**,
+  quebra a quebra, nos 47 arquivos (os 14 de Downloads sem marcas conferidos pelo número de páginas: só o
+  doc_08 muda, 2 → 1). ext_22 (tabela longa com linha partida no meio) igual nas 8 quebras.
+- **Regressão c14n** (abrir, salvar, reabrir, salvar; 22 arquivos, nos dois modos): todas as partes do
+  zip gravado iguais à base nos 22, o salvo 1 igual ao salvo 2 nos 22; a única diferença é a contagem de
+  páginas do doc_08 (2 → 1), a esperada.
+- **Suíte completa** (`tests/rodar_todos.py` sem `QT_QPA_PLATFORM`, com a segunda passada
+  `EDITDOC_TRECHOS=0`): 5927 verificações, 0 falhas.
+- **Gate de desempenho** (p95 por tecla, processo próprio com afinidade nos núcleos P via
+  `Start-Process` + `ProcessorAffinity`, 4 rodadas intercaladas base/ramo, mediana; ms, total base →
+  ramo): simples 6,47 → 7,25; plano a 1/3 12,03 → 11,89; plano com revisões 14,46 → 12,28; sumário
+  10,96 → 11,71; capa cheia 14,11 → 15,05; doc_19 em janela (plano a 1/3, em célula, em item de lista)
+  13,87 → 14,36, 17,62 → 17,93 e 14,42 → 14,87. Nenhuma piora chega a 1,5 ms (a maior, +0,95); os
+  pontos sem tabela que atravessa a página não passam pelo código novo e variam entre rodadas no mesmo
+  tanto.
+
+### A altura que falta na página 4 do doc_19 (segunda rodada)
+
+Com a compensação (1) a página 4 do EditDoc começa onde a do Word (linha 4 da tabela 101) e o bloco
+136 cabe com 85 twips sobrando (o Word não o deixa caber). O conteúdo da página: cabeçalho repetido
+(330) e as linhas 4 a 10 da tabela 101, o vazio escondido depois dela (123), a caixa de uma célula
+(124), o título 126, o parágrafo 127, a segunda caixa (128, 14 linhas), o vazio escondido depois dela
+(132) e os blocos 133 a 135. Medido por acréscimo, com a compensação (1) ligada:
+
+| acréscimo na página 4 | doc_19 |
+|---|---|
+| nenhum | 7/7 (q4, q5, q6 pioram) |
+| +60 na base de cada tabela de 1 × 1 (as duas caixas; 30 não basta, 45 a 90 sim, 120 piora o doc_17 e o doc_21) | **10/10** |
+| a caixa 124 sozinha, a 128 sozinha, ou a 323 (página 8) sozinha | 7/7 |
+| +40, +60 ou +80 em cada vazio escondido depois de tabela (123, 132 e o do fim da página 9) | **10/10** |
+| +10 ou +20 na base de toda tabela | 7/7 |
+| +8 em toda célula (e 52 nas caixas) | 5/5 |
+| +20 em toda célula e mais 40 nas caixas (o espaço depois real de cada tipo) | 2/2 |
+
+O que a tabela diz: a falta está nas duas caixas juntas ou nos dois vazios escondidos (cada um
+sozinho, ou uma parte menor, não fecha os 85 twips), numa faixa de 85 a uns 180 twips; as linhas das
+tabelas comuns não têm nada a acrescentar (8 twips por célula já estraga o doc_19 inteiro). Os dois
+candidatos têm o mesmo efeito no oráculo e nenhum tem regra do Word que o explique: o espaço depois do
+último parágrafo da célula valeria 20 nas linhas comuns (que não aceitam) e 60 nas caixas; o vazio
+escondido tem entrelinha simples (`w:pPr` só com `w:after="60"`, e o Normal do arquivo não tem
+espaçamento) e a altura que o EditDoc lhe dá (256 + 60) é a da linha dele. Descartados na caça: a
+largura do texto da caixa (a borda esquerda de 3 pt reduzindo a largura pela borda inteira em vez da
+metade que o Qt usa: o doc_19 continua 7/7), o kerning e o hinting (recontando as linhas de cada
+parágrafo sem eles: a mesma contagem), a altura do cabeçalho repetido (330, a da própria linha), as bordas das caixas (sem borda em cima e embaixo) e a entrelinha
+(os vazios são simples, as caixas e o corpo 1,15, como no arquivo).
+
+Corpus de conferência maior (25 `.docx` salvos pelo Word, com 1 a 94 marcas, 10 com tabela; pastas do
+usuário fora de Downloads; só números aqui, rótulos ext_NN): a compensação (1), com e sem os
+acréscimos, deixa 66 de 66 quebras exatas no mesmo lugar, melhora 3 quebras do ext_11 (uma tabela que
+o EditDoc desce antes do Word: 94 → 95, 132 → 135, 163 → 164 contra 105, 147 e 171 do Word) e piora 3
+do ext_22 (uma tabela só, de mais de 60 linhas, em que o EditDoc já quebra 2 linhas depois do Word e a
+compensação o deixa 1 a 2 linhas mais longe: as linhas dessa tabela estão mais baixas no Word que no
+EditDoc, outra diferença, não investigada). Os acréscimos não mudam nenhum resultado nesse corpus: ele não
+separa os dois candidatos.
+
+O doc_08 (o modelo de tarefas semanais da 0.1.32) muda de 2 para 1 página com a compensação (1), e
+1 é a contagem do Word (a seção "0.1.32" acima registra que o modelo tem uma página no Word e que a
+0.1.32 o levou de 1 para 2 por causa do corpo mais baixo da segunda página): é a segunda confirmação
+independente da causa (1), e não uma regressão.
+
+Para fechar: um segundo arquivo do Word com uma caixa de 1 × 1 (tabela de uma célula com `tcMar` de 120
+e espaço depois de 60) ou com um parágrafo vazio entre duas tabelas, e uma marca de página colada a
+um deles, separaria "espaço depois do último parágrafo da célula, só de 45 em diante" de "altura do
+vazio escondido". Depois, aplicar (1) por dentro do `_regras_desde` (a decisão "a tabela atravessa"
+só vale com o layout em dia) e ajustar `_cabe_ou_desce` ao deslocamento de y que a margem menor cria
+(as linhas da primeira página ficam m − m' acima do Word, as das seguintes m' abaixo).
+
+### (b) doc_21: não dá para medir
+
+As únicas cópias de 26 páginas em Downloads são o doc_20 (gravado pelo EditDoc, revisão 11, mudado em
+02/11: sem marcas, e com texto alterado) e o doc_21 (as 23 marcas, salvo pelo Word for the web). Não há
+cópia do Word para Windows. A q3 a q7 do EditDoc cai 1, 1, 3, 3 e 4 blocos antes do Word, e da q19 em
+diante as quebras do EditDoc coincidem com as do Word deslocadas de uma marca (q19 do EditDoc = q18 do
+Word, q20 = q19, q21 = q20...): o Word tem páginas sem marca, como no doc_12 (0.1.28). Nenhum
+experimento acima muda o doc_21; as quebras 3 em diante ficam sem referência.
+
+### (c) Outros desvios
+
+Nenhum sistemático além do da margem de cima da tabela. Medidos e descartados: o parágrafo vazio
+escondido depois da tabela no doc_19 tem entrelinha simples (não perde os 15% de 1,15); as caixas de
+uma célula do doc_19 não têm borda em cima nem embaixo; doc_17, doc_18 e doc_22 batem quebra por
+quebra.

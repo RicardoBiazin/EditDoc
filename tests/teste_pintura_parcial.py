@@ -96,10 +96,21 @@ def testar_partes_dos_tiles() -> None:
             # nao muda, e sem conferir o bloco de baixo eles ficavam velhos na tela.
             original_moveu = V._seguinte_moveu
             V._seguinte_moveu = lambda self, *a: False
+            # 0.1.38: esta contraprova depende de onde as paginas caem no plano (qual item tem a
+            # quebra das regras logo abaixo); a margem de cima menor da tabela que atravessa a
+            # pagina muda isso, e ela nao tem a ver com o cache: roda sem a parte "margem".
+            lay = painel.layout_pag
+            partes = set(lay.paginacao.partes)
+            lay.paginacao.partes = partes - {"margem"}
+            lay.atualizar_secoes(forcar=True)
+            painel._limpar_cache()
             try:
                 sabotado = _sequencia_confere(painel, item, teclas)
             finally:
                 V._seguinte_moveu = original_moveu
+                lay.paginacao.partes = partes
+                lay.atualizar_secoes(forcar=True)
+                painel._limpar_cache()
             checa(sabotado > 0, f"contraprova: sem conferir o bloco de baixo, {sabotado} teclas "
                                 "deixam itens velhos na tela")
             # Contraprova: o Backspace que tira o item vazio da lista renumera os de baixo sem
