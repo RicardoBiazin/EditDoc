@@ -3089,7 +3089,7 @@ um desfazer, F9 e a contraprova da leitura do marcador.
   rodavam), nenhuma piora consistente de 1,5 ms. O comando não toca no caminho da tecla.
 - Não foi gerado o .exe (`build.bat`) nesta branch: o squash no main e o build ficam com quem publica.
 
-## 0.1.38: a margem de cima da tabela que atravessa a página (branch `paginacao2`, "Paginação 2", medido sobre a 0.1.34 e a 0.1.35)
+## 0.1.38: a margem de cima da tabela que atravessa a página (branch `paginacao2`, "Paginação 2", medido sobre a 0.1.34 e a 0.1.35; reconferido sobre a 0.1.37)
 
 Oráculo `w:lastRenderedPageBreak` dos 22 `.docx` de Downloads (rótulos doc_NN pela ordem de `sorted(Path)`
 do oráculo; plataforma `windows`), medido em 17/11/2026. Scripts no scratchpad, fora do repositório
@@ -3174,7 +3174,7 @@ bloco, sem piorar nada; a 150 sozinha não muda nada; a 101 sozinha dá q3 certa
 a variante que não reduz a tabela em que o Qt parte uma linha no MEIO dela (a última pode ser a
 partida): ela fica como na 0.1.34, o limite já registrado ali. Nesta variante:
 
-| arquivo | base 0.1.35 | 0.1.38 |
+| arquivo | base 0.1.35 e 0.1.37 (iguais) | 0.1.38 |
 |---|---|---|
 | doc_19 | 14 \| 5/5 de 13 | 14 \| **9/9** (q7 a q10 certas; q11 e q12 a 1 bloco de 3 e 5) |
 | doc_08 (o modelo de tarefas semanais) | 2 páginas | **1** (a do Word: a última linha da tabela, partida pela reserva, volta inteira) |
@@ -3189,10 +3189,30 @@ com o layout em dia; a tecla na tabela não a decide, só a mantém), com uma ma
 (`PROP_WORD_REDUZIDA`) e histerese para voltar (a tabela reduzida que deixa de atravessar só volta à margem
 inteira se coubesse mesmo com ela); e a regra do `w:cantSplit` compara a altura com o y do Word (`_deslocamento_da_margem`:
 na primeira página da tabela o Qt fica acima do Word pelo que a margem perdeu, nas seguintes abaixo
-dela). Primeiro tentativa: a reducao se decidia pela diferenca entre a margem aplicada e a recalculada, e o
+dela). Primeira tentativa: a reducao se decidia pela diferenca entre a margem aplicada e a recalculada, e o
 mesmo documento deu 2 páginas aberto depois de outro e 1 aberto sozinho (a compensação do espaço mede a linha
 do vazio escondido de um jeito diferente conforme o estado das fontes: 233 contra 239 twips): a marca no
 formato tirou a dependência de ordem.
+
+### Verificação final da 0.1.38 (27/11/2026, branch sobre o main em 0.1.37)
+
+- **Oráculo** (22 de Downloads e 25 ext_NN, plataforma `windows`, base = a árvore da 0.1.37, ramo = a
+  0.1.38, por trechos e `EDITDOC_TRECHOS=0`): os dois modos dão o mesmo resultado e o mesmo da medida
+  sobre a 0.1.35. Exatas por bloco e linha: Downloads 13 → 17 (todas as 4 a mais no doc_19: 5 → 9 de 13), ext 66 → 66; 6 quebras melhores no doc_19 (q7 a q12), 3 no ext_11, **nenhuma pior**,
+  quebra a quebra, nos 47 arquivos (os 14 de Downloads sem marcas conferidos pelo número de páginas: só o
+  doc_08 muda, 2 → 1). ext_22 (tabela longa com linha partida no meio) igual nas 8 quebras.
+- **Regressão c14n** (abrir, salvar, reabrir, salvar; 22 arquivos, nos dois modos): todas as partes do
+  zip gravado iguais à base nos 22, o salvo 1 igual ao salvo 2 nos 22; a única diferença é a contagem de
+  páginas do doc_08 (2 → 1), a esperada.
+- **Suíte completa** (`tests/rodar_todos.py` sem `QT_QPA_PLATFORM`, com a segunda passada
+  `EDITDOC_TRECHOS=0`): 5927 verificações, 0 falhas.
+- **Gate de desempenho** (p95 por tecla, processo próprio com afinidade nos núcleos P via
+  `Start-Process` + `ProcessorAffinity`, 4 rodadas intercaladas base/ramo, mediana; ms, total base →
+  ramo): simples 6,47 → 7,25; plano a 1/3 12,03 → 11,89; plano com revisões 14,46 → 12,28; sumário
+  10,96 → 11,71; capa cheia 14,11 → 15,05; doc_19 em janela (plano a 1/3, em célula, em item de lista)
+  13,87 → 14,36, 17,62 → 17,93 e 14,42 → 14,87. Nenhuma piora chega a 1,5 ms (a maior, +0,95); os
+  pontos sem tabela que atravessa a página não passam pelo código novo e variam entre rodadas no mesmo
+  tanto.
 
 ### A altura que falta na página 4 do doc_19 (segunda rodada)
 
