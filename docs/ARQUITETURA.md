@@ -1161,6 +1161,27 @@ parágrafo precisa descer e desliga só com `HISTERESE_TW` (720 twips) de folga 
 paginador já para cedo pela assinatura das páginas (`_regras_desde`); o custo que sobra é o
 relayout do Qt por mudança de quebra (docs/SPIKES.md, "0.1.18").
 
+## Arquivo hostil ou danificado (0.1.39)
+
+Quatro camadas, da mais externa para a mais interna, e cada uma recusa com `ErroDocx` (mensagem em
+português) ou abre com aviso; nenhuma deixa traceback chegar a quem chama:
+
+1. **O arquivo** (`leitor._bytes_de`): só arquivo comum (nada de dispositivo ou pipe), até 512 MB.
+2. **O pacote** (`leitor._ler`): nome de parte, entradas, tamanho declarado e real, razão de compressão,
+   criptografia, parte danificada (`ZIP_CORROMPIDO`). O pacote é lido em memória: nada vira arquivo.
+3. **O XML** (`leitor._parse`): sem DTD nem entidade, UTF-8, profundidade de 256, e, **nos bytes, antes
+   do parse**, no máximo 2 milhões de elementos, 60 mil parágrafos e 500 atributos seguidos (o libxml2 é
+   quadrático nos atributos de uma tag). Dali em diante, os limites por tipo (objetos, flutuantes, campos,
+   links, comentários, notas, listas).
+4. **O que o Qt recebe** (`para_qt`): os runs de um parágrafo e a tabela grande entram em bloco de edição
+   (sem ele o Qt refaz o layout a cada inserção, e o custo é N ao quadrado); os pontos que leem as linhas de
+   um bloco conferem `lineCount() > 0` (acima de ~500 páginas o Qt não monta o resto).
+
+Ao gravar, `armazenamento/gravacao.py` recusa o destino que não é arquivo comum (`validar_destino`) e cria o
+temporário com exclusividade. O que o leitor aceita mas o escritor não sabe gravar sai do XML de origem
+(com aviso), para o documento nunca abrir sem poder ser salvo. Nenhuma camada lê arquivo local ou usa a
+rede por causa do conteúdo (a auditoria de 97 casos está em docs/SPIKES.md, "0.1.39").
+
 ## Política de perda
 
 Cada recurso do `.docx` é exato, aproximado, preservado sem edição (objeto opaco, desde a

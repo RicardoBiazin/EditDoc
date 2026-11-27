@@ -870,6 +870,8 @@ class ConjuntoDePaginacao:
             a, b = par
             ra, rb = dl.blockBoundingRect(a), dl.blockBoundingRect(b)
             lb = b.layout()
+            if a.layout().lineCount() == 0 or lb.lineCount() == 0:
+                continue  # bloco sem linhas (lineAt de indice invalido derruba o processo)
             paginas.add(mapa.pagina_de_y(ra.top() + a.layout().lineAt(0).y() + 1))
             paginas.add(mapa.pagina_de_y(rb.top() + lb.lineAt(lb.lineCount() - 1).y() + 1))
             if len(paginas) > 1:

@@ -341,7 +341,8 @@ def main(argv: list[str]) -> int:
     app.setApplicationVersion(VERSAO)
     idioma.instalar(app)
 
-    caminhos = [os.path.abspath(a) for a in pedido.arquivos]
+    from editdoc.interface.gerente import PEDIDO_MAXIMO_ARQUIVOS
+    caminhos = [os.path.abspath(a) for a in pedido.arquivos][:PEDIDO_MAXIMO_ARQUIVOS]
     pedido_para_outra = {"arquivos": caminhos} if caminhos else {"novo": True}
     if instancia_unica.entregar(pedido_para_outra):
         log.info("pedido entregue a uma instancia ja aberta: saindo")

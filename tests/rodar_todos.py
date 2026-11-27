@@ -63,6 +63,8 @@ SUITES = [
      "ponte QTextDocument: ida e volta, sublinhado, listas e quebra de linha"),
     ("teste_seguranca.py",
      "arquivos hostis viram ErroDocx com codigo, em menos de 2 s"),
+    ("teste_endurecimento.py",
+     "0.1.39: zip corrompido, atributos e elementos demais, destino hostil, temporario plantado, abrir sem custo quadratico, mini-fuzz"),
     ("teste_documento.py",
      "janelas: abrir, editar, salvar, perda, falha de gravacao, recentes"),
     ("teste_paginas.py",

@@ -424,34 +424,45 @@ def _escrever_paragrafo(cursor: QTextCursor, p: Paragrafo, res: pq_estilos.Resol
             cursor.setBlockCharFormat(pq_estilos.formato_de_caractere(base))
     if pq_revisoes.paragrafo_revisado(p) or any(pq_revisoes.run_revisado(r) for r in p.runs):
         cursor.document()._tem_revisoes = True  # 0.1.13: o realce vale depois de preencher
-    for r in p.runs:
-        if r.imagem is not None:
-            inserir_imagem(cursor, r.imagem, r.link, r.extras, r)
-        elif isinstance(r.marca, MarcaNota):
-            # Nota de rodape ou de fim (0.1.10): a referencia, ou o numero da propria nota.
-            pq_notas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res),
-                                                             r.link))
-        elif isinstance(r.marca, MarcaQuebra):
-            # Quebra de coluna (0.1.12).
-            pq_secoes.inserir_coluna(cursor, _formato_do_run(r, p.estilo, res))
-        elif r.marca is not None:
-            # Campo ou marcador (0.1.3): a marca leva a formatacao do run (o codigo do campo
-            # e o resultado recalculado pelo Word saem com ela).
-            marcas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res), r.link))
-        elif r.objeto is not None:
-            opacos.inserir(cursor, r.objeto,
-                           links.com_link(_formato_do_run(r, p.estilo, res), r.link))
-        elif r.campo is not None:
-            campos.inserir_campo(cursor, r.campo, r.texto,
-                                 links.com_link(_formato_do_run(r, p.estilo, res), r.link))
-        elif r.texto:
-            cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA),
-                              links.com_link(_formato_do_run(r, p.estilo, res), r.link))
+    # Os runs do paragrafo num bloco de edicao so' (0.1.39): sem ele o Qt refaz o layout do bloco a
+    # cada insertText, e um paragrafo com N runs custa N ao quadrado (2 000 runs = 35 s ao abrir;
+    # com o bloco, 4 000 insercoes levam 0,05 s). O contentsChange sai uma vez, no fim.
+    cursor.beginEditBlock()
+    try:
+        for r in p.runs:
+            if r.imagem is not None:
+                inserir_imagem(cursor, r.imagem, r.link, r.extras, r)
+            elif isinstance(r.marca, MarcaNota):
+                # Nota de rodape ou de fim (0.1.10): a referencia, ou o numero da propria nota.
+                pq_notas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res),
+                                                                 r.link))
+            elif isinstance(r.marca, MarcaQuebra):
+                # Quebra de coluna (0.1.12).
+                pq_secoes.inserir_coluna(cursor, _formato_do_run(r, p.estilo, res))
+            elif r.marca is not None:
+                # Campo ou marcador (0.1.3): a marca leva a formatacao do run (o codigo do campo
+                # e o resultado recalculado pelo Word saem com ela).
+                marcas.inserir(cursor, r.marca, links.com_link(_formato_do_run(r, p.estilo, res), r.link))
+            elif r.objeto is not None:
+                opacos.inserir(cursor, r.objeto,
+                               links.com_link(_formato_do_run(r, p.estilo, res), r.link))
+            elif r.campo is not None:
+                campos.inserir_campo(cursor, r.campo, r.texto,
+                                     links.com_link(_formato_do_run(r, p.estilo, res), r.link))
+            elif r.texto:
+                cursor.insertText(r.texto.replace("\n", LINHA_SEPARADORA),
+                                  links.com_link(_formato_do_run(r, p.estilo, res), r.link))
+    finally:
+        cursor.endEditBlock()
     if p.secao is not None and cursor.currentTable() is None and \
             getattr(cursor.document(), "_corpo_com_secoes", False):
         # Quebra de secao (0.1.12): o ultimo caractere do paragrafo, com o formato do texto do
         # fim (a linha vazia da quebra fica com a altura do paragrafo).
         pq_secoes.inserir_secao(cursor, p.secao, QTextCharFormat(cursor.charFormat()))
+
+
+#: Linhas a partir das quais a tabela e' inserida num bloco de edicao so' (ver `_inserir_blocos`).
+TABELA_GRANDE_LINHAS = 150
 
 
 def _inserir_blocos(cursor: QTextCursor, blocos: list, res: pq_estilos.Resolvedor) -> None:
@@ -466,7 +477,18 @@ def _inserir_blocos(cursor: QTextCursor, blocos: list, res: pq_estilos.Resolvedo
         if isinstance(bloco, Tabela):
             if primeiro or depois_de_tabela:
                 cursor.setBlockFormat(formato_estrutural())
-            tabela = inserir_tabela_modelo(cursor, bloco, res)
+            # Tabela GRANDE num bloco de edicao so' (0.1.39): cada setFormat de celula e setBlockFormat
+            # refaz o layout da tabela toda (300 linhas = 13 s ao abrir; 2000, mais de 2 min). O
+            # bloco muda a ordem em que os ganchos de paginacao veem o documento (5 dos 22 .docx de
+            # prova mudaram de paginas), por isso as tabelas comuns ficam como sempre foram.
+            grande = len(bloco.linhas) >= TABELA_GRANDE_LINHAS
+            if grande:
+                cursor.beginEditBlock()
+            try:
+                tabela = inserir_tabela_modelo(cursor, bloco, res)
+            finally:
+                if grande:
+                    cursor.endEditBlock()
             cursor.setPosition(tabela.lastPosition() + 1)
             cursor.setBlockFormat(QTextBlockFormat())
             cursor.setCharFormat(QTextCharFormat())

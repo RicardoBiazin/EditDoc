@@ -103,6 +103,13 @@ causou defeito.
   `interface/dialogo_legendas.py`; o indice de ilustracoes e' o TOC com `\c` em `edicao/sumario.py`
   (`titulos` junta `\o`, `\t`, `\b` e `\c`; `sumarios(doc, figuras)` separa os dois); testes em
   `tests/teste_legendas.py` (nas duas passadas).
+- Endurecimento contra arquivo hostil (0.1.39): limites de forma do XML em `formato_docx/leitor.py`
+  (`ELEMENTOS_MAXIMOS`, `ATRIBUTOS_SEGUIDOS_MAXIMOS`, contados nos bytes antes do parse; limite
+  `arquivo_bytes`; `ZIP_CORROMPIDO` em `ler_parte`), `formato_docx/opacos.py` (limite `flutuantes`),
+  `armazenamento/gravacao.py` (`validar_destino`, `_criar_temporario` com "xb"),
+  `recuperacao.texto_limpo`, `interface/gerente.py` (`caminho_aceitavel`, `PEDIDO_MAXIMO_ARQUIVOS`),
+  `instancia_unica.CONEXOES_MAXIMAS`, `ortografia/windows._seguro`; testes e fuzz de regressao em
+  `tests/teste_endurecimento.py`; tabela de casos (antes e depois) em docs/SPIKES.md, "0.1.39".
 - `editdoc/recuperacao.py`: cópias de recuperação e trava, sem Qt (M8). Acessibilidade em
   `interface/acessibilidade.py` e `interface/dicas_teclas.py`; preferências em
   `configuracao.py` (validação) e `interface/dialogo_opcoes.py`.
@@ -377,3 +384,9 @@ Testar uma tecla é apertar a tecla (`QTest.keyClick`), não chamar o método.
 | marcador `_Ref` e as pontas (0.1.37) | Inserir `_Toc` ou outro marcador na mesma posicao empurra o `_Ref` ja' criado um caractere: `referencias._normal` tira as marcas de marcador das duas pontas antes de comparar o trecho, senao cada referencia criaria um marcador novo. |
 | nome acessivel do botao (0.1.37) | `BotaoAcao` usa a dica da acao como nome falado (`Inserir uma legenda ...`), nao o rotulo curto: teste de nome procura por `startswith` da dica. |
 | `python.exe -` com heredoc (0.1.37) | De novo: um patch de teste em `python3 - <<EOF` abriu o REPL e ficou em loop de erro ate' o tempo acabar. Patch e' arquivo .py com a ferramenta Write. |
+| `lineAt(lineCount() - 1)` (0.1.39) | Num bloco SEM linhas (`lineCount() == 0`), `lineAt(-1)` devolve uma linha "valida" (o `isValid` do Qt so' confere o ponteiro) e o `cursorToX` derruba o processo. Acima de ~500 paginas (`QFIXED_MAX`) o Qt para de montar o layout e ha' blocos sem linhas: sempre conferir `lineCount() > 0` antes de `lineAt`. |
+| `insertText` em paragrafo com muitos runs (0.1.39) | Sem `beginEditBlock`/`endEditBlock` o Qt refaz o layout do bloco a cada insercao (N ao quadrado: 2 000 runs = 35 s ao abrir). `para_qt._escrever_paragrafo` poe os runs num bloco so'. Tabela inteira num bloco muda a paginacao de tabelas comuns (5 dos 22 .docx de prova), por isso so' a de 150 linhas ou mais (`TABELA_GRANDE_LINHAS`). |
+| `markContentsDirty` por campo (0.1.39) | Uma marca por campo e' quadratica (2 000 campos = 15 s; 25 000 = acesso invalido). `campos.refazer_campos` faz uma marca so' acima de 16 campos. |
+| XML hostil (0.1.39) | O libxml2 e' quadratico nos atributos de UMA tag (100 mil = 83 s num arquivo de 1 MB): conferir nos bytes, antes do parse (`_MUITOS_ATRIBUTOS`). O `zipfile` so' acusa CRC e fluxo quebrado ao LER a parte, nao ao abrir: `ler_parte` traduz tudo em `ZIP_CORROMPIDO`. |
+| temporario da gravacao (0.1.39) | `open(temp, "wb")` segue link fisico, atalho de pasta ou link simbolico plantado em `doc.docx.ewnew` e trunca o arquivo de outro nome. O temporario e' aberto com `"xb"`; nome ocupado: sobra comum (um nome so', sem ponto de reanalise) e' apagada, o resto vira nome unico. Destino que e' dispositivo (`CON`, `nul.docx`), fluxo (`a.docx:x`) ou pasta e' recusado antes (`DestinoInvalido`). |
+| fuzz e processos (0.1.39) | Script de patch com `open(p, "w")` apaga o arquivo se a escrita falhar (um `\ud800` no texto): escrever num temporario e trocar. `Stop-Process` por padrao amplo (`scratchpad`) pode matar o trabalho de outro agente: casar o nome exato do script. |

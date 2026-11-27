@@ -193,6 +193,27 @@ def _limpar(sect, coletor, final: bool) -> None:
         elif ns not in _URIS_EXTENSOES:
             coletor.somar("FORMATACAO")
             sect.remove(f)
+    # Filho repetido e filho fora da ordem do esquema (0.1.39): o escritor grava o w:sectPr de
+    # origem, e o validador recusa os dois. Sem isto o documento abria e nunca mais podia ser
+    # salvo. Fica o primeiro de cada nome, na ordem do esquema.
+    vistos: set[str] = set()
+    conhecidos = []
+    for f in list(sect):
+        ns, loc = _local(f)
+        if ns == W and loc in ORDEM_SECTPR:
+            if loc in vistos:
+                coletor.somar("FORMATACAO")
+                sect.remove(f)
+            else:
+                vistos.add(loc)
+                conhecidos.append(f)
+    ordenados = sorted(conhecidos, key=lambda x: ORDEM_SECTPR.index(_local(x)[1]))
+    if ordenados != conhecidos:
+        coletor.somar("FORMATACAO")
+        for f in conhecidos:
+            sect.remove(f)
+        for f in ordenados:
+            sect.append(f)
 
 
 def _colunas_validas(cols) -> bool:

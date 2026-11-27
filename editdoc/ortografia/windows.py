@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import re
 import uuid
 import weakref
 from ctypes import POINTER, byref, c_int, c_long, c_ulong, c_void_p, c_wchar_p
@@ -106,6 +107,18 @@ def _textos(ole32, enumeracao: c_void_p, limite: int = 64) -> list[str]:
     finally:
         _liberar(enumeracao)
     return saida
+
+
+#: Substituto UTF-16 sem par (de 0xD800 a 0xDFFF), escrito por codigo para o arquivo ficar em ASCII.
+_SUBSTITUTOS_SOLTOS = re.compile("[" + chr(0xD800) + "-" + chr(0xDFFF) + "]")
+
+
+def _seguro(texto: str) -> str:
+    """O texto como o corretor pode receber (0.1.39): sem NUL e sem substituto UTF-16 solto (um
+    caractere da area de transferencia ou do arquivo que o Python guarda como surrogate). Cada um
+    vira um espaco, de modo que as posicoes nao mudam. O `encode` estrito da conversao de
+    indices estourava UnicodeEncodeError, e a verificacao era desligada no documento inteiro."""
+    return _SUBSTITUTOS_SOLTOS.sub(" ", texto.replace("\0", " "))
 
 
 def _para_python(texto: str):
@@ -192,12 +205,12 @@ class CorretorWindows(Corretor):
 
     # -- verificar --------------------------------------------------------------------------
     def verificar(self, texto: str, idioma: str) -> list[Erro]:
+        texto = _seguro(texto)
         if not texto.strip():
             return []
         verificador = self._verificador(idioma)
         enumeracao = c_void_p()
-        _chamada(verificador, 4, c_wchar_p, POINTER(c_void_p))(texto.replace("\0", " "),
-                                                               byref(enumeracao))
+        _chamada(verificador, 4, c_wchar_p, POINTER(c_void_p))(texto, byref(enumeracao))
         indice = _para_python(texto)
         erros: list[Erro] = []
         try:
@@ -230,12 +243,12 @@ class CorretorWindows(Corretor):
     def sugerir(self, palavra: str, idioma: str) -> list[str]:
         verificador = self._verificador(idioma)
         enumeracao = c_void_p()
-        _chamada(verificador, 5, c_wchar_p, POINTER(c_void_p))(palavra.replace("\0", " "),
+        _chamada(verificador, 5, c_wchar_p, POINTER(c_void_p))(_seguro(palavra),
                                                                byref(enumeracao))
         return _textos(self._ole32, enumeracao)
 
     def adicionar(self, palavra: str, idioma: str) -> None:
-        _chamada(self._verificador(idioma), 6, c_wchar_p)(palavra.replace("\0", " "))
+        _chamada(self._verificador(idioma), 6, c_wchar_p)(_seguro(palavra))
 
     # -- fim --------------------------------------------------------------------------------
     def fechar(self) -> None:

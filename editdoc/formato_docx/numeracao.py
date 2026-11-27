@@ -226,9 +226,16 @@ def ler(dados: bytes, raiz, lim: dict, relacoes: dict, partes: dict,
                 mexido = True
                 problemas += 1
             nivel = ler_nivel(lvl, lim)
-            if nivel is not None and nivel.ilvl not in vistos:
-                vistos.add(nivel.ilvl)
-                niveis.append(nivel)
+            if nivel is None or nivel.ilvl in vistos:
+                # ilvl ausente, fora de 0 a 8 ou repetido (0.1.39): o w:lvl sai tambem do XML de
+                # origem. Antes ficava la' e o validador recusava a gravacao: o documento abria e
+                # nunca mais podia ser salvo.
+                el.remove(lvl)
+                mexido = True
+                problemas += 1
+                continue
+            vistos.add(nivel.ilvl)
+            niveis.append(nivel)
         abstratas[ident] = Abstrata(
             id=ident, niveis=tuple(sorted(niveis, key=lambda n: n.ilvl)),
             tipo=_val(el, "multiLevelType"), nsid=_val(el, "nsid"), modelo=_val(el, "tmpl"),

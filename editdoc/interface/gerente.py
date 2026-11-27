@@ -44,6 +44,23 @@ _MENSAGENS_DE_EXTENSAO = {
 }
 
 
+#: Quantos arquivos um unico pedido (linha de comando ou outra instancia) abre, e o maior
+#: caminho aceito (0.1.39). Uma mensagem forjada no canal da instancia unica com milhares de
+#: caminhos abriria milhares de janelas.
+PEDIDO_MAXIMO_ARQUIVOS = 16
+#: Com tantas janelas abertas, um pedido de outra instancia nao abre mais nenhuma.
+JANELAS_MAXIMAS_POR_PEDIDO = 60
+CAMINHO_MAXIMO = 32767
+
+
+def caminho_aceitavel(caminho) -> bool:
+    """Texto que pode ser caminho: sem NUL nem caractere de controle, de tamanho razoavel, e que
+    nao e' dispositivo do Windows."""
+    from editdoc.cli import e_dispositivo
+    return (isinstance(caminho, str) and 0 < len(caminho.strip()) <= CAMINHO_MAXIMO
+            and not any(ord(c) < 32 for c in caminho) and not e_dispositivo(caminho))
+
+
 def chave_de_caminho(caminho: pathlib.Path | str) -> str:
     return os.path.normcase(os.path.realpath(str(caminho)))
 
@@ -73,9 +90,13 @@ class GerenteDeJanelas(QObject):
 
     def abrir(self, caminho: str) -> JanelaPrincipal | None:
         """Abre o .docx em uma janela nova, ou traz a que ja o mostra. None se recusou."""
+        if not caminho_aceitavel(caminho):
+            dialogos_modais.avisar(self._pai_dos_dialogos(), "Abrir documento",
+                                   "O caminho do arquivo não é válido.")
+            return None
         try:
             alvo = pathlib.Path(caminho).resolve()
-        except OSError:
+        except (OSError, ValueError):
             alvo = pathlib.Path(caminho)
         chave = chave_de_caminho(alvo)
         for janela in self._janelas:
@@ -127,9 +148,13 @@ class GerenteDeJanelas(QObject):
 
     def receber_pedido(self, pedido: dict) -> None:
         """Pedido de outra instancia: abre os arquivos, ou um documento novo."""
+        if len(self._janelas) >= JANELAS_MAXIMAS_POR_PEDIDO:
+            # Uma enxurrada de pedidos forjados abriria uma janela por mensagem (0.1.39).
+            log.warning("pedido ignorado: ja' ha' %d janelas abertas", len(self._janelas))
+            return
         arquivos = pedido.get("arquivos")
         if isinstance(arquivos, list) and arquivos:
-            for caminho in arquivos:
+            for caminho in arquivos[:PEDIDO_MAXIMO_ARQUIVOS]:
                 if isinstance(caminho, str):
                     self.abrir(caminho)
         elif pedido.get("novo"):

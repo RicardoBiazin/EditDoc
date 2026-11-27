@@ -265,6 +265,40 @@ def validar(partes: dict[str, bytes]) -> list[str]:
     return problemas
 
 
+def _problemas_estruturais(el) -> list[str]:
+    from editdoc.formato_docx.ordem import validar_estrutura, validar_ordem
+    return validar_ordem(el, True) + validar_estrutura(el)
+
+
+def nota_valida(el) -> bool:
+    """O w:footnote (ou w:endnote) de origem passa nas regras que o validador aplica ao gravar
+    (0.1.39): ao menos um paragrafo ou tabela, filhos na ordem do esquema, tabela inteira. A nota
+    que nao passa nao volta com o XML de origem: o escritor a refaz do modelo (senao o documento
+    abria e nunca mais podia ser salvo)."""
+    if not el.findall(q("p")) and el.find(q("tbl")) is None:
+        return False
+    if any(not x.get(q("val")) for x in el.iter(q("rStyle"), q("pStyle"), q("tblStyle"))):
+        return False  # referencia de estilo sem nome: o validador de estilos a recusa
+    return not _problemas_estruturais(el)
+
+
+def parte_integra(raiz, tipo: str) -> bool:
+    """A parte de notas inteira pode voltar com os bytes de origem: so' tem notas (nenhum
+    outro filho da raiz) e passa nas mesmas regras."""
+    local = LOCAL[tipo]
+    if any(isinstance(f.tag, str) and f.tag != q(local) for f in raiz):
+        return False
+    vistos: set[str] = set()
+    for n in raiz.findall(q(local)):
+        ident = n.get(q("id"))
+        if ident is None or not ident.lstrip("-").isdigit() or ident in vistos:
+            return False  # sem w:id numerico, ou repetido
+        vistos.add(ident)
+        if (n.get(q("type")) or "normal") not in ("normal", *ESPECIAIS):
+            return False
+    return not _problemas_estruturais(raiz)
+
+
 def r_ids(el) -> list[str]:
     return [valor for x in el.iter() if isinstance(x.tag, str)
             for chave, valor in x.attrib.items() if chave.startswith("{%s}" % R_NS)]
