@@ -203,6 +203,12 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   impressão). Apagar só o começo ou só o fim de um campo transforma o resultado em texto
   comum ao salvar, com aviso. O EditDoc não recalcula esses campos (só o número da página
   e o total de páginas, como antes, e o sumário quando você manda atualizar, abaixo).
+- **Tabela que atravessa a página** (0.1.38): o Qt reserva no pé de cada página da tabela, e
+  repete no alto da página em que ela continua, a margem de cima do quadro (o espaço depois do
+  parágrafo de cima); o Word não. A tabela que atravessa a página (sem linha partida no meio)
+  fica com a metade dessa margem, e cabem no pé as mesmas linhas do Word. O arquivo gravado
+  não muda. Quando o Qt parte uma linha no meio da tabela, nada muda (limite na seção
+  "Paginação 2" de `docs/SPIKES.md`).
 - **Corretor ortográfico** (0.1.36), como no Word: a palavra desconhecida ganha um **sublinhado
   ondulado vermelho** na tela (nunca na impressão nem no PDF, e nada vai para o arquivo). Botão
   direito na palavra abre o menu com as **sugestões** (a primeira em negrito), **Ignorar**,

@@ -534,7 +534,16 @@ def _celula_que_atravessa_pagina(painel) -> int:
         if isinstance(quadro, QTextTable) and quadro.rows() >= 8:
             r = dl.frameBoundingRect(quadro)
             if int(r.top() // hb) != int(r.bottom() // hb):
-                return quadro.cellAt(quadro.rows() // 2, 1).firstPosition() + 4
+                # A linha do meio, ou a mais perto dele cujo bloco nao cruza a divisa (0.1.38: a
+                # margem de cima menor da tabela que atravessa muda onde a divisa cai, e a celula
+                # em cima dela custa os tiles das duas paginas: outro caso, nao o que se mede).
+                meio = quadro.rows() // 2
+                for passo in sorted(range(1, quadro.rows() - 1), key=lambda i: abs(i - meio)):
+                    pos = quadro.cellAt(passo, 1).firstPosition() + 4
+                    rb = dl.blockBoundingRect(doc.findBlock(pos))
+                    if int(rb.top() // hb) == int((rb.bottom() - 1) // hb):
+                        return pos
+                return quadro.cellAt(meio, 1).firstPosition() + 4
     return -1
 
 

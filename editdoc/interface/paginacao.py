@@ -29,6 +29,11 @@ dos blocos e das tabelas do corpo, o que faz o Qt chegar ao layout do Word:
    depois dele levam a tabela inteira (a quebra das regras no quadro). Mais alta que a pagina:
    parte, como no Word.
 
+5. Margem de cima da tabela que atravessa a pagina (0.1.38, parte "margem", dentro das regras):
+   o Qt reserva no pe' de cada pagina da tabela, e repete no alto da pagina em que ela continua,
+   a margem de CIMA do quadro (`_margem_que_atravessa`); a tabela que atravessa, sem linha
+   partida no meio, fica com a metade (`FATOR_MARGEM_QUE_ATRAVESSA`, marca `PROP_WORD_REDUZIDA`).
+
 Os ajustes entram no desfazer como os das secoes e das notas: um passo anotado depois do passo
 do usuario (`ConjuntoDeNotas.ajustar`). Nada disso muda o arquivo gravado: o `de_qt` le' os
 valores de verdade (`ponte_qt/paginacao.py`).
@@ -39,7 +44,9 @@ pelo espaco antes nao mudou nenhuma quebra do oraculo); o espaco antes do primei
 uma celula e o depois do ultimo (o Qt os ignora; medido na 0.1.26, somar piora o oraculo) e a
 linha exata mais baixa que o conteudo (o Qt nao corta) nao entram; o Qt reserva no pe' (e no
 alto) de cada pagina de uma tabela a margem de CIMA do quadro, o espaco depois do paragrafo de
-cima (0.1.32, docs/SPIKES.md): a linha que cabe no Word pode partir no Qt; cabecalho, rodape e notas nao sao compensados (so' a altura da
+cima (0.1.32, docs/SPIKES.md): a linha que cabe no Word pode partir no Qt (desde a 0.1.38 isso
+so' fica assim com a linha partida no MEIO da tabela, parte 5 acima; docs/SPIKES.md, "0.1.38");
+cabecalho, rodape e notas nao sao compensados (so' a altura da
 faixa soma o vazio escondido logo depois da tabela, 0.1.27: `cabecalhos.FaixaQt.escondida`).
 """
 
@@ -73,6 +80,11 @@ HISTERESE_TW = 720.0
 #: 0.1.32 (cantSplit): a quebra antes da tabela, posta para a primeira linha (ou o cabecalho)
 #: descer inteira, so' sai se a linha couber com esta folga (twips) sem ela.
 HISTERESE_LINHA_TW = 60.0
+#: 0.1.38: a margem de CIMA do quadro da tabela que atravessa a pagina vale esta fracao da do
+#: Word. O Qt a reserva no pe' (`effectiveBottomMargin`) e a repete no alto da pagina em que a
+#: tabela continua; o Word so' a tem no comeco. Com a metade, a linha que cabe no pe' do Word
+#: cabe no do Qt (2 x m' = m). 1.0 volta ao que era (contraprova do teste).
+FATOR_MARGEM_QUE_ATRAVESSA = 0.5
 
 
 def _inteiro(flags) -> int:
@@ -102,7 +114,8 @@ class ConjuntoDePaginacao:
 
     #: As partes (os testes e a medicao ligam uma de cada vez): entrelinha da fonte, espaco
     #: somado entre paragrafos, vazio e espacos junto da tabela, regras de quebra.
-    PARTES = frozenset({"linha", "espaco", "tabela", "regras", "topo", "altura", "inteira"})
+    PARTES = frozenset({"linha", "espaco", "tabela", "regras", "topo", "altura", "inteira",
+                        "margem"})
 
     def __init__(self, layout) -> None:
         self.layout = layout
@@ -362,6 +375,8 @@ class ConjuntoDePaginacao:
         for tabela in tabelas.values():
             fmt = tabela.format()
             topo, base = self._margens_da_tabela(tabela)
+            if pq.reduzida(fmt) and "margem" in self.partes:
+                topo *= FATOR_MARGEM_QUE_ATRAVESSA  # a conferencia das regras decide, nao a tecla
             novo = type(fmt)(fmt)
             pq.definir_margens_da_tabela(novo, topo, base)
             if novo != fmt:
@@ -784,6 +799,18 @@ class ConjuntoDePaginacao:
         repetido, ou a primeira depois dele (o Qt leva a tabela inteira), e a primeira linha da
         tabela: a quebra antes da tabela (a das regras, `PROP_QUEBRA_REGRA` 4). Linha mais alta
         que a pagina: parte, como no Word."""
+        if "margem" in self.partes:
+            achado = self._margem_que_atravessa(u, esgotadas)
+            if achado is not None:
+                return achado
+        elif pq.reduzida(u.tabela.format()):
+            # contraprova: a parte desligada devolve a margem inteira
+            tf = u.tabela.format()
+            cheia, base = self._margens_da_tabela(u.tabela)
+            novo = type(tf)(tf)
+            pq.definir_margens_da_tabela(novo, cheia, base)
+            pq.definir_reduzida(novo, False)
+            return ("m", u.tabela.firstPosition()), [(u.tabela, novo)], u.paginas[0]
         if "inteira" not in self.partes:
             return None
         tabela = u.tabela
@@ -823,6 +850,86 @@ class ConjuntoDePaginacao:
             if muds:
                 return chave, muds, pagina
         return None
+
+    # -- margem de cima da tabela que atravessa a pagina (0.1.38) --------------------------------
+    def _margem_que_atravessa(self, u: _Unidade, esgotadas=()):
+        """(chave, mudancas, pagina) se a margem de cima do quadro da tabela `u` tem de mudar, ou
+        None.
+
+        O Qt tem uma so' margem de cima por tabela (o espaco depois do paragrafo de cima, que ele
+        ignora no bloco) e a usa tres vezes: abaixo do paragrafo (certo), reservada no pe' de cada
+        pagina da tabela e repetida no alto da pagina em que ela continua (as duas, do Qt; o Word nao
+        as tem). Medido com a fixture de `testar_margem_que_atravessa` (docs/SPIKES.md, 0.1.38). A
+        tabela que atravessa a pagina fica com `FATOR_MARGEM_QUE_ATRAVESSA` da margem: com a metade o
+        que cabe no pe' do Word cabe no do Qt.
+
+        So' vale se o Qt nao parte uma linha no meio da tabela (a linha que cabe no Word e o Qt
+        parte entre duas linhas de texto, docs/SPIKES.md: puxar o pedaco de volta mostra, no
+        doc_19, uma altura que falta na pagina seguinte e piora a quebra de la'). Parte so' a
+        ultima linha: a tabela inteira cabe no Word e deixa de atravessar. Decisao com histerese:
+        reduzida, so' volta ao valor inteiro se a tabela coubesse mesmo com ele."""
+        tabela = u.tabela
+        tf = tabela.format()
+        cheia, base = self._margens_da_tabela(tabela)
+        chave = ("m", tabela.firstPosition())
+        if cheia <= pq.FOLGA or chave in esgotadas:
+            return None
+        atual = tf.topMargin()
+        cruza = u.paginas[0] != u.paginas[-1]
+        if pq.reduzida(tf):
+            if cruza or not self._cabe_com_margem_cheia(u, cheia, atual):
+                if abs(atual - cheia * FATOR_MARGEM_QUE_ATRAVESSA) < pq.FOLGA:
+                    return None
+                alvo, reduzir = cheia * FATOR_MARGEM_QUE_ATRAVESSA, True  # a margem mudou de valor
+            else:
+                alvo, reduzir = cheia, False
+        else:
+            if not cruza or self._parte_no_meio(tabela):
+                return None
+            alvo, reduzir = cheia * FATOR_MARGEM_QUE_ATRAVESSA, True
+        novo = type(tf)(tf)
+        pq.definir_margens_da_tabela(novo, alvo, base)
+        pq.definir_reduzida(novo, reduzir)
+        return chave, [(tabela, novo)], u.paginas[0]
+
+    def _parte_no_meio(self, tabela) -> bool:
+        """O Qt parte alguma linha da tabela que nao seja a ultima."""
+        for r in range(tabela.rows() - 1):
+            cels = _celulas_da_linha(tabela, r)
+            if cels and self._partida(cels):
+                return True
+        return False
+
+    def _cabe_com_margem_cheia(self, u: _Unidade, cheia: float, atual: float) -> bool:
+        """A tabela de margem reduzida (`atual`, px96), toda numa pagina, ainda caberia com a
+        margem cheia: a ultima linha desce `cheia - atual` e o pe' reserva `cheia`."""
+        tabela = u.tabela
+        cels = _celulas_da_linha(tabela, tabela.rows() - 1)
+        topo = self._topo_da_linha(cels) if cels else None
+        altura = self._altura_natural(tabela, cels) if cels else None
+        if topo is None or altura is None:
+            return False
+        mapa = self.layout.mapa
+        raiz = self.layout.doc.rootFrame().frameFormat()
+        pagina = mapa.pagina_de_y(topo + 1.0)
+        pe = mapa.fim(pagina) - (raiz.bottomMargin() + raiz.border() + raiz.padding() + cheia
+                                 + tabela.format().border() + tabela.format().padding()) * 15.0
+        return topo + altura + (cheia - atual) * 15.0 + HISTERESE_LINHA_TW <= pe
+
+    def _deslocamento_da_margem(self, tabela, pagina: int) -> float:
+        """Quanto (twips) o y do Qt fica abaixo do y do Word numa linha de `pagina`, com a margem
+        reduzida: na primeira pagina da tabela o Qt a poe `cheia - atual` ACIMA do Word, nas
+        seguintes `atual` ABAIXO (o Word recomeca no alto). Zero com a margem inteira."""
+        tf = tabela.format()
+        if not pq.reduzida(tf):
+            return 0.0
+        cheia, _b = self._margens_da_tabela(tabela)
+        atual = tf.topMargin()
+        dl = self.layout.doc.documentLayout()
+        primeira = self.layout.mapa.pagina_de_y(dl.frameBoundingRect(tabela).top() + 1.0)
+        if pagina <= primeira:
+            return (cheia - atual) * 15.0
+        return -atual * 15.0
 
     def _nao_partir(self, cels) -> bool:
         bruto = cels[0].format().property(PROP_CELULA)
@@ -928,7 +1035,9 @@ class ConjuntoDePaginacao:
         pagina = mapa.pagina_de_y(topo + 1.0)
         pe = mapa.fim(pagina) - abaixo
         pe_word = mapa.fim(pagina) - (raiz.bottomMargin() + raiz.border() + raiz.padding()) * 15.0
-        if topo + altura <= pe_word + 1.0:
+        # Com a margem de cima reduzida (0.1.38) o y do Qt nao e' o do Word: o do Word, em y do Qt
+        desloc = self._deslocamento_da_margem(tabela, pagina) if "margem" in self.partes else 0.0
+        if topo + desloc + altura <= pe_word + 1.0:
             # Cabe no Word. O Qt pode partir assim mesmo (ele reserva no pe' a margem de CIMA
             # da tabela, `_margens_do_qt`): a linha fica como o Qt a faz, uma linha de texto
             # na pagina seguinte, mais perto do Word que a linha inteira descendo (doc_14,
