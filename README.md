@@ -209,6 +209,19 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   fica com a metade dessa margem, e cabem no pé as mesmas linhas do Word. O arquivo gravado
   não muda. Quando o Qt parte uma linha no meio da tabela, nada muda (limite na seção
   "Paginação 2" de `docs/SPIKES.md`).
+- **Corretor ortográfico** (0.1.36), como no Word: a palavra desconhecida ganha um **sublinhado
+  ondulado vermelho** na tela (nunca na impressão nem no PDF, e nada vai para o arquivo). Botão
+  direito na palavra abre o menu com as **sugestões** (a primeira em negrito), **Ignorar**,
+  **Ignorar tudo** e **Adicionar ao dicionário**; a palavra repetida oferece **Excluir**. A
+  aba **Revisão > Ortografia** (**F7**) vai ao próximo erro, o seleciona e mostra esse menu, e
+  segue para o seguinte até o menu ser fechado (Esc). **Arquivo > Opções** liga e desliga a
+  verificação enquanto você digita e escolhe o idioma (padrão: automático, o idioma que o
+  arquivo marca com `w:lang` e, na falta, o português do Brasil; o `w:lang` de cada trecho e o
+  `w:noProof` valem). Quem corrige é a **API de verificação ortográfica do Windows** (Windows 8
+  ou mais novo): ela traz os idiomas que você instalou e o seu dicionário pessoal (Adicionar ao
+  dicionário vale também para os outros programas). O texto não sai do computador. Sem a API,
+  ou com o idioma do documento não instalado, a verificação se desliga e a barra de status diz
+  por quê. A verificação roda quando você para de digitar, em fatias curtas, só no que mudou.
 - **Linha de tabela que não parte** (0.1.34): a linha com `w:cantSplit` desce inteira para a
   página seguinte, e o cabeçalho repetido (`w:tblHeader`) entra na conta; na tela, no PDF e na
   impressão. O arquivo gravado não muda.
@@ -222,7 +235,24 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
   da página do EditDoc, com o formato e o recomeço da seção, como o campo de número de página.
   Inserir e atualizar são um passo só de desfazer (Ctrl+Z). O sumário vindo do Word não muda
   enquanto você não manda atualizar, e o arquivo salvo tem um sumário que o Word reconhece e
-  atualiza.
+  atualiza. Desde a 0.1.37 o título numerado por lista leva o número na linha ("1.2", uma
+  tabulação e o texto, como o Word), o sumário com estilos extras (`\t "Estilo;nível"`) ou
+  limitado a um marcador (`\b`) é refeito, e **Sumário > Inserir sumário com título** põe o
+  parágrafo "Sumário" (estilo Título do Sumário) em cima.
+- **Legendas, índice de ilustrações e referência cruzada** (0.1.37), como no Word, na aba
+  **Referências**: **Inserir Legenda** põe "Figura 1", "Tabela 1" ou "Equação 1" (o rótulo é
+  livre; um novo vale) acima ou abaixo da imagem, da tabela ou do parágrafo do cursor, no estilo
+  "Legenda" (criado se faltar); o número é um campo `SEQ Figura \* ARABIC` que o EditDoc recalcula
+  contando os campos na ordem do documento, ao inserir e em **Atualizar Campos** (F9). Apagar ou
+  mover uma legenda não renumera sozinho: F9. **Índice de Ilustrações** insere a lista das
+  legendas de um rótulo (`TOC \h \z \c "Figura"`, linhas "Figura 1 – texto ..... página",
+  estilo "Índice de Ilustrações", hiperlinks para marcadores `_Toc` nas legendas), com atualizar o
+  inteiro ou só os números de página. **Referência Cruzada** insere um campo `REF` ou `PAGEREF`
+  para um título (texto, página, número), uma legenda (rótulo e número, só o número, legenda
+  inteira, página) ou um marcador, com hiperlink; o marcador oculto `_Ref` é reaproveitado. F9
+  também atualiza o texto das referências e as páginas citadas. Cada comando é um passo de
+  desfazer, nenhum campo se atualiza sozinho, e o campo `SEQ` que veio do Word volta ao arquivo
+  como veio enquanto você não atualiza.
 - **Listas e numeração** (desde a 0.1.4): marcadores e numeração do Word como o Word mostra:
   vários níveis ("1.", "1.1.", "1.1.1."), títulos numerados pelo estilo (Título 1, 2 e 3 com
   "1", "1.1", "1.1.1"), letras, romanos, números por extenso, o marcador na fonte Symbol ou
@@ -271,7 +301,8 @@ barra de status ficam "Página X de Y", a contagem de palavras e o zoom.
 - **Preferências** (Arquivo > Opções): fonte e tamanho do documento novo, papel padrão,
   unidade da régua (centímetros ou polegadas), intervalo da recuperação automática,
   abrir o PDF depois de exportar, quantos documentos o menu Abrir recente mostra (e
-  limpar a lista) e o tema (claro, escuro ou igual ao Windows). Ficam em
+  limpar a lista), o tema (claro, escuro ou igual ao Windows) e a ortografia (verificar enquanto
+  digita e o idioma). Ficam em
   `%APPDATA%\EditDoc\config.json`.
 - **Acessibilidade**: todo botão, campo e lista tem nome para o leitor de tela (o botão
   "N" se anuncia como "Negrito"); o documento se apresenta como texto editável, com o
@@ -324,6 +355,8 @@ Requer Windows 10 ou 11, 64 bits.
 | Inserir ou editar link | Ctrl+K |
 | Novo comentário | Ctrl+Alt+M |
 | Controlar alterações (ligar e desligar) | Ctrl+Shift+E |
+| Ortografia: ir ao próximo erro e ver as sugestões | F7 |
+| Atualizar campos (legendas, referências cruzadas, páginas citadas) | F9 |
 | Inserir nota de rodapé, nota de fim | Alt+Ctrl+F, Alt+Ctrl+D |
 | Sair da edição da nota | Esc |
 | Abrir o link | Ctrl+clique no link |
@@ -443,11 +476,15 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   aparecem onde o Word os põe, com a largura de linha do Word (na tela, no PDF e na impressão).
   A régua continua sem aceitar recuo negativo ao arrastar. O rodapé (e o cabeçalho) com uma
   tabela seguida de parágrafo vazio tem a altura do Word desde a 0.1.27.
-- O sumário só é refeito quando você manda (Referências > Atualizar Sumário); os outros campos
-  (REF, data, IF...) não são recalculados pelo EditDoc: abra no Word e atualize (F9). O
-  sumário com estilos próprios (`\t`), entradas TC (`\f`, `\l`) ou limitado a um marcador
-  (`\b`), e o índice de ilustrações (`\c`), não são refeitos: só os números de página. A linha
-  não traz o número de lista do título ("1.2"), que o Word põe; o número da página é o da
+- O sumário e o índice de ilustrações só são refeitos quando você manda (Referências > Atualizar
+  Sumário ou Atualizar Índice); os campos SEQ, REF e PAGEREF só em **Atualizar Campos** (F9); os
+  outros (data, IF...) não são recalculados pelo EditDoc: abra no Word e atualize (F9). O sumário
+  com entradas TC (`\f`, `\l`) e o índice sem rótulo e número (`\a`) não são refeitos: só os
+  números de página. O campo SEQ com opção que o EditDoc não conhece (formato por extenso, SEQ
+  que cita marcador) fica como veio. Com o cursor numa célula, a legenda vai na tabela inteira (não
+  na imagem da célula), e a de uma tabela dentro de outra não é inserida; a referência "Número do
+  título" (REF `\r`) usa o número que a lista mostra, sem o ponto final. Inserir legenda ou campo com o controle de alterações
+  ligado não vira revisão. O número da página é o da
   paginação do EditDoc, que pode diferir da do Word num documento longo (o Word recalcula ao
   atualizar). O controle de conteúdo que envolve uma linha ou uma
   célula inteira de tabela ainda é achatado, com aviso (o texto fica). Apagar só o começo
@@ -479,9 +516,15 @@ O que o EditDoc ainda não faz, e o que acontece com o arquivo:
   objeto (a barra de status avisa); uma nota de rodapé ou um comentário **dentro** de uma
   caixa de texto perdem a referência ao salvar (com aviso), porque o EditDoc não os lê dali. A lista numerada dentro da caixa volta (desde a 0.1.4).
 - Fora desta versão: revisão com controle de alterações,
-  índice remissivo e índice de ilustrações, mala direta, editar equações e formas (elas são
-  preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), seção contínua com colunas e colunas de larguras diferentes na tela (preservadas no arquivo), ortografia, `.doc`, RTF,
+  índice remissivo, mala direta, editar equações e formas (elas são
+  preservadas, não editadas; o texto das caixas de texto se edita desde a 0.1.5), seção contínua com colunas e colunas de larguras diferentes na tela (preservadas no arquivo), `.doc`, RTF,
   ODT e macros (nunca).
+- Ortografia (0.1.36): só o corpo do documento é verificado (não o cabeçalho, o rodapé, as notas
+  nem as caixas de texto), e só a ortografia: não há gramática. O corretor é o do Windows: sem os
+  idiomas instalados em Configurações > Hora e idioma, o idioma do documento não tem sugestão. O
+  idioma do texto vem do que o arquivo marca; um arquivo em português que marca `en-US` mostra
+  quase tudo sublinhado (o Word faz o mesmo, a menos que detecte o idioma sozinho): escolha o
+  idioma em Arquivo > Opções. Um parágrafo com mais de 30 mil caracteres não é verificado.
 - Numeração de listas: o EditDoc não edita a definição de uma lista do arquivo (fonte,
   recuo ou texto do número de um nível); a galeria cria definições novas. A tabulação depois do número
   usa as paradas do nível e a padrão do documento, não as tabulações próprias do parágrafo.

@@ -2878,6 +2878,217 @@ já falhavam na base 0.1.34 nela e não são de nenhuma mudança desta versão).
   ambas e 208,212,218 no vão); a linha do `w:sep` termina na base da coluna 2 (a mais longa), bem acima
   do pé do corpo, passando do fim da coluna 1.
 
+## 0.1.36: corretor ortográfico (API do Windows)
+
+Medido em 17 e 20/11/2026, Windows 11, plataforma `windows` e `offscreen`, 22 `.docx` de Downloads
+(rótulos doc_NN pela ordem do nome; só contagens, nenhum texto de documento aqui). Scripts no
+scratchpad, fora do repositório.
+
+### Via escolhida e licença (regra 5)
+
+A API de verificação ortográfica do Windows (`ISpellCheckerFactory`, Windows 8 ou mais novo), por
+`ctypes` da biblioteca padrão: o pacote não ganha dicionário, biblioteca nem dependência, e portanto
+nenhuma licença nova (AVISOS_DE_TERCEIROS.md só registra o componente do sistema). Ela usa os idiomas que
+o usuário instalou e o dicionário pessoal dele, e a verificação é local (o texto não sai do
+computador). As alternativas foram descartadas por licença ou por embutir dicionário, sem medida:
+Hunspell/Nuspell (LGPL/MPL, mais os dicionários, de licenças variadas) e Enchant (LGPL, biblioteca C),
+`pyspellchecker` e `symspellpy` (MIT, mas lista de frequência embutida, sem as regras de flexão do
+português), LanguageTool (LGPL, Java).
+
+Sonda da API (`CoCreateInstance` da fábrica, `GetSupportedLanguages`, `Check`, `Suggest`) nesta máquina:
+idiomas instalados en-CA, en-LR, en-PH, en-US e pt-BR; `IsSupported("pt-PT")` dá verdadeiro (cai no
+pt-BR), `xx-YY` e `fr-FR` falso. `Check` acha a palavra sem sentido, devolve os índices em UTF-16 (o
+`windows._para_python` converte: com um emoji antes da palavra o índice do Python é 1 a menos), não
+marca URL, e-mail, número, `COVID-19` nem `iPhone`, e marca a palavra repetida com a ação "excluir"
+(`CORRECTIVE_ACTION` 3). `Check` custa ~1,2 ms para 528 caracteres (~85 palavras): ~0,23 ms por 100
+caracteres; criar o corretor de um segundo idioma, ~2 ms. O primeiro corretor (a fábrica mais o
+dicionário) leva a primeira fatia a 17 a 22 ms, uma vez por sessão.
+
+### Pintar, não formatar
+
+O sublinhado é pintado por cima do texto (`interface/ortografia.desenhar`, depois do realce das
+revisões, só com `tela=True`). A alternativa seria `QTextCharFormat.SpellCheckUnderline` num
+`QSyntaxHighlighter`, descartada por projeto e sem medida: o realce das revisões já é o único usuário
+dos formatos adicionais do bloco, que o layout por trechos copia a cada refeita (`b.layout().formats()`),
+e cada `rehighlight` refaz o layout do bloco. Pintar não toca o `QTextDocument`: nada no desfazer, no
+"alterado", no arquivo, na impressão nem no PDF (testado, com contraprova).
+
+### Varredura
+
+Tecla: só reinicia o `QTimer` (350 ms). Parado, a varredura começa no bloco do alto da tela e anda em
+fatias de 6 ms. Resultado por texto do bloco, então o bloco que mudou é o único sem entrada. Dentro de
+`tests/teste_ortografia.py`: 400 blocos de corretor lento (2 ms cada) viram 134 fatias, a maior de 8,4
+ms; uma fatia verifica 3 blocos; uma segunda varredura não chama o corretor; uma tecla muda exatamente 1
+bloco (contraprova: sem o cache, todos de novo).
+
+Corretor real nos 22 arquivos (a varredura inteira, em fatias): o maior (582 blocos, 464 verificações)
+leva 0,22 s em 24 fatias, a maior de 21,7 ms (a primeira, com a criação do corretor); os outros,
+de 0,00 a 0,14 s. O doc_07 marca `en-US` no docDefaults e tem o texto em português: 1357 erros em 2142
+palavras (63%). É o limite do idioma do arquivo, como no Word sem detecção automática; escolher o idioma
+em Arquivo > Opções resolve (o idioma escolhido vale para todo o texto).
+
+### Regressão, oráculo e suíte
+
+- Oráculo de paginação (`w:lastRenderedPageBreak`, 22 arquivos, plataforma `windows`, base 0.1.35
+  c1cd6d1 x branch rebaseada, mesma hora, com e sem `EDITDOC_TRECHOS`; antes do rebase, contra a 0.1.34
+  08e5fe9, igual): idêntico, quebra por quebra, nos dois modos.
+- Abrir, salvar, reabrir, salvar nos 22: páginas e hash de cada parte (c14n; nas partes que o lxml não
+  canoniza, os bytes) idênticos aos da base, nas duas variantes do ramo: padrão e com o corretor real
+  ligado e a varredura feita e pintada antes de gravar (18 dos 22 arquivos tinham palavras sublinhadas).
+  O arquivo gravado não muda e nenhum `w:proofErr` é criado.
+- Suíte completa (`rodar_todos.py`, segunda passada com `EDITDOC_TRECHOS=0` incluída), sobre a
+  branch rebaseada no main 0.1.35: 5371 verificações, 0 falhas (antes do rebase, sobre a 0.1.34: 5287;
+  `teste_ortografia` tem 161).
+
+### Gate de desempenho (p95 em ms, 80 teclas com pintura, `start /affinity 00FF`, núcleos P)
+
+Três variantes, intercaladas (a ordem gira a cada rodada), cada medida num processo com afinidade
+fixa, mediana de 4 rodadas, total com a tecla entre parênteses: **base** (main 0.1.34), **ramo** (o código
+novo, sem corretor: só os ganchos) e **ort** (corretor real do Windows, varredura feita antes de medir,
+sublinhado na tela). Máquina compartilhada com outras sessões: a dispersão entre rodadas chega a 3 ms.
+
+| ponto | base | ramo | ort | ramo-base | ort-base |
+|---|---|---|---|---|---|
+| documento simples | 6,22 (1,92) | 6,72 (1,98) | 7,38 (2,06) | +0,50 | +1,16 |
+| plano 1/3 | 10,87 (4,78) | 10,50 (4,58) | 10,42 (4,69) | -0,37 | -0,45 |
+| plano célula | 9,04 (3,00) | 9,30 (3,23) | 9,05 (3,21) | +0,26 | +0,01 |
+| plano item | 8,84 (2,53) | 8,74 (2,65) | 8,66 (2,51) | -0,10 | -0,18 |
+| plano com revisões | 11,02 (4,57) | 11,59 (4,89) | 13,88 (5,33) | +0,57 | +2,86 |
+| manual capa | 8,76 (3,38) | 9,00 (3,37) | 9,06 (3,33) | +0,24 | +0,30 |
+| manual sumário | 10,19 (3,32) | 10,10 (3,36) | 11,03 (3,34) | -0,09 | +0,85 |
+| manual corpo | 7,63 (1,94) | 8,00 (2,24) | 8,62 (2,05) | +0,37 | +1,00 |
+| capa cheia | 14,70 (4,16) | 14,04 (3,77) | 13,76 (3,48) | -0,65 | -0,94 |
+| 2000 revisões | 6,73 (1,20) | 6,75 (1,32) | 6,77 (1,29) | +0,02 | +0,04 |
+| janela doc_14, 1/3 | 4,31 (0,81) | 4,48 (0,90) | 4,57 (0,78) | +0,17 | +0,25 |
+| janela doc_14, célula | 4,58 (0,84) | 4,25 (0,84) | 4,79 (0,80) | -0,34 | +0,20 |
+| janela doc_14, item | 4,35 (0,81) | 4,48 (0,82) | 4,88 (0,96) | +0,13 | +0,54 |
+
+Leitura: o **ramo sem corretor** (o que a suíte e quem desliga a opção usam) fica entre -0,65 e +0,57 ms,
+nenhum ponto 1,5 ms pior, e a tecla em si (o número entre parênteses) não muda: o gancho do
+`contentsChange` é um `QTimer.start`. Com o **corretor ligado e o sublinhado na tela** o custo é
+a pintura da onda: o texto de teste repete as mesmas palavras sublinhadas em todos os parágrafos, então
+cada tile repintado pela tecla desenha ondas (pior caso, não o de um documento real). Em todos os pontos o
+p95 fica abaixo de 15 ms (o teto é 16). O único ponto com diferença acima de 1,5 ms é o plano com
+revisões (+2,86), que não se repete numa medida no mesmo processo (A/B de 6 rodadas alternando
+ligado e desligado: -0,29 ms); nos pontos com sublinhado de verdade a mesma medida deu +0,6 (simples), +1,0 a
++1,25 (manual corpo) e +0,25 (plano 1/3). Um registro anterior (3 rodadas, antes de as otimizações abaixo
+entrarem) tinha +1,8 no simples e +2,4 no corpo.
+
+Repetido depois do rebase sobre o main 0.1.35 (colunas, c1cd6d1), 3 rodadas intercaladas, mesmos
+núcleos: ramo-base de -2,37 a +1,13 ms (maior: plano 1/3 +1,13, dispersão de 3 ms entre rodadas) e
+ort-base de -4,64 a +1,08 (simples +1,08, manual corpo +1,00, capa cheia +0,48, janela doc_14 de -0,62 a
++0,43). Nenhum ponto com piora consistente de 1,5 ms.
+
+Otimizações feitas por causa dessa medida (perfil com `cProfile`, que infla de 3 a 5 vezes): `desenhar`
+só prepara o painter quando há onda a pintar (a faixa que a tecla repinta quase nunca tem); só as linhas
+do bloco que cruzam o recorte são pintadas; a varredura de blocos para uns 300 twips depois do recorte (eram
+2000); o resultado do bloco digitado (o que não tem entrada) fica numa memória curta, porque a tecla pinta o
+mesmo texto de 4 a 8 vezes (um tile por parte). Uma onda custa ~26 µs em `QPainterPath` (contra 51 µs em
+polilinha e 108 µs em segmentos soltos, medido).
+
+### Limites
+
+- Só o corpo: cabeçalho, rodapé, notas e caixas de texto não são verificados. Só ortografia (sem
+  gramática). Parágrafo de mais de 30 mil caracteres não é verificado.
+- O idioma vem do arquivo (ou das Opções): documento marcado com o idioma errado mostra quase tudo
+  sublinhado. Trecho num idioma sem dicionário instalado fica sem verificação; o idioma do documento
+  sem dicionário desliga a verificação com aviso.
+- O resultado vale por texto de bloco: dois blocos de texto igual com `w:lang` diferente
+  compartilham o resultado até um deles mudar (não ocorre em arquivo real; não medido).
+- "Ignorar tudo" vale até abrir outro documento ou fechar o programa; "Adicionar ao dicionário" grava no
+  dicionário pessoal do Windows (vale para os outros programas). A fumaça de teste da API nunca o chama.
+- Não conferido no Word: o aspecto da onda (amplitude, espessura) foi ajustado à vista, não medido.
+
+## 0.1.37: legendas, índice de ilustrações, referência cruzada e o resto do sumário
+
+Aba **Referências**: **Inserir Legenda**, **Índice de Ilustrações**, **Referência Cruzada** e
+**Atualizar Campos** (F9); no sumário, o número de lista do título, `\t`, `\b` e o título "Sumário".
+Código em `modelo/legendas.py` (SEQ, a contagem, REF e PAGEREF, sem Qt), `edicao/legendas.py`,
+`edicao/referencias.py`, `interface/dialogo_legendas.py` e, no sumário, `modelo/sumario.py` e
+`edicao/sumario.py`; testes em `tests/teste_legendas.py` (240 verificações, nas duas passadas).
+
+#### Como ficou
+
+- **Legenda** = parágrafo no estilo "caption" (Legenda, criado com os valores do Word se faltar:
+  9 pt, itálico, cor `44546A`, 10 pt depois) com o rótulo, o campo `SEQ Rótulo \* ARABIC` (o número é
+  o resultado) e o texto (" – texto", sem pontuação no começo). Entra acima ou abaixo da tabela do
+  cursor ou do parágrafo do cursor (a imagem, a equação). O bloco vazio que o Qt exige ao lado da
+  tabela (estrutural) e o bloco vazio que fecha o documento depois da última tabela são ocupados
+  pela legenda; com bloco de texto ali, entra um bloco novo.
+- **Numeração**: `modelo/legendas.numerar` conta por identificador na ordem do documento
+  (`\* ARABIC|roman|ROMAN|alphabetic|ALPHABETIC`, `\c`, `\r n`, `\h`, `\s n`). SEQ com opção que o
+  EditDoc não conhece (formato por extenso, SEQ que cita marcador) fica fora da conta e volta ao
+  arquivo como veio. **Inserir** recontas o rótulo dentro do mesmo bloco de edição (um Ctrl+Z desfaz
+  legenda, estilo e renumeração, como o Word renumera ao inserir). **Apagar e mover** não renumeram
+  sozinhos: **Atualizar Campos** (F9). Só o resultado que difere do contado é reescrito.
+- **Atualizar Campos** (`edicao/referencias.atualizar_campos`): SEQ e REF (texto do marcador, de
+  agora) num passo; PAGEREF de todo o documento (inclusive as linhas dos sumários) depois do layout,
+  num passo anotado (o mesmo `_anotar` do sumário). Sumário e índice não são refeitos por F9 (só os
+  números de página deles).
+- **Índice de ilustrações** = o TOC com `\c "Rótulo"` pelo mesmo caminho do sumário
+  (`edicao/sumario.titulos` junta `\o`, `\t`, `\b` e `\c`): as entradas são os parágrafos com SEQ do
+  rótulo, no estilo "table of figures" (Índice de Ilustrações, criado), com `_Toc` no parágrafo da
+  legenda, hiperlink e PAGEREF. **Atualizar Sumário** só pega TOC sem `\c`, **Atualizar Índice** só
+  os com `\c` (fora de todos, refaz todos num passo só, de baixo para cima).
+- **Referência cruzada**: alvo = título, legenda ou marcador do usuário; o marcador `_Ref` + 9
+  dígitos cobre o trecho citado (título e legenda inteira: o texto do parágrafo; rótulo e número:
+  do começo do parágrafo ao fim do SEQ; só o número: o SEQ) e é reaproveitado quando já existe um
+  igual (`referencias._normal` tira as marcas de marcador das pontas antes de comparar). Campo
+  `REF m \h`, `REF m \r \h` (número de lista, sem o ponto final; "0" sem lista, como o Word) ou
+  `PAGEREF m \h`.
+- **Sumário**: o título numerado por lista leva o número na linha ("1.2", tabulação e texto; a
+  tabulação à esquerda em 440 twips por nível, como o Word); `\t "Estilo;nível;..."` (separador `;`
+  ou `,`, pelo nome, nome na tela ou id do estilo) e `\b marcador` entram nas entradas;
+  **Sumário > Inserir sumário com título** põe o parágrafo "Sumário" no estilo "TOC Heading"
+  (baseado no Título 1 com `outlineLvl 9`: sem o 9 ele herdaria o nível 0 e entraria nas entradas).
+- Interface: `Referências > Legendas` (Inserir Legenda, Referência Cruzada, menu Índice de
+  Ilustrações, Atualizar Campos). Os três diálogos têm nome em todo controle e a ordem de Tab segue a
+  leitura (conferido por `teste_legendas` com o `Capturador` do `teste_acessibilidade`).
+
+#### Provas (`tests/teste_legendas.py`)
+
+Inserir (imagem acima e abaixo, tabela no meio, no começo e no fim do documento, equação, rótulo
+novo, sem rótulo); um Ctrl+Z; mover a figura C (imagem e legenda) para o alto: os números ficam
+velhos (3, 1, 2) e F9 deixa 1, 2, 3, com a contraprova que troca `contar` e mantém tudo velho;
+apagar a legenda do meio; salvar (validador, begin/separate/end, instrText, `xml:space`, estilo no
+styles.xml, conferência pós-gravação) e reabrir (mesmos bytes ao regravar); `.docx` com campos do
+Word (SEQ complexo, `\c`, SEQ com marcador, REF): sem atualizar, o `document.xml` é o do escritor e
+os parágrafos dos campos voltam iguais em c14n (o `w:id` dos marcadores é normalizado: o escritor
+sempre o renumerou); índice com as linhas esperadas, páginas conferidas por outro caminho (origem
+da primeira linha), atualizar o inteiro depois de mover, só os números (contraprova: depois de
+empurrar, o número fica velho), dois índices; referência a todos os tipos com marcador reaproveitado,
+um desfazer, F9 e a contraprova da leitura do marcador.
+
+#### O que ficou de fora
+
+- Legenda de imagem dentro de célula (com o cursor na célula a legenda vai na tabela inteira) e de
+  tabela dentro de tabela; legenda de parágrafo que termina seção.
+- Referência cruzada "acima/abaixo" (`\p`), REF `\n`/`\f`/`\d`/`\t`, SEQ com formato por extenso e
+  SEQ com marcador: ficam como vieram (F9 não os toca).
+- Com o controle de alterações ligado, inserir e atualizar não viram revisão (como o sumário).
+- Nenhum arquivo gerado foi aberto no Word ainda (a estrutura segue a do Word e passa no validador).
+- Entradas TC (`\f`, `\l`) e o índice sem rótulo e número (`\a`) continuam sem reconstrução; o
+  controle de conteúdo "Sumário automático" do Word não é criado (só o campo e o título).
+
+#### Medidas (base = origin/main 0.1.36, e1f8362; ramo = `legendas`)
+
+- Suíte completa, QT_QPA_PLATFORM ausente (`rodar_todos.py`, com a segunda passada `EDITDOC_TRECHOS=0`):
+  5856 verificações, 0 falhas; `teste_legendas` 231 + 240 nas duas passadas (a primeira rodou antes do
+  teste de tabela no começo e no fim, que achou o bloco vazio do fim do documento e fez a legenda
+  ocupá-lo).
+- Oráculo de páginas (22 .docx de Downloads, plataforma `windows`): o JSON da base (origin/main
+  0.1.36) e o do ramo são idênticos byte a byte (páginas, quebras do Word, acerto por parágrafo e
+  por linha), sem erro.
+- Regressão abrir-salvar-reabrir-salvar em c14n dos mesmos 22: JSON idêntico ao da base.
+- Gate nos núcleos P (afinidade FFFF por `ProcessorAffinity`, 3 rodadas intercaladas, p95 total em ms,
+  mediana base / ramo): simples 5,42 / 5,92; plano_terco 9,83 / 10,03; plano_celula 8,28 / 8,78;
+  plano_item 7,76 / 8,14; plano_rev 10,72 / 10,54; capa 9,04 / 8,30; sumario 9,51 / 9,26; corpo
+  7,25 / 7,35; cheia 13,16 / 13,23; revisoes 5,86 / 6,01. O "simples" subiu 0,5 ms em 3 e em 5 rodadas;
+  repetido com 9 rodadas intercaladas deu 5,51 / 5,48 (diferença de -0,03), e uma base contra uma cópia
+  dela mesma varia de -0,25 a +0,05 e -0,53 em outros pontos: ruído de máquina compartilhada (outras suítes
+  rodavam), nenhuma piora consistente de 1,5 ms. O comando não toca no caminho da tecla.
+- Não foi gerado o .exe (`build.bat`) nesta branch: o squash no main e o build ficam com quem publica.
+
 ## 0.1.38: a margem de cima da tabela que atravessa a página (branch `paginacao2`, "Paginação 2", medido sobre a 0.1.34 e a 0.1.35)
 
 Oráculo `w:lastRenderedPageBreak` dos 22 `.docx` de Downloads (rótulos doc_NN pela ordem de `sorted(Path)`

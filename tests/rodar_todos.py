@@ -95,6 +95,8 @@ SUITES = [
      "campos TOC, REF, DATE, IF, XE e FORMTEXT preservados; apagar meio campo grava XML valido"),
     ("teste_sumario.py",
      "sumario: inserir, atualizar inteiro e numeros, um desfazer, salvar e reabrir, TOC do Word"),
+    ("teste_legendas.py",
+     "0.1.37: legendas (SEQ), indice de ilustracoes, referencia cruzada, F9, sumario com numero de lista, \\t, \\b"),
     ("teste_cabecalho_rodape.py",
      "cabecalho e rodape: .docx, oraculo, limites, tela, edicao no lugar, desfazer e faixa"),
     ("teste_estilos.py",
@@ -153,6 +155,8 @@ SUITES = [
      "limites do M8: docDefaults na tela, tabela larga na margem, sem linha vazia antes da tabela"),
     ("teste_acessibilidade.py",
      "acessibilidade: nomes de todo controle, ordem de Tab, Alt/F10 e dicas, documento, contraste"),
+    ("teste_ortografia.py",
+     "0.1.36: corretor ortografico: w:lang/noProof, varredura incremental, sublinhado so' na tela, menu, F7, API do Windows"),
 ]
 
 
@@ -163,7 +167,7 @@ SEGUNDA_PASSADA_SEM_TRECHOS = ("teste_tabelas.py", "teste_paginacao_word.py", "t
                                "teste_revisoes.py", "teste_flutuantes.py", "teste_pdf.py",
                                "teste_impressao.py", "teste_colunas.py", "teste_secoes.py",
                                "teste_notas.py", "teste_desempenho.py", "teste_formulario.py",
-                               "teste_sumario.py")
+                               "teste_sumario.py", "teste_legendas.py")
 
 
 def main() -> int:

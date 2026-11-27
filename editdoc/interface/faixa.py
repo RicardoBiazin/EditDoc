@@ -77,10 +77,12 @@ ROTULOS = {
     "mostrar_comentarios": "Mostrar comentários",
     "controlar_alteracoes": "Controlar alterações", "aceitar_revisao": "Aceitar",
     "rejeitar_revisao": "Rejeitar", "revisao_anterior": "Anterior", "revisao_proxima": "Próxima",
-    "painel_revisoes": "Painel de revisões",
+    "painel_revisoes": "Painel de revisões", "ortografia": "Ortografia",
     "inserir_nota_rodape": "Nota de Rodapé", "inserir_nota_fim": "Nota de Fim",
     "proxima_nota": "Próxima", "nota_anterior": "Anterior", "opcoes_notas": "Opções",
     "atualizar_sumario": "Atualizar Sumário",
+    "inserir_legenda": "Inserir Legenda", "referencia_cruzada": "Referência Cruzada",
+    "atualizar_campos": "Atualizar Campos",
 }
 
 #: Nome da aba contextual do cabecalho e do rodape.
@@ -576,9 +578,23 @@ class Faixa(QFrame):
         atualizar.setAccessibleDescription(
             f"{atualizar.accessibleDescription()}. A seta abre Atualizar só os números de página.")
         sumario = GrupoFaixa(
-            "Sumário", _duas_linhas([_menu("Sumário", [c.acao("inserir_sumario")])], [atualizar]),
+            "Sumário", _duas_linhas(
+                [_menu("Sumário", [c.acao("inserir_sumario"), c.acao("inserir_sumario_com_titulo")])],
+                [atualizar]),
             _menu("Sumário", [c.acao(i) for i in (
-                "inserir_sumario", "atualizar_sumario", "atualizar_numeros_sumario")]))
+                "inserir_sumario", "inserir_sumario_com_titulo", "atualizar_sumario",
+                "atualizar_numeros_sumario")]))
+        indice = _menu("Índice de Ilustrações", [c.acao(i) for i in (
+            "inserir_indice_ilustracoes", "atualizar_indice_ilustracoes",
+            "atualizar_numeros_indice_ilustracoes")])
+        legendas = GrupoFaixa(
+            "Legendas", _duas_linhas(
+                [_botao(c, "inserir_legenda"), _botao(c, "referencia_cruzada")],
+                [indice, _botao(c, "atualizar_campos")]),
+            _menu("Legendas", [c.acao(i) for i in (
+                "inserir_legenda", "referencia_cruzada", "inserir_indice_ilustracoes",
+                "atualizar_indice_ilustracoes", "atualizar_numeros_indice_ilustracoes",
+                "atualizar_campos")]))
         notas = GrupoFaixa(
             "Notas de Rodapé", _duas_linhas(
                 [_botao(c, "inserir_nota_rodape"), _botao(c, "inserir_nota_fim")],
@@ -587,7 +603,7 @@ class Faixa(QFrame):
             _menu("Notas de Rodapé", [c.acao(i) for i in (
                 "inserir_nota_rodape", "inserir_nota_fim", "proxima_nota", "nota_anterior",
                 "opcoes_notas")]))
-        linha = LinhaDeGrupos([sumario, notas], [notas, sumario])
+        linha = LinhaDeGrupos([sumario, notas, legendas], [legendas, notas, sumario])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha
@@ -613,9 +629,19 @@ class Faixa(QFrame):
                 "comentario_anterior", "comentario_proximo", "mostrar_comentarios")]))
         controle = self._grupo_controle(c)
         alteracoes = self._grupo_alteracoes(c)
-        # Recolhe primeiro o grupo Controle, depois Alteracoes, por ultimo Comentarios.
-        linha = LinhaDeGrupos([comentarios, controle, alteracoes],
-                              [controle, alteracoes, comentarios])
+        # Revisao de texto (0.1.36): o botao Ortografia (F7), como no Word.
+        botao_ortografia = _botao(c, "ortografia")
+        # A segunda linha, vazia, tem a altura de um botao: sem isso o titulo do grupo fica mais
+        # alto que o dos outros.
+        espaco = QWidget()
+        espaco.setFixedSize(1, botao_ortografia.sizeHint().height())
+        texto = GrupoFaixa(
+            "Revisão de texto", _duas_linhas([botao_ortografia], [espaco]),
+            _menu("Texto", [c.acao("ortografia")]))
+        # Recolhe primeiro o grupo Controle, depois Alteracoes, depois Comentarios e, por
+        # ultimo, a Revisao de texto.
+        linha = LinhaDeGrupos([texto, comentarios, controle, alteracoes],
+                              [controle, alteracoes, comentarios, texto])
         linha.layout().setContentsMargins(MARGEM_FAIXA, 0, MARGEM_FAIXA, 0)
         self._linhas.append(linha)
         return linha
